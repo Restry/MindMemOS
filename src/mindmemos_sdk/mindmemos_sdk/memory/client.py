@@ -104,19 +104,40 @@ class MemoryClient:
         return result
 
     def _detect_and_ensure_skill_context(self, messages: list[Message | dict[str, Any]]) -> list[Any]:
-        contexts = detect_skill_context(messages, registry=self._skill_manager.registry)
-        return self._ensure_provided_skill_context(contexts)
+        manifests = (
+            self._skill_manager.list_local()
+            if hasattr(self._skill_manager, "list_local")
+            else None
+        )
+        contexts = detect_skill_context(
+            messages,
+            manifests=manifests,
+        )
+        managed_contexts = [
+            context
+            for context in contexts
+            if self._skill_manager.skill_id_for_context(context) is not None
+        ]
+        return self._ensure_provided_skill_context(managed_contexts)
 
     def _ensure_provided_skill_context(self, skill_context: list[Any]) -> list[Any]:
         ensured: list[Any] = []
+        ensure_cloud = getattr(
+            self._skill_manager,
+            "ensure_active_cloud_version",
+            None,
+        )
+        used_centralized_manager = callable(ensure_cloud)
         for raw_context in skill_context:
             context = raw_context if hasattr(raw_context, "name") else self._skill_context_from_dict(raw_context)
             skill_id = self._skill_manager.skill_id_for_context(context)
             if skill_id:
                 ensured.append(self._skill_manager.ensure_skill_context(skill_id, usage=context.usage))
+                if callable(ensure_cloud):
+                    ensure_cloud(skill_id)
             else:
                 ensured.append(context)
-        if ensured:
+        if ensured and not used_centralized_manager:
             self._skill_manager.flush_pending_uploads()
         return ensured
 

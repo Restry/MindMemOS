@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from .bundle import compute_content_hash
-from .models import SkillContext, SkillUsage
+from .models import LocalSkillManifest, SkillContext, SkillUsage
 from .registry import SkillRegistry
 
 _TOOL_CALL_RE = re.compile(r"^\s*\[tool_call\]\s*([A-Za-z0-9_.-]+)\((.*)\)\s*$", re.DOTALL)
@@ -30,6 +30,7 @@ def detect_skill_context(
     messages: list[BaseModel | dict[str, Any]],
     *,
     registry: SkillRegistry | None = None,
+    manifests: list[LocalSkillManifest] | None = None,
 ) -> list[SkillContext]:
     """Detect skill references from normalized add messages.
 
@@ -73,11 +74,16 @@ def detect_skill_context(
     for candidate in candidates.values():
         name, version_label = _parse_skill_metadata(candidate.content)
         record = _lookup_record(registry, candidate.path, name)
+        manifest = _lookup_manifest(manifests, name)
         contexts.append(
             SkillContext(
                 name=name or _skill_dir_name(candidate.path),
                 content_hash=compute_content_hash({"SKILL.md": candidate.content}),
-                base_version_id=record.base_version_id if record else "",
+                version_id=(
+                    manifest.active_version_id
+                    if manifest is not None
+                    else record.base_version_id if record else ""
+                ),
                 version_label=version_label,
                 usage=candidate.usage,
             )
@@ -157,6 +163,16 @@ def _lookup_record(registry: SkillRegistry | None, path: str, name: str | None):
     if name:
         return next((item for item in registry.list() if item.skill_name == name), None)
     return None
+
+
+def _lookup_manifest(
+    manifests: list[LocalSkillManifest] | None,
+    name: str | None,
+) -> LocalSkillManifest | None:
+    if not manifests or not name:
+        return None
+    matches = [manifest for manifest in manifests if manifest.name == name]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _parse_skill_metadata(content: str) -> tuple[str | None, str | None]:

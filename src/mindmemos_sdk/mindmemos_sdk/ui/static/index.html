@@ -161,8 +161,21 @@
                   <p class="section-kicker">REGISTRY</p>
                   <h2>Registered skills</h2>
                 </div>
-                <button class="outline-button" type="button" disabled>＋ Register</button>
+                <button id="register-skill" class="outline-button enabled" type="button">＋ Register</button>
               </div>
+              <p id="register-skill-status" class="register-skill-status" role="status" aria-live="polite"></p>
+              <label class="field"><span>Import directory or SKILL.md</span><input id="register-skill-path" placeholder="/absolute/path/to/skill" /></label>
+              <label class="field"><span>Local alias</span><input id="register-skill-alias" placeholder="Optional · e.g. research-main" /></label>
+              <label class="field"><span>Root version label</span><input id="register-skill-version-label" placeholder="Optional · e.g. 1.0.0" /></label>
+              <label class="field"><span>Root commit message (cloud-visible)</span><input id="register-skill-message" placeholder="Optional · why this Skill was registered" /></label>
+              <label class="field">
+                <span>If an identical snapshot already exists</span>
+                <select id="register-skill-duplicate-action">
+                  <option value="">Do not register it (default)</option>
+                  <option value="reuse">Reuse the existing Skill</option>
+                  <option value="create_new">Register a separate Skill</option>
+                </select>
+              </label>
               <div id="skills-list" class="empty-list">
                 <div class="empty-icon small">✦</div>
                 <strong>No skills registered</strong>
@@ -181,11 +194,16 @@
               <div class="skill-version-toolbar">
                 <label class="field"><span>Skill version</span><select id="skill-version-select" disabled><option>Select a Skill first</option></select></label>
                 <label class="field"><span>New version label</span><input id="skill-version-label" placeholder="Optional · e.g. 1.2.0" disabled /></label>
+                <label class="field"><span>Commit message</span><input id="skill-commit-message" placeholder="Why this version exists" disabled /></label>
               </div>
               <div class="skill-editor-actions">
                 <span id="skill-operation-status" class="skill-operation-status">Select a version to begin editing.</span>
-                <button id="save-skill" class="outline-button enabled" type="button" disabled>Save locally</button>
-                <button id="publish-skill" class="primary-button" type="button" disabled>Save &amp; publish</button>
+                <label class="checkbox-row" for="activate-published-skill">
+                  <input id="activate-published-skill" type="checkbox" />
+                  <span>Activate new version</span>
+                </label>
+                <button id="activate-skill-version" class="outline-button enabled" type="button" disabled>Activate selected</button>
+                <button id="publish-skill" class="primary-button" type="button" disabled>Publish version</button>
               </div>
               <div class="skill-content-toolbar">
                 <span class="content-mode-label">SKILL.md</span>
@@ -208,8 +226,13 @@
                 <span id="skill-info-badge" class="muted-badge">EMPTY</span>
               </div>
               <div id="skill-info-content" class="skill-info-empty">
-                <p>Choose a Skill from the registry to inspect its path, hashes, lifecycle state, and version history.</p>
+                <p>Choose a Skill to inspect its immutable versions, active pointer, hashes, and synchronization state.</p>
               </div>
+              <label class="field"><span>Export directory</span><input id="skill-export-path" placeholder="/absolute/path/to/export" disabled /></label>
+              <button id="export-skill" class="outline-button enabled" type="button" disabled>Export selected version</button>
+              <button id="sync-skill" class="outline-button enabled" type="button" disabled>Sync with cloud</button>
+              <button id="evolve-skill" class="outline-button enabled" type="button" disabled>Evolve from selected</button>
+              <button id="promote-skill" class="outline-button enabled" type="button" disabled>Promote selected</button>
             </aside>
           </section>
 

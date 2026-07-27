@@ -22,7 +22,16 @@ from .client import MindMemOSClient
 from .config import DEFAULT_BASE_URL, ConfigManager, mask_secret
 from .errors import ConfigError, MindMemOSSDKError
 from .memory import DialogueMessage, StatusResult
-from .skills import SkillCloudClient, SkillManager, SkillRecord
+from .skills import (
+    DuplicateSkillAction,
+    ExportSkillRequest,
+    LocalSkillManifest,
+    PublishLocalRequest,
+    RegisterLocalRequest,
+    SkillCloudClient,
+    SkillManager,
+    SkillRecord,
+)
 from .transport import HttpTransport
 
 _JSON_PARSE_ERROR = object()
@@ -92,12 +101,27 @@ def _add_skill_commands(subparsers: argparse._SubParsersAction[argparse.Argument
     skill_subparsers = parser.add_subparsers(dest="skill_command", metavar="<skill-command>")
     parser.set_defaults(handler=_handle_skill_root)
 
-    register = skill_subparsers.add_parser("register", help="Register and upload a local skill.")
+    register = skill_subparsers.add_parser("register", help="Import a Skill into the centralized local repository.")
     register.add_argument("path", help="Local skill directory path or SKILL.md file path.")
     register.add_argument("--name", help="Override skill name from manifest.")
     register.add_argument("--alias", help="Local alias for later skill commands.")
     register.add_argument("--version", help="Override skill version from manifest.")
+    register.add_argument("-m", "--message", help="Immutable root-version commit message.")
+    register.add_argument(
+        "--duplicate-action",
+        choices=[item.value for item in DuplicateSkillAction],
+        help="Explicitly reuse an identical snapshot or create a separate Skill family.",
+    )
     register.set_defaults(handler=_handle_skill_register)
+
+    publish = skill_subparsers.add_parser("publish", help="Create an immutable local Skill version.")
+    publish.add_argument("skill", help="SDK local skill id or alias.")
+    publish.add_argument("--from", dest="source_path", required=True, help="Directory or SKILL.md to snapshot once.")
+    publish.add_argument("--base", dest="base_version", help="Parent version. Defaults to the active version.")
+    publish.add_argument("--version", dest="version_label", help="Human-readable version label.")
+    publish.add_argument("-m", "--message", help="Immutable version commit message.")
+    publish.add_argument("--activate", action="store_true", help="Activate the new version after creating it.")
+    publish.set_defaults(handler=_handle_skill_publish)
 
     list_parser = skill_subparsers.add_parser("list", help="List SDK-registered skills.")
     list_parser.set_defaults(handler=_handle_skill_list)
@@ -106,26 +130,65 @@ def _add_skill_commands(subparsers: argparse._SubParsersAction[argparse.Argument
     show.add_argument("skill", help="SDK local skill id or alias.")
     show.set_defaults(handler=_handle_skill_show)
 
-    pull = skill_subparsers.add_parser("pull", help="Pull skill version metadata without changing files.")
+    pull = skill_subparsers.add_parser(
+        "pull",
+        help="Pull immutable cloud versions without changing the active pointer.",
+    )
     pull.add_argument("skill", help="SDK local skill id or alias.")
     pull.set_defaults(handler=_handle_skill_pull)
 
-    push = skill_subparsers.add_parser("push", help="Upload local skill changes as a new version.")
+    push = skill_subparsers.add_parser(
+        "push",
+        help="Upload an existing immutable local version with the same UUID.",
+    )
     push.add_argument("skill", help="SDK local skill id or alias.")
+    push.add_argument("--version", help="Version UUID. Defaults to the active version.")
     push.set_defaults(handler=_handle_skill_push)
 
-    update = skill_subparsers.add_parser("update", help="Update one skill or all registered skills.")
+    update = skill_subparsers.add_parser(
+        "update",
+        help="Deprecated alias for `skill sync`.",
+    )
     update_target = update.add_mutually_exclusive_group(required=True)
     update_target.add_argument("skill", nargs="?", help="SDK local skill id or alias.")
     update_target.add_argument("--all", action="store_true", help="Update all registered skills.")
     update.add_argument("--yes", "-y", action="store_true", help="Apply update without confirmation prompts.")
     update.set_defaults(handler=_handle_skill_update)
 
+    sync = skill_subparsers.add_parser(
+        "sync",
+        help="Push pending versions, pull missing versions, and refresh cloud pointers.",
+    )
+    sync_target = sync.add_mutually_exclusive_group(required=True)
+    sync_target.add_argument("skill", nargs="?", help="SDK local skill id or alias.")
+    sync_target.add_argument("--all", action="store_true", help="Sync all registered skills.")
+    sync.set_defaults(handler=_handle_skill_update)
+
+    promote = skill_subparsers.add_parser(
+        "promote",
+        help="Publish one cloud version without changing the local active pointer.",
+    )
+    promote.add_argument("skill", help="SDK local skill id or alias.")
+    promote.add_argument("--version", required=True, help="Local/cloud version UUID.")
+    promote.set_defaults(handler=_handle_skill_promote)
+
     rollback = skill_subparsers.add_parser("rollback", help="Roll back a skill to a previous version.")
     rollback.add_argument("skill", help="SDK local skill id or alias.")
     rollback.add_argument("--to", dest="version", required=True, help="Target version.")
     rollback.add_argument("--yes", "-y", action="store_true", help="Apply rollback without confirmation prompts.")
     rollback.set_defaults(handler=_handle_skill_rollback)
+
+    switch = skill_subparsers.add_parser("switch", help="Switch the local active version pointer.")
+    switch.add_argument("skill", help="SDK local skill id or alias.")
+    switch.add_argument("--to", dest="version", required=True, help="Target local version UUID.")
+    switch.set_defaults(handler=_handle_skill_switch)
+
+    export = skill_subparsers.add_parser("export", help="Export the active or selected version to a directory.")
+    export.add_argument("skill", help="SDK local skill id or alias.")
+    export.add_argument("--to", dest="target_path", required=True, help="Target directory.")
+    export.add_argument("--version", help="Version to export. Defaults to the active version.")
+    export.add_argument("--no-replace", action="store_true", help="Fail if the target already exists.")
+    export.set_defaults(handler=_handle_skill_export)
 
     history = skill_subparsers.add_parser("history", help="Show skill version history.")
     history.add_argument("skill", help="SDK local skill id or alias.")
@@ -137,7 +200,10 @@ def _add_skill_commands(subparsers: argparse._SubParsersAction[argparse.Argument
     diff.add_argument("--to", dest="version", required=True, help="Target version.")
     diff.set_defaults(handler=_handle_skill_diff)
 
-    unregister = skill_subparsers.add_parser("unregister", help="Remove a skill from SDK management.")
+    unregister = skill_subparsers.add_parser(
+        "unregister",
+        help="Compatibility command for the legacy external-path registry.",
+    )
     unregister.add_argument("skill", help="SDK local skill id or alias.")
     unregister.add_argument("--delete-files", action="store_true", help="Also delete the local skill directory.")
     unregister.add_argument("--yes", "-y", action="store_true", help="Unregister without confirmation prompts.")
@@ -359,19 +425,56 @@ def _handle_ui(args: argparse.Namespace) -> int:
 
 
 def _handle_skill_register(args: argparse.Namespace) -> int:
-    manager = _build_skill_manager(require_api_key=True)
+    manager = _build_skill_manager(require_api_key=False)
     if manager is None:
         return 1
     try:
-        result = manager.register(args.path, name=args.name, version_label=args.version, alias=args.alias)
+        result = manager.register_local(
+            RegisterLocalRequest(
+                source_path=args.path,
+                name=args.name,
+                alias=args.alias,
+                version_label=args.version,
+                commit_message=args.message,
+                duplicate_action=args.duplicate_action,
+            )
+        )
+        manifest = manager.show_local(result.skill_id)
+        version = manager.local_repository.get_version(result.skill_id, result.version_id)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill register", exc)
 
-    print(f"Registered {result.skill_name} ({result.skill_id}).")
-    print(f"alias:          {result.alias or '(none)'}")
-    print(f"cloud_skill_id: {result.cloud_skill_id}")
-    print(f"version_id:     {result.base_version_id}")
-    print(f"content_hash:   {result.content_hash}")
+    verb = "Reused" if result.action == "reused" else "Registered"
+    print(f"{verb} {manifest.name} ({manifest.skill_id}).")
+    print(f"alias:          {manifest.alias or '(none)'}")
+    print(f"cloud_skill_id: {manifest.cloud_skill_id or '(local only)'}")
+    print(f"version_id:     {result.version_id}")
+    print(f"active_version: {manifest.active_version_id}")
+    print(f"content_hash:   {version.content_hash}")
+    return 0
+
+
+def _handle_skill_publish(args: argparse.Namespace) -> int:
+    manager = _build_skill_manager(require_api_key=False)
+    if manager is None:
+        return 1
+    try:
+        result = manager.publish_local(
+            PublishLocalRequest(
+                skill_id=args.skill,
+                base_version_id=args.base_version,
+                source_path=args.source_path,
+                version_label=args.version_label,
+                commit_message=args.message,
+                activate=args.activate,
+            )
+        )
+        manifest = manager.show_local(result.skill_id)
+    except MindMemOSSDKError as exc:
+        return _report_api_error("skill publish", exc)
+    print(f"Published local version {result.version_id} for {manifest.name} ({manifest.skill_id}).")
+    print(f"active_version: {result.active_version_id}")
+    print(f"snapshot_hash:  {result.local_snapshot_hash}")
     return 0
 
 
@@ -380,13 +483,13 @@ def _handle_skill_list(args: argparse.Namespace) -> int:
     if manager is None:
         return 1
     try:
-        records = manager.list()
+        records = manager.list_local()
     except MindMemOSSDKError as exc:
         return _report_api_error("skill list", exc)
     if not records:
         print("No SDK-registered skills.")
         return 0
-    for line in _format_skill_records_table(records):
+    for line in _format_local_skill_manifests_table(records):
         print(line)
     return 0
 
@@ -396,19 +499,22 @@ def _handle_skill_show(args: argparse.Namespace) -> int:
     if manager is None:
         return 1
     try:
-        record = manager.show(args.skill)
+        record = manager.show_local(args.skill)
+        active = manager.local_repository.get_version(record.skill_id, record.active_version_id)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill show", exc)
     print(f"skill_id:       {record.skill_id}")
     print(f"alias:          {record.alias or '(none)'}")
-    print(f"name:           {record.skill_name}")
-    print(f"path:           {record.path}")
+    print(f"name:           {record.name}")
     print(f"cloud_skill_id: {record.cloud_skill_id or '(none)'}")
-    print(f"base_version:   {record.base_version_id or '(none)'}")
-    print(f"content_hash:   {record.content_hash or '(none)'}")
-    print(f"hash_state:     {record.hash_state.value}")
-    print(f"version:        {record.version_label or '(none)'}")
-    print(f"updated_at:     {record.updated_at or '(unknown)'}")
+    print(f"active_version: {record.active_version_id}")
+    print(f"published_head: {record.published_head_id or '(none)'}")
+    print(f"version_count:  {len(record.version_ids)}")
+    print(f"content_hash:   {active.content_hash}")
+    print(f"snapshot_hash:  {active.local_snapshot_hash}")
+    print(f"sync_state:     {active.sync_state.value}")
+    print(f"last_sync_at:   {record.last_sync_at or '(never)'}")
+    print(f"updated_at:     {record.updated_at}")
     return 0
 
 
@@ -417,12 +523,16 @@ def _handle_skill_pull(args: argparse.Namespace) -> int:
     if manager is None:
         return 1
     try:
-        versions = manager.pull(args.skill)
+        versions = manager.pull_local(args.skill)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill pull", exc)
     print(f"Pulled {len(versions)} version(s).")
     for version in versions:
-        print(f"- {version.version_id} {version.status.value} {version.content_hash}")
+        cloud_status = version.cloud_status.value if version.cloud_status else "(unknown)"
+        print(
+            f"- {version.version_id} cloud={cloud_status} "
+            f"sync={version.sync_state.value} {version.content_hash}"
+        )
     return 0
 
 
@@ -431,11 +541,13 @@ def _handle_skill_push(args: argparse.Namespace) -> int:
     if manager is None:
         return 1
     try:
-        record = manager.push(args.skill)
+        result = manager.push_local(args.skill, version_id=args.version)
+        manifest = manager.show_local(args.skill)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill push", exc)
-    print(f"Pushed {record.skill_name} ({record.skill_id}) to {record.base_version_id}.")
-    print(f"content_hash: {record.content_hash}")
+    print(f"Pushed {manifest.name} ({manifest.skill_id}) version {result.version_id}.")
+    print(f"cloud_skill_id: {result.cloud_skill_id}")
+    print(f"content_hash:   {result.content_hash}")
     return 0
 
 
@@ -446,32 +558,40 @@ def _handle_skill_update(args: argparse.Namespace) -> int:
     manager = _build_skill_manager(require_api_key=True)
     if manager is None:
         return 1
+    command = "skill sync" if getattr(args, "skill_command", None) == "sync" else "skill update"
     try:
-        if args.all:
-            plans = [(record.skill_id, manager.plan_update(record.skill_id)) for record in manager.list()]
-        else:
-            plans = [(args.skill, manager.plan_update(args.skill))]
+        skill_refs = (
+            [record.skill_id for record in manager.list_local()]
+            if args.all
+            else [args.skill]
+        )
+        updated = [manager.sync_local(skill_ref) for skill_ref in skill_refs]
     except MindMemOSSDKError as exc:
-        return _report_api_error("skill update", exc)
-
-    plans = [(skill_id, plan) for skill_id, plan in plans if plan is not None]
-    if not plans:
-        print("All selected skills are up to date.")
-        return 0
-    for _skill_id, plan in plans:
-        _print_skill_checkout_plan("Update plan", plan)
-    if not args.yes:
-        answer = _prompt("Apply update? [y/N]: ")
-        if answer.strip().lower() not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    try:
-        updated = [manager.apply_checkout(plan) for _skill_id, plan in plans]
-    except MindMemOSSDKError as exc:
-        return _report_api_error("skill update", exc)
+        return _report_api_error(command, exc)
     for record in updated:
-        print(f"Updated {record.skill_name} ({record.skill_id}) to {record.base_version_id}.")
+        print(
+            f"Synced {record.name} ({record.skill_id}); "
+            f"active={record.active_version_id}, "
+            f"published={record.published_head_id or '(none)'}, "
+            f"revision={record.cloud_revision}."
+        )
+    return 0
+
+
+def _handle_skill_promote(args: argparse.Namespace) -> int:
+    manager = _build_skill_manager(require_api_key=True)
+    if manager is None:
+        return 1
+    try:
+        result = manager.promote_local(args.skill, version_id=args.version)
+        manifest = manager.show_local(args.skill)
+    except MindMemOSSDKError as exc:
+        return _report_api_error("skill promote", exc)
+    print(
+        f"Promoted {result.published_head_id} for {manifest.name} "
+        f"({manifest.skill_id}); cloud revision={result.cloud_revision}."
+    )
+    print(f"active_version: {manifest.active_version_id} (unchanged)")
     return 0
 
 
@@ -480,11 +600,15 @@ def _handle_skill_rollback(args: argparse.Namespace) -> int:
     if manager is None:
         return 1
     try:
-        plan = manager.plan_rollback(args.skill, version_id=args.version)
+        current = manager.show_local(args.skill)
+        manager.local_repository.get_version(current.skill_id, args.version)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill rollback", exc)
 
-    _print_skill_checkout_plan("Rollback plan", plan)
+    print("Rollback plan:")
+    print(f"skill_id:       {current.skill_id}")
+    print(f"active_version: {current.active_version_id} -> {args.version}")
+    print("files:          unchanged (pointer switch only)")
     if not args.yes:
         answer = _prompt("Apply rollback? [y/N]: ")
         if answer.strip().lower() not in {"y", "yes"}:
@@ -492,10 +616,43 @@ def _handle_skill_rollback(args: argparse.Namespace) -> int:
             return 1
 
     try:
-        updated = manager.apply_checkout(plan)
+        updated = manager.rollback_local(args.skill, version_id=args.version)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill rollback", exc)
-    print(f"Rolled back {updated.skill_name} ({updated.skill_id}) to {updated.base_version_id}.")
+    print(f"Rolled back {updated.name} ({updated.skill_id}) to {updated.active_version_id}.")
+    return 0
+
+
+def _handle_skill_switch(args: argparse.Namespace) -> int:
+    manager = _build_skill_manager(require_api_key=False)
+    if manager is None:
+        return 1
+    try:
+        updated = manager.switch_local(args.skill, version_id=args.version)
+    except MindMemOSSDKError as exc:
+        return _report_api_error("skill switch", exc)
+    print(f"Activated {updated.active_version_id} for {updated.name} ({updated.skill_id}).")
+    return 0
+
+
+def _handle_skill_export(args: argparse.Namespace) -> int:
+    manager = _build_skill_manager(require_api_key=False)
+    if manager is None:
+        return 1
+    try:
+        result = manager.export_local(
+            ExportSkillRequest(
+                skill_id=args.skill,
+                version_id=args.version,
+                target_path=args.target_path,
+                replace=not args.no_replace,
+            )
+        )
+    except MindMemOSSDKError as exc:
+        return _report_api_error("skill export", exc)
+    print(f"Exported {result.skill_id}@{result.version_id} to {result.target_path}.")
+    print(f"files:         {len(result.exported_files)}")
+    print(f"snapshot_hash: {result.local_snapshot_hash}")
     return 0
 
 
@@ -504,7 +661,7 @@ def _handle_skill_history(args: argparse.Namespace) -> int:
     if manager is None:
         return 1
     try:
-        versions = manager.history(args.skill)
+        versions = manager.local_history(args.skill)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill history", exc)
     if not versions:
@@ -513,7 +670,12 @@ def _handle_skill_history(args: argparse.Namespace) -> int:
     for version in versions:
         parent = version.parent_version_id or "(root)"
         label = version.version_label or "(none)"
-        print(f"{version.version_id} parent={parent} status={version.status.value} version={label}")
+        print(
+            f"{version.version_id} parent={parent} sync={version.sync_state.value} "
+            f"origin={version.origin.value} version={label}"
+        )
+        if version.commit_message:
+            print(f"  {version.commit_message}")
     return 0
 
 
@@ -522,7 +684,7 @@ def _handle_skill_diff(args: argparse.Namespace) -> int:
     if manager is None:
         return 1
     try:
-        result = manager.diff(args.skill, from_version_id=args.from_version, to_version_id=args.version)
+        result = manager.diff_local(args.skill, from_version_id=args.from_version, to_version_id=args.version)
     except MindMemOSSDKError as exc:
         return _report_api_error("skill diff", exc)
     if result.diff:
@@ -990,6 +1152,30 @@ def _format_skill_records_table(records: Sequence[SkillRecord]) -> list[str]:
             record.cloud_skill_id or "(local)",
             record.hash_state.value,
             record.path,
+        )
+        for record in records
+    ]
+    widths = [max(len(header), *(len(row[index]) for row in rows)) for index, header in enumerate(headers)]
+
+    def format_row(row: Sequence[str]) -> str:
+        return "  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip()
+
+    return [format_row(headers), format_row(tuple("-" * width for width in widths)), *(format_row(row) for row in rows)]
+
+
+def _format_local_skill_manifests_table(records: Sequence[LocalSkillManifest]) -> list[str]:
+    """Format centralized Skill families without exposing external paths."""
+
+    headers = ("skill_id", "alias", "name", "active_version_id", "published_head_id", "versions", "last_sync_at")
+    rows = [
+        (
+            record.skill_id,
+            record.alias or "(none)",
+            record.name,
+            record.active_version_id,
+            record.published_head_id or "(none)",
+            str(len(record.version_ids)),
+            record.last_sync_at or "(never)",
         )
         for record in records
     ]

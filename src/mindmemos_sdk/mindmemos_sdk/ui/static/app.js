@@ -31,10 +31,18 @@ let activeSkillId = null;
 let activeSkillPayload = null;
 let activeVersionId = null;
 let activeEditorSavedContent = "";
+const uiLaunchToken = new URLSearchParams(window.location.search).get("token") || "";
+if (window.location.search.includes("token=")) {
+  history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
+}
 
 const apiRequest = async (path, options = {}) => {
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(uiLaunchToken ? { "X-MindMemOS-UI-Token": uiLaunchToken } : {}),
+      ...(options.headers || {}),
+    },
     ...options,
   });
   const payload = await response.json().catch(() => ({}));
@@ -183,6 +191,13 @@ const setSkillOperationStatus = (message, tone = "") => {
   status.textContent = message;
 };
 
+const setRegisterSkillStatus = (message, tone = "") => {
+  const status = document.querySelector("#register-skill-status");
+  if (!status) return;
+  status.dataset.tone = tone;
+  status.textContent = message;
+};
+
 const setSkillContentMode = (mode) => {
   const previewMode = mode !== "edit";
   const previewButton = document.querySelector("#skill-preview-mode");
@@ -222,29 +237,29 @@ const formatSkillDate = (value) => {
 };
 
 const renderSkillInfo = (payload) => {
-  const record = payload.record;
+  const record = payload.skill;
   const versions = payload.versions || [];
+  const active = payload.active_version;
   const badge = document.querySelector("#skill-info-badge");
   const info = document.querySelector("#skill-info-content");
-  const status = payload.has_local_changes ? "LOCAL CHANGES" : (record.hash_state || "UNKNOWN").toUpperCase();
-  document.querySelector("#skill-info-title").textContent = record.skill_name;
-  badge.textContent = status;
+  document.querySelector("#skill-info-title").textContent = record.name;
+  badge.textContent = (record.sync_state || "LOCAL_ONLY").toUpperCase();
   info.className = "skill-info-content";
   info.innerHTML = `
     <div class="detail-meta"><span>Local ID</span><code>${escapeHtml(record.skill_id)}</code></div>
-    <div class="detail-meta"><span>Path</span><code>${escapeHtml(record.path)}</code></div>
     <div class="detail-meta"><span>Cloud ID</span><code>${escapeHtml(record.cloud_skill_id || "Not linked")}</code></div>
-    <div class="detail-meta"><span>Current</span><code>${escapeHtml(record.version_label || record.base_version_id || "Unversioned")}</code></div>
-    <div class="detail-meta"><span>Local hash</span><code>${escapeHtml(payload.local_content_hash || record.content_hash || "Not calculated")}</code></div>
-    <div class="detail-meta"><span>Registered</span><code>${escapeHtml(formatSkillDate(record.registered_at))}</code></div>
-    <div class="detail-meta"><span>Updated</span><code>${escapeHtml(formatSkillDate(record.updated_at))}</code></div>
+    <div class="detail-meta"><span>Active</span><code>${escapeHtml(record.active_version_id)}</code></div>
+    <div class="detail-meta"><span>Published</span><code>${escapeHtml(record.published_head_id || "Not published")}</code></div>
+    <div class="detail-meta"><span>Content hash</span><code>${escapeHtml(active?.content_hash || "Not calculated")}</code></div>
+    <div class="detail-meta"><span>Snapshot hash</span><code>${escapeHtml(active?.local_snapshot_hash || "Not calculated")}</code></div>
+    <div class="detail-meta"><span>Last sync</span><code>${escapeHtml(formatSkillDate(record.last_sync_at))}</code></div>
     <div class="skill-info-section">
       <div class="skill-info-section-heading"><span>VERSION HISTORY</span><span>${versions.length}</span></div>
       <div class="version-history-list">
         ${versions.length ? [...versions].reverse().map((version) => `
-          <div class="version-history-row ${version.version_id === record.base_version_id ? "current" : ""}">
+          <div class="version-history-row ${version.is_active ? "current" : ""}">
             <span class="version-history-dot"></span>
-            <span><strong class="version-history-main">${escapeHtml(versionLabel(version))}</strong><small class="version-history-meta">${escapeHtml(version.status || "unknown")} · ${escapeHtml(formatSkillDate(version.created_at))}</small></span>
+            <span><strong class="version-history-main">${escapeHtml(versionLabel(version))}</strong><small class="version-history-meta">${escapeHtml(version.status || "local_only")} · ${escapeHtml(version.sync_state)} · ${escapeHtml(formatSkillDate(version.created_at))}</small>${version.commit_message ? `<small class="version-history-meta">${escapeHtml(version.commit_message)}</small>` : ""}</span>
           </div>`).join("") : '<div class="version-history-meta">No version history recorded.</div>'}
       </div>
     </div>`;
@@ -252,20 +267,17 @@ const renderSkillInfo = (payload) => {
 
 const renderVersionSelector = (payload) => {
   const select = document.querySelector("#skill-version-select");
-  const record = payload.record;
+  const record = payload.skill;
   const versions = [...(payload.versions || [])];
-  if (record.base_version_id && !versions.some((version) => version.version_id === record.base_version_id)) {
-    versions.push({ version_id: record.base_version_id, version_label: record.version_label, status: "current" });
-  }
   select.innerHTML = versions.length
     ? versions.map((version) => {
-      const current = version.version_id === record.base_version_id;
-      const label = current ? `Current local · ${versionLabel(version)}` : versionLabel(version);
+      const current = version.version_id === record.active_version_id;
+      const label = current ? `Active · ${versionLabel(version)}` : versionLabel(version);
       return `<option value="${escapeHtml(version.version_id)}">${escapeHtml(label)} · ${escapeHtml(version.status || "history")}</option>`;
     }).join("")
-    : '<option value="">Local working copy</option>';
+    : '<option value="">No local versions</option>';
   select.disabled = false;
-  select.value = record.base_version_id || versions.at(-1)?.version_id || "";
+  select.value = record.active_version_id || versions.at(-1)?.version_id || "";
 };
 
 const resetSkillWorkspace = () => {
@@ -280,6 +292,14 @@ const resetSkillWorkspace = () => {
   document.querySelector("#skill-version-select").disabled = true;
   document.querySelector("#skill-version-label").value = "";
   document.querySelector("#skill-version-label").disabled = true;
+  document.querySelector("#skill-commit-message").value = "";
+  document.querySelector("#skill-commit-message").disabled = true;
+  document.querySelector("#skill-export-path").disabled = true;
+  document.querySelector("#export-skill").disabled = true;
+  document.querySelector("#sync-skill").disabled = true;
+  document.querySelector("#evolve-skill").disabled = true;
+  document.querySelector("#promote-skill").disabled = true;
+  document.querySelector("#activate-skill-version").disabled = true;
   const editor = document.querySelector("#skill-content-editor");
   editor.value = "";
   editor.disabled = true;
@@ -289,39 +309,55 @@ const resetSkillWorkspace = () => {
   document.querySelector("#skill-info-badge").textContent = "EMPTY";
   const info = document.querySelector("#skill-info-content");
   info.className = "skill-info-empty";
-  info.innerHTML = "<p>Choose a Skill from the registry to inspect its path, hashes, lifecycle state, and version history.</p>";
+  info.innerHTML = "<p>Choose a Skill to inspect its immutable versions, active pointer, hashes, and synchronization state.</p>";
   setSkillOperationStatus("Select a version to begin editing.");
   updateSkillEditorState();
 };
 
 const updateSkillEditorState = () => {
   const editor = document.querySelector("#skill-content-editor");
-  const record = activeSkillPayload?.record;
+  const record = activeSkillPayload?.skill;
   const hasSkill = Boolean(activeSkillId && record);
-  const hasChanges = hasSkill && !editor.disabled && editor.value !== activeEditorSavedContent;
-  const hasLocalChanges = Boolean(activeSkillPayload?.has_local_changes);
-  const editingLocalHead = !record || !activeVersionId || activeVersionId === record.base_version_id;
-  const canPublish = hasChanges || (hasLocalChanges && editingLocalHead);
+  const contentChanged = hasSkill && !editor.disabled && editor.value !== activeEditorSavedContent;
+  const metadataChanged = hasSkill && Boolean(
+    document.querySelector("#skill-version-label").value.trim()
+    || document.querySelector("#skill-commit-message").value.trim()
+  );
+  const hasChanges = contentChanged || metadataChanged;
   const status = document.querySelector("#skill-editor-status");
   if (hasChanges) {
-    status.textContent = "UNSAVED EDITS";
-  } else if (hasLocalChanges) {
-    status.textContent = "LOCAL CHANGES";
+    status.textContent = "DRAFT";
   } else if (record) {
-    status.textContent = (record.hash_state || "READY").toUpperCase();
+    status.textContent = (record.sync_state || "LOCAL_ONLY").toUpperCase();
   }
-  document.querySelector("#save-skill").disabled = !hasChanges;
-  document.querySelector("#publish-skill").disabled = !canPublish;
+  document.querySelector("#publish-skill").disabled = !hasChanges;
+  document.querySelector("#activate-skill-version").disabled = !(
+    hasSkill && activeVersionId && activeVersionId !== record.active_version_id
+  );
+  document.querySelector("#sync-skill").disabled = !hasSkill;
+  document.querySelector("#evolve-skill").disabled = !(
+    hasSkill && activeVersionId && record.cloud_skill_id
+  );
+  document.querySelector("#promote-skill").disabled = !(
+    hasSkill
+    && activeVersionId
+    && record.cloud_skill_id
+    && Number.isInteger(record.cloud_revision)
+    && activeVersionId !== record.published_head_id
+  );
 };
 
 const renderSkillDetail = (payload) => {
-  if (!payload?.record) return;
-  const record = payload.record;
+  if (!payload?.skill) return;
+  const record = payload.skill;
   activeSkillPayload = payload;
   activeSkillId = record.skill_id;
-  document.querySelector("#skill-editor-title").textContent = record.skill_name;
-  document.querySelector("#skill-editor-subtitle").textContent = `${record.path} · edit the local SKILL.md, then publish a child version.`;
+  document.querySelector("#skill-editor-title").textContent = record.name;
+  document.querySelector("#skill-editor-subtitle").textContent = "Edit a browser draft, then publish a new immutable local version.";
   document.querySelector("#skill-version-label").disabled = false;
+  document.querySelector("#skill-commit-message").disabled = false;
+  document.querySelector("#skill-export-path").disabled = false;
+  document.querySelector("#export-skill").disabled = false;
   renderVersionSelector(payload);
   renderSkillInfo(payload);
   document.querySelectorAll("[data-skill-ref]").forEach((button) => {
@@ -346,10 +382,12 @@ const loadSkillDetail = async (skillRef) => {
   try {
     const payload = await apiRequest(`/api/v1/skills/${encodeURIComponent(skillRef)}`);
     renderSkillDetail(payload);
-    const defaultVersion = payload.record.base_version_id || payload.versions?.at(-1)?.version_id || null;
+    const defaultVersion = payload.skill.active_version_id || payload.versions?.at(-1)?.version_id || null;
     await loadSkillVersion(defaultVersion, { force: true });
+    return payload;
   } catch (error) {
     setSkillOperationStatus(`Unable to load Skill: ${error.message}`, "error");
+    return null;
   }
 };
 
@@ -365,14 +403,14 @@ const loadSkillVersion = async (versionId, { force = false } = {}) => {
   try {
     const query = versionId ? `?version_id=${encodeURIComponent(versionId)}` : "";
     const payload = await apiRequest(`/api/v1/skills/${encodeURIComponent(activeSkillId)}/content${query}`);
-    activeVersionId = versionId || null;
+    activeVersionId = payload.version_id || versionId || null;
     activeEditorSavedContent = extractSkillContent(payload.content);
     editor.value = activeEditorSavedContent;
     editor.disabled = false;
     setSkillContentMode("preview");
     renderSkillContentPreview(activeEditorSavedContent);
     document.querySelector("#skill-version-label").disabled = false;
-    setSkillOperationStatus(`Editing ${shortVersionId(versionId) || "local working copy"}. Save locally or publish a new child version.`);
+    setSkillOperationStatus(`Editing a draft based on ${shortVersionId(activeVersionId)}. Publish creates a new immutable version.`);
     updateSkillEditorState();
   } catch (error) {
     setSkillOperationStatus(`Unable to load version: ${error.message}`, "error");
@@ -428,22 +466,24 @@ const compareSideSelectors = {
   right: { skill: "#compare-right-select", version: "#compare-right-version-select" },
 };
 
-const renderCompareVersionOptions = (side, payload) => {
+const renderCompareVersionOptions = (side, payload, { preferredVersionId = null } = {}) => {
   const versionSelect = document.querySelector(compareSideSelectors[side].version);
-  const record = payload.record;
+  const record = payload.skill;
   const versions = [...(payload.versions || [])];
-  if (record.base_version_id && !versions.some((version) => version.version_id === record.base_version_id)) {
-    versions.push({ version_id: record.base_version_id, version_label: record.version_label, status: "current" });
-  }
   versionSelect.innerHTML = versions.length
     ? versions.map((version) => {
-      const current = version.version_id === record.base_version_id;
-      const label = current ? `Current local · ${versionLabel(version)}` : versionLabel(version);
+      const current = version.version_id === record.active_version_id;
+      const label = current ? `Active · ${versionLabel(version)}` : versionLabel(version);
       return `<option value="${escapeHtml(version.version_id)}">${escapeHtml(label)} · ${escapeHtml(version.status || "history")}</option>`;
     }).join("")
-    : '<option value="">Local working copy</option>';
+    : '<option value="">No local versions</option>';
   versionSelect.disabled = false;
-  versionSelect.value = record.base_version_id || versions.at(-1)?.version_id || "";
+  const availableVersionIds = new Set(versions.map((version) => version.version_id));
+  const selectedVersionId = preferredVersionId && availableVersionIds.has(preferredVersionId)
+    ? preferredVersionId
+    : (record.active_version_id || versions.at(-1)?.version_id || "");
+  versionSelect.value = selectedVersionId;
+  return selectedVersionId;
 };
 
 const loadSkillContent = async (side) => {
@@ -477,10 +517,11 @@ const loadSkillContent = async (side) => {
   }
 };
 
-const loadCompareVersions = async (side) => {
+const loadCompareVersions = async (side, { preserveSelection = false } = {}) => {
   const selectors = compareSideSelectors[side];
   const skillSelect = document.querySelector(selectors.skill);
   const versionSelect = document.querySelector(selectors.version);
+  const preferredVersionId = preserveSelection ? versionSelect.value : null;
   const requestToken = ++compareVersionRequestTokens[side];
   if (!skillSelect?.value) {
     versionSelect.innerHTML = "<option>Select a Skill first</option>";
@@ -499,7 +540,7 @@ const loadCompareVersions = async (side) => {
   try {
     const payload = await apiRequest(`/api/v1/skills/${encodeURIComponent(skillSelect.value)}`);
     if (requestToken !== compareVersionRequestTokens[side]) return;
-    renderCompareVersionOptions(side, payload);
+    renderCompareVersionOptions(side, payload, { preferredVersionId });
     await loadSkillContent(side);
   } catch (error) {
     if (requestToken !== compareVersionRequestTokens[side]) return;
@@ -511,12 +552,35 @@ const loadCompareVersions = async (side) => {
   }
 };
 
+const refreshCompareForSkill = async (skillId, payload = null) => {
+  const matchingSides = ["left", "right"].filter((side) => {
+    const skillSelect = document.querySelector(compareSideSelectors[side].skill);
+    return skillSelect?.value === skillId;
+  });
+  await Promise.all(matchingSides.map(async (side) => {
+    if (!payload) {
+      await loadCompareVersions(side, { preserveSelection: true });
+      return;
+    }
+    const versionSelect = document.querySelector(compareSideSelectors[side].version);
+    const previousVersionId = versionSelect?.value || "";
+    const selectedVersionId = renderCompareVersionOptions(
+      side,
+      payload,
+      { preferredVersionId: previousVersionId },
+    );
+    if (selectedVersionId !== previousVersionId || !compareContentState[side]) {
+      await loadSkillContent(side);
+    }
+  }));
+};
+
 const renderSkills = (payload) => {
   skillsState = payload.skills || [];
   document.querySelector("#overview-skills-value").textContent = `${skillsState.length} registered`;
   document.querySelector("#overview-skills-detail").textContent = payload.pending_count
-    ? `${payload.pending_count} pending upload${payload.pending_count === 1 ? "" : "s"}`
-    : "Local registry is in sync";
+    ? `${payload.pending_count} pending sync operation${payload.pending_count === 1 ? "" : "s"}`
+    : "No pending sync operations";
   const list = document.querySelector("#skills-list");
   if (!skillsState.length) {
     list.className = "empty-list";
@@ -526,8 +590,8 @@ const renderSkills = (payload) => {
     list.innerHTML = skillsState.map((skill) => `
       <button class="skill-list-row" type="button" data-skill-ref="${escapeHtml(skill.skill_id)}">
         <span class="skill-list-mark"></span>
-        <span><strong>${escapeHtml(skill.skill_name)}</strong><small>${escapeHtml(skill.version_label || shortVersionId(skill.base_version_id) || "Unversioned")}</small></span>
-        <span class="skill-state">${escapeHtml(skill.hash_state || "unknown")}</span>
+        <span><strong>${escapeHtml(skill.name)}</strong><small>${escapeHtml(shortVersionId(skill.active_version_id) || "Unversioned")}</small></span>
+        <span class="skill-state">${escapeHtml(skill.sync_state || "local_only")}</span>
       </button>`).join("");
     list.querySelectorAll("[data-skill-ref]").forEach((button) => {
       button.addEventListener("click", () => loadSkillDetail(button.dataset.skillRef));
@@ -535,7 +599,7 @@ const renderSkills = (payload) => {
   }
 
   const options = skillsState.length
-    ? skillsState.map((skill) => `<option value="${escapeHtml(skill.skill_id)}">${escapeHtml(skill.skill_name)} · ${escapeHtml(skill.version_label || shortVersionId(skill.base_version_id) || "local")}</option>`).join("")
+    ? skillsState.map((skill) => `<option value="${escapeHtml(skill.skill_id)}">${escapeHtml(skill.name)} · ${escapeHtml(shortVersionId(skill.active_version_id) || "local")}</option>`).join("")
     : "<option value=\"\">No registered skills</option>";
   ["compare-left-select", "compare-right-select"].forEach((id) => {
     const select = document.querySelector(`#${id}`);
@@ -594,16 +658,16 @@ const updateActiveSkillListRow = (record, pendingCount = 0) => {
     if (button.dataset.skillRef !== record.skill_id) return;
     const version = button.querySelector("small");
     const state = button.querySelector(".skill-state");
-    if (version) version.textContent = record.version_label || shortVersionId(record.base_version_id) || "Unversioned";
-    if (state) state.textContent = record.hash_state || "unknown";
+    if (version) version.textContent = shortVersionId(record.active_version_id) || "Unversioned";
+    if (state) state.textContent = record.sync_state || "local_only";
     button.classList.add("active");
   });
   document.querySelector("#overview-skills-detail").textContent = pendingCount
-    ? `${pendingCount} pending upload${pendingCount === 1 ? "" : "s"}`
-    : "Local registry is in sync";
+    ? `${pendingCount} pending sync operation${pendingCount === 1 ? "" : "s"}`
+    : "No pending sync operations";
 };
 
-const saveSkillContent = async (publish = false) => {
+const publishSkillContent = async () => {
   if (!activeSkillId) return;
   const editor = document.querySelector("#skill-content-editor");
   const content = editor.value;
@@ -612,29 +676,175 @@ const saveSkillContent = async (publish = false) => {
     return;
   }
 
-  const saveButton = document.querySelector("#save-skill");
   const publishButton = document.querySelector("#publish-skill");
-  saveButton.disabled = true;
   publishButton.disabled = true;
-  setSkillOperationStatus(publish ? "Saving locally and publishing a new version…" : "Saving local Skill content…");
-  const body = { content };
-  if (publish) {
-    const label = document.querySelector("#skill-version-label").value.trim();
-    body.version_label = label || null;
-  }
-  const endpoint = `/api/v1/skills/${encodeURIComponent(activeSkillId)}${publish ? "/publish" : "/content"}`;
+  setSkillOperationStatus("Publishing a new immutable local version…");
+  const label = document.querySelector("#skill-version-label").value.trim();
+  const commitMessage = document.querySelector("#skill-commit-message").value.trim();
+  const body = {
+    content,
+    base_version_id: activeVersionId,
+    version_label: label || null,
+    commit_message: commitMessage || null,
+    activate: document.querySelector("#activate-published-skill").checked,
+  };
+  const endpoint = `/api/v1/skills/${encodeURIComponent(activeSkillId)}/publish`;
   try {
     const payload = await apiRequest(endpoint, {
-      method: publish ? "POST" : "PUT",
+      method: "POST",
       body: JSON.stringify(body),
     });
-    renderSkillDetail(payload);
-    await loadSkillVersion(payload.record.base_version_id || null, { force: true });
-    updateActiveSkillListRow(payload.record, payload.pending_uploads?.length || 0);
-    setSkillOperationStatus(payload.message || (publish ? "Published a new Skill version." : "Saved local Skill content."), "success");
-  } catch (error) {
-    setSkillOperationStatus(`${publish ? "Unable to publish" : "Unable to save"}: ${error.message}`, "error");
+    renderSkillDetail(payload.detail);
+    await loadSkillVersion(payload.result.version_id, { force: true });
+    updateActiveSkillListRow(payload.detail.skill, payload.detail.outbox_operations?.length || 0);
+    await refreshCompareForSkill(payload.detail.skill.skill_id, payload.detail);
+    document.querySelector("#skill-version-label").value = "";
+    document.querySelector("#skill-commit-message").value = "";
     updateSkillEditorState();
+    setSkillOperationStatus(payload.message || "Published a new immutable Skill version.", "success");
+  } catch (error) {
+    setSkillOperationStatus(`Unable to publish: ${error.message}`, "error");
+    updateSkillEditorState();
+  }
+};
+
+const activateSelectedSkillVersion = async () => {
+  if (!activeSkillId || !activeVersionId) return;
+  try {
+    const payload = await apiRequest(`/api/v1/skills/${encodeURIComponent(activeSkillId)}/switch`, {
+      method: "POST",
+      body: JSON.stringify({ version_id: activeVersionId }),
+    });
+    renderSkillDetail(payload);
+    updateActiveSkillListRow(payload.skill, payload.outbox_operations?.length || 0);
+    await refreshCompareForSkill(payload.skill.skill_id, payload);
+    setSkillOperationStatus(`Activated ${shortVersionId(activeVersionId)} without changing version files.`, "success");
+  } catch (error) {
+    setSkillOperationStatus(`Unable to activate version: ${error.message}`, "error");
+  }
+};
+
+const exportSelectedSkillVersion = async () => {
+  if (!activeSkillId || !activeVersionId) return;
+  const targetPath = document.querySelector("#skill-export-path").value.trim();
+  if (!targetPath) {
+    setSkillOperationStatus("Enter an absolute export directory.", "error");
+    return;
+  }
+  try {
+    const payload = await apiRequest(`/api/v1/skills/${encodeURIComponent(activeSkillId)}/export`, {
+      method: "POST",
+      body: JSON.stringify({ target_path: targetPath, version_id: activeVersionId, replace: true }),
+    });
+    setSkillOperationStatus(`Exported ${payload.exported_files.length} files to ${payload.target_path}.`, "success");
+  } catch (error) {
+    setSkillOperationStatus(`Unable to export: ${error.message}`, "error");
+  }
+};
+
+const syncSelectedSkill = async () => {
+  if (!activeSkillId) return;
+  setSkillOperationStatus("Synchronizing immutable versions and cloud pointers…");
+  try {
+    const payload = await apiRequest(`/api/v1/skills/${encodeURIComponent(activeSkillId)}/sync`, {
+      method: "POST",
+      body: JSON.stringify({ direction: "both" }),
+    });
+    renderSkillDetail(payload);
+    updateActiveSkillListRow(payload.skill, payload.outbox_operations?.length || 0);
+    const selected = activeVersionId && payload.versions.some((item) => item.version_id === activeVersionId)
+      ? activeVersionId
+      : payload.skill.active_version_id;
+    await loadSkillVersion(selected, { force: true });
+    await refreshCompareForSkill(payload.skill.skill_id, payload);
+    setSkillOperationStatus("Cloud synchronization completed without changing the active pointer.", "success");
+  } catch (error) {
+    setSkillOperationStatus(`Unable to sync: ${error.message}`, "error");
+  }
+};
+
+const evolveSelectedSkill = async () => {
+  if (!activeSkillId || !activeVersionId) return;
+  setSkillOperationStatus("Requesting cloud evolution from the selected version…");
+  try {
+    const payload = await apiRequest(`/api/v1/skills/${encodeURIComponent(activeSkillId)}/evolve`, {
+      method: "POST",
+      body: JSON.stringify({
+        base_version_id: activeVersionId,
+        mode: "sync",
+        operation_id: crypto.randomUUID(),
+      }),
+    });
+    const result = payload.evolved
+      ? `Evolution created ${payload.new_version_ids.length} cloud draft version(s). Sync to download them.`
+      : `No version created; ${payload.pending_count}/${payload.threshold} traces are ready.`;
+    setSkillOperationStatus(result, "success");
+  } catch (error) {
+    setSkillOperationStatus(`Unable to evolve: ${error.message}`, "error");
+  }
+};
+
+const promoteSelectedSkill = async () => {
+  const record = activeSkillPayload?.skill;
+  if (!activeSkillId || !activeVersionId || !record) return;
+  const promotedVersionId = activeVersionId;
+  setSkillOperationStatus("Promoting the selected cloud version…");
+  try {
+    await apiRequest(`/api/v1/skills/${encodeURIComponent(activeSkillId)}/promote`, {
+      method: "POST",
+      body: JSON.stringify({
+        version_id: promotedVersionId,
+        expected_cloud_revision: record.cloud_revision,
+        operation_id: crypto.randomUUID(),
+      }),
+    });
+    const detail = await loadSkillDetail(activeSkillId);
+    if (detail) await refreshCompareForSkill(detail.skill.skill_id, detail);
+    setSkillOperationStatus(
+      `Promoted ${shortVersionId(promotedVersionId)} without changing the local active pointer.`,
+      "success",
+    );
+  } catch (error) {
+    setSkillOperationStatus(`Unable to promote: ${error.message}`, "error");
+  }
+};
+
+const registerSkill = async () => {
+  const sourcePath = document.querySelector("#register-skill-path").value.trim();
+  if (!sourcePath) {
+    setRegisterSkillStatus("Enter a Skill directory or SKILL.md path.", "error");
+    return;
+  }
+  setRegisterSkillStatus("");
+  const alias = document.querySelector("#register-skill-alias").value.trim();
+  const versionLabel = document.querySelector("#register-skill-version-label").value.trim();
+  const commitMessage = document.querySelector("#register-skill-message").value.trim();
+  const duplicateAction = document.querySelector("#register-skill-duplicate-action").value;
+  try {
+    const result = await apiRequest("/api/v1/skills/register", {
+      method: "POST",
+      body: JSON.stringify({
+        source_path: sourcePath,
+        alias: alias || null,
+        version_label: versionLabel || null,
+        commit_message: commitMessage || null,
+        duplicate_action: duplicateAction || null,
+      }),
+    });
+    document.querySelector("#register-skill-path").value = "";
+    document.querySelector("#register-skill-alias").value = "";
+    document.querySelector("#register-skill-version-label").value = "";
+    document.querySelector("#register-skill-message").value = "";
+    document.querySelector("#register-skill-duplicate-action").value = "";
+    await loadSkills();
+    await loadSkillDetail(result.skill_id);
+    const verb = result.action === "reused" ? "Reused" : "Registered";
+    setRegisterSkillStatus(`${verb} local version ${shortVersionId(result.version_id)}.`, "success");
+  } catch (error) {
+    const duplicateHint = error.message.includes("identical local Skill snapshot already exists")
+      ? 'An identical Skill is already registered. To create another Skill, change "If an identical snapshot already exists" to "Register a separate Skill", then click Register again.'
+      : `Unable to register: ${error.message}`;
+    setRegisterSkillStatus(duplicateHint, "error");
   }
 };
 
@@ -1062,6 +1272,10 @@ const setSkillView = (viewName) => {
   });
   if (viewName === "compare") {
     document.querySelector("#skills-page")?.scrollIntoView({ block: "start" });
+    Promise.all([
+      loadCompareVersions("left", { preserveSelection: true }),
+      loadCompareVersions("right", { preserveSelection: true }),
+    ]);
   }
 };
 
@@ -1123,8 +1337,15 @@ document.querySelector("#skill-content-editor").addEventListener("input", () => 
   updateSkillEditorState();
   renderSkillContentPreview();
 });
-document.querySelector("#save-skill").addEventListener("click", () => saveSkillContent(false));
-document.querySelector("#publish-skill").addEventListener("click", () => saveSkillContent(true));
+document.querySelector("#skill-version-label").addEventListener("input", updateSkillEditorState);
+document.querySelector("#skill-commit-message").addEventListener("input", updateSkillEditorState);
+document.querySelector("#publish-skill").addEventListener("click", publishSkillContent);
+document.querySelector("#activate-skill-version").addEventListener("click", activateSelectedSkillVersion);
+document.querySelector("#export-skill").addEventListener("click", exportSelectedSkillVersion);
+document.querySelector("#sync-skill").addEventListener("click", syncSelectedSkill);
+document.querySelector("#evolve-skill").addEventListener("click", evolveSelectedSkill);
+document.querySelector("#promote-skill").addEventListener("click", promoteSelectedSkill);
+document.querySelector("#register-skill").addEventListener("click", registerSkill);
 document.querySelector("#load-demo").addEventListener("click", () => {
   compareRequestTokens.left += 1;
   compareRequestTokens.right += 1;

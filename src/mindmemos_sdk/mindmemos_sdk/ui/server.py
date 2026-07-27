@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import http.server
 import json
+import secrets
 import threading
 import webbrowser
 from importlib.resources import files
@@ -15,9 +16,16 @@ from ..config import ConfigManager, SDKConfig, mask_secret
 from ..errors import ConfigError, MindMemOSSDKError
 from ..memory import MemoryClient
 from ..memory.core import MemoryDefaults
-from ..skills import SkillCloudClient, SkillManager
-from ..skills.bundle import bundle_files_from_content, compute_content_hash, read_local_bundle
+from ..skills import (
+    ExportSkillRequest,
+    LocalSkillRepository,
+    PublishLocalRequest,
+    RegisterLocalRequest,
+    SkillCloudClient,
+    SkillManager,
+)
 from ..transport import HttpTransport
+from .skill_service import LocalSkillUIService
 
 
 class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
@@ -25,8 +33,15 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
 
     server_version = "MindMemOSLocalUI/0.1"
 
-    def __init__(self, *args: object, config_manager: ConfigManager, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *args: object,
+        config_manager: ConfigManager,
+        launch_token: str,
+        **kwargs: object,
+    ) -> None:
         self._config_manager = config_manager
+        self._launch_token = launch_token
         super().__init__(*args, **kwargs)
 
     def log_message(self, format: str, *args: object) -> None:
@@ -40,19 +55,47 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_PUT(self) -> None:  # noqa: N802
+        if not self._validate_mutation_request():
+            return
         path = urlsplit(self.path).path
         if path == "/api/v1/config":
             self._handle_config_update()
             return
         if path.startswith("/api/v1/skills/") and path.endswith("/content"):
-            self._handle_skill_write(path.removesuffix("/content"), publish=False)
+            self._send_json(
+                {
+                    "error": "immutable_version",
+                    "message": "Existing Skill versions are immutable. Publish an editor draft instead.",
+                },
+                status=409,
+            )
             return
         self._send_json({"error": "not_found", "message": "Unknown API route."}, status=404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._validate_mutation_request():
+            return
         path = urlsplit(self.path).path
+        if path == "/api/v1/skills/register":
+            self._handle_skill_register()
+            return
         if path.startswith("/api/v1/skills/") and path.endswith("/publish"):
-            self._handle_skill_write(path.removesuffix("/publish"), publish=True)
+            self._handle_skill_publish(path.removesuffix("/publish"))
+            return
+        if path.startswith("/api/v1/skills/") and path.endswith("/switch"):
+            self._handle_skill_switch(path.removesuffix("/switch"))
+            return
+        if path.startswith("/api/v1/skills/") and path.endswith("/export"):
+            self._handle_skill_export(path.removesuffix("/export"))
+            return
+        if path.startswith("/api/v1/skills/") and path.endswith("/sync"):
+            self._handle_skill_sync(path.removesuffix("/sync"))
+            return
+        if path.startswith("/api/v1/skills/") and path.endswith("/evolve"):
+            self._handle_skill_evolve(path.removesuffix("/evolve"))
+            return
+        if path.startswith("/api/v1/skills/") and path.endswith("/promote"):
+            self._handle_skill_promote(path.removesuffix("/promote"))
             return
         self._send_json({"error": "not_found", "message": "Unknown API route."}, status=404)
 
@@ -120,22 +163,42 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
             return
         skill_ref = parts[0]
         manager, transport = _skill_manager(self._config_manager)
+        service = LocalSkillUIService(manager)
         try:
-            record = manager.show(skill_ref)
             if len(parts) == 1:
-                self._send_json(_skill_detail_payload(manager, record))
+                self._send_json(service.detail(skill_ref).model_dump(mode="json"))
                 return
             if parts[1] == "content":
                 query = parse_qs(urlsplit(self.path).query)
                 version_id = query.get("version_id", [None])[0]
-                content = _skill_content(manager, record, version_id)
-                self._send_json({"skill_id": record.skill_id, "version_id": version_id, "content": content})
+                self._send_json(service.content(skill_ref, version_id).model_dump(mode="json"))
+                return
+            if parts[1] == "compare":
+                query = parse_qs(urlsplit(self.path).query)
+                from_version_id = (query.get("from") or [None])[0]
+                to_version_id = (query.get("to") or [None])[0]
+                if not from_version_id or not to_version_id:
+                    raise ValueError("compare requires from and to version IDs")
+                self._send_json(
+                    service.compare(skill_ref, from_version_id, to_version_id).model_dump(mode="json")
+                )
                 return
             self._send_json({"error": "not_found", "message": "Unknown Skill route."}, status=404)
         finally:
             transport.close()
 
-    def _handle_skill_write(self, path: str, *, publish: bool) -> None:
+    def _handle_skill_register(self) -> None:
+        manager, transport = _skill_manager(self._config_manager)
+        try:
+            payload = self._read_json()
+            result = LocalSkillUIService(manager).register(RegisterLocalRequest.model_validate(payload))
+            self._send_json(result.model_dump(mode="json"), status=201 if result.action == "created" else 200)
+        except (ConfigError, MindMemOSSDKError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"error": "skill_register_failed", "message": str(exc)}, status=400)
+        finally:
+            transport.close()
+
+    def _handle_skill_publish(self, path: str) -> None:
         suffix = path.removeprefix("/api/v1/skills/")
         parts = [unquote(part) for part in suffix.split("/") if part]
         if len(parts) != 1:
@@ -148,21 +211,126 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
             content = payload.get("content")
             if not isinstance(content, str) or not content.strip():
                 raise ValueError("Skill content must be a non-empty string.")
-            record = manager.show(parts[0])
-            manager.save_content(record.skill_id, content=content)
-            if publish:
-                version_label = payload.get("version_label")
-                if version_label is not None and not isinstance(version_label, str):
-                    raise ValueError("version_label must be a string or null.")
-                label = version_label.strip() if isinstance(version_label, str) else None
-                record = manager.push(record.skill_id, version_label=label or None)
-                message = f"Published version {record.version_label or record.base_version_id}."
-            else:
-                record = manager.show(record.skill_id)
-                message = "Saved the local Skill content."
-            self._send_json({**_skill_detail_payload(manager, record), "message": message})
+            request = PublishLocalRequest(
+                skill_id=parts[0],
+                base_version_id=_optional_string(payload, "base_version_id"),
+                content=content,
+                version_label=_optional_string(payload, "version_label"),
+                commit_message=_optional_string(payload, "commit_message"),
+                activate=bool(payload.get("activate", False)),
+            )
+            result, detail = LocalSkillUIService(manager).publish(request)
+            self._send_json(
+                {
+                    "result": result.model_dump(mode="json"),
+                    "detail": detail.model_dump(mode="json"),
+                    "message": f"Published immutable local version {result.version_id}.",
+                },
+                status=201,
+            )
         except (ConfigError, MindMemOSSDKError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            self._send_json({"error": "skill_write_failed", "message": str(exc)}, status=400)
+            self._send_json({"error": "skill_publish_failed", "message": str(exc)}, status=400)
+        finally:
+            transport.close()
+
+    def _handle_skill_switch(self, path: str) -> None:
+        skill_ref = _single_skill_ref(path)
+        manager, transport = _skill_manager(self._config_manager)
+        try:
+            payload = self._read_json()
+            version_id = payload.get("version_id")
+            if not isinstance(version_id, str) or not version_id.strip():
+                raise ValueError("version_id must be a non-empty string")
+            detail = LocalSkillUIService(manager).switch(skill_ref, version_id.strip())
+            self._send_json(detail.model_dump(mode="json"))
+        except (ConfigError, MindMemOSSDKError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"error": "skill_switch_failed", "message": str(exc)}, status=400)
+        finally:
+            transport.close()
+
+    def _handle_skill_export(self, path: str) -> None:
+        skill_ref = _single_skill_ref(path)
+        manager, transport = _skill_manager(self._config_manager)
+        try:
+            payload = self._read_json()
+            target_path = payload.get("target_path")
+            if not isinstance(target_path, str) or not target_path.strip():
+                raise ValueError("target_path must be a non-empty string")
+            result = LocalSkillUIService(manager).export(
+                ExportSkillRequest(
+                    skill_id=skill_ref,
+                    target_path=target_path,
+                    version_id=_optional_string(payload, "version_id"),
+                    replace=bool(payload.get("replace", True)),
+                )
+            )
+            self._send_json(result.model_dump(mode="json"))
+        except (ConfigError, MindMemOSSDKError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"error": "skill_export_failed", "message": str(exc)}, status=400)
+        finally:
+            transport.close()
+
+    def _handle_skill_sync(self, path: str) -> None:
+        skill_ref = _single_skill_ref(path)
+        manager, transport = _skill_manager(self._config_manager)
+        try:
+            payload = self._read_json()
+            direction = payload.get("direction", "both")
+            if not isinstance(direction, str):
+                raise ValueError("direction must be a string")
+            detail = LocalSkillUIService(manager).sync(
+                skill_ref,
+                direction=direction,
+            )
+            self._send_json(detail.model_dump(mode="json"))
+        except (ConfigError, MindMemOSSDKError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"error": "skill_sync_failed", "message": str(exc)}, status=400)
+        finally:
+            transport.close()
+
+    def _handle_skill_evolve(self, path: str) -> None:
+        skill_ref = _single_skill_ref(path)
+        manager, transport = _skill_manager(self._config_manager)
+        try:
+            payload = self._read_json()
+            mode = payload.get("mode", "sync")
+            if mode not in {"sync", "async"}:
+                raise ValueError("mode must be 'sync' or 'async'")
+            result = LocalSkillUIService(manager).evolve(
+                skill_ref,
+                base_version_id=_optional_string(payload, "base_version_id"),
+                algorithm=_optional_string(payload, "algorithm"),
+                mode=mode,
+                operation_id=_optional_string(payload, "operation_id"),
+            )
+            self._send_json(result.model_dump(mode="json"))
+        except (ConfigError, MindMemOSSDKError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"error": "skill_evolve_failed", "message": str(exc)}, status=400)
+        finally:
+            transport.close()
+
+    def _handle_skill_promote(self, path: str) -> None:
+        skill_ref = _single_skill_ref(path)
+        manager, transport = _skill_manager(self._config_manager)
+        try:
+            payload = self._read_json()
+            version_id = _optional_string(payload, "version_id")
+            if version_id is None:
+                raise ValueError("version_id must be a non-empty string")
+            revision = payload.get("expected_cloud_revision")
+            if revision is not None and (
+                not isinstance(revision, int) or isinstance(revision, bool)
+            ):
+                raise ValueError("expected_cloud_revision must be an integer")
+            result = LocalSkillUIService(manager).promote(
+                skill_ref,
+                version_id=version_id,
+                expected_cloud_revision=revision,
+                operation_id=_optional_string(payload, "operation_id"),
+            )
+            self._send_json(result.model_dump(mode="json"))
+        except (ConfigError, MindMemOSSDKError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"error": "skill_promote_failed", "message": str(exc)}, status=400)
         finally:
             transport.close()
 
@@ -199,6 +367,24 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _validate_mutation_request(self) -> bool:
+        supplied_token = self.headers.get("X-MindMemOS-UI-Token")
+        if supplied_token is None or not secrets.compare_digest(supplied_token, self._launch_token):
+            self._send_json({"error": "forbidden", "message": "Invalid local UI launch token."}, status=403)
+            return False
+        origin = self.headers.get("Origin")
+        if origin:
+            parsed = urlsplit(origin)
+            server_port = self.server.server_address[1]
+            if (
+                parsed.scheme != "http"
+                or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or parsed.port != server_port
+            ):
+                self._send_json({"error": "forbidden", "message": "Invalid local UI origin."}, status=403)
+                return False
+        return True
+
 
 def _static_directory() -> Path:
     """Resolve the packaged static directory in a source tree or wheel."""
@@ -216,7 +402,7 @@ def _config_payload(config_manager: ConfigManager) -> dict[str, object]:
         "memory": config.memory.model_dump(mode="json"),
         "storage": config.storage.model_dump(mode="json"),
         "network": config.network.model_dump(mode="json"),
-        "skills_count": len(config.skills),
+        "skills_count": len(LocalSkillRepository(config_manager).list_manifests()),
         "metadata": config.metadata.model_dump(mode="json"),
     }
 
@@ -326,51 +512,34 @@ def _owned_memory_filters(filters: dict[str, object] | None, user_id: str) -> di
 def _skills_payload(config_manager: ConfigManager) -> dict[str, object]:
     manager, transport = _skill_manager(config_manager)
     try:
-        records = manager.list()
-        pending = manager.pending_uploads()
+        skills = LocalSkillUIService(manager).list_skills()
+        pending = manager.local_repository.load_outbox().operations
         return {
-            "skills": [record.model_dump(mode="json") for record in records],
-            "pending_uploads": [item.model_dump(mode="json") for item in pending],
-            "skills_count": len(records),
+            "skills": [item.model_dump(mode="json") for item in skills],
+            "outbox_operations": [item.model_dump(mode="json") for item in pending],
+            "skills_count": len(skills),
             "pending_count": len(pending),
         }
     finally:
         transport.close()
 
 
-def _skill_detail_payload(manager: SkillManager, record: object) -> dict[str, object]:
-    """Build the local Skill detail DTO used by the editable library view."""
-    from ..skills.models import SkillRecord
-
-    if not isinstance(record, SkillRecord):
-        raise ValueError("Invalid Skill record.")
-    versions = manager.history(record.skill_id)
-    pending = [item for item in manager.pending_uploads() if item.skill_id == record.skill_id]
-    try:
-        local_content_hash = compute_content_hash(read_local_bundle(record.path))
-    except (OSError, ValueError):
-        local_content_hash = None
-    return {
-        "record": record.model_dump(mode="json"),
-        "versions": [item.model_dump(mode="json") for item in versions],
-        "pending_uploads": [item.model_dump(mode="json") for item in pending],
-        "local_content_hash": local_content_hash,
-        "has_local_changes": bool(local_content_hash and local_content_hash != record.content_hash),
-    }
+def _optional_string(payload: dict[str, object], key: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string or null")
+    normalized = value.strip()
+    return normalized or None
 
 
-def _skill_content(
-    manager: SkillManager,
-    record: object,
-    version_id: str | None,
-) -> str:
-    """Read the human-editable ``SKILL.md`` text for a local or cached version."""
-    from ..skills.models import SkillRecord
-
-    if not isinstance(record, SkillRecord):
-        raise ValueError("Invalid Skill record.")
-    content = manager.get_content(record.skill_id, version_id=version_id)
-    return bundle_files_from_content(content)["SKILL.md"]
+def _single_skill_ref(path: str) -> str:
+    suffix = path.removeprefix("/api/v1/skills/")
+    parts = [unquote(part) for part in suffix.split("/") if part]
+    if len(parts) != 1:
+        raise ValueError("Skill reference is required")
+    return parts[0]
 
 
 def run_ui(
@@ -385,13 +554,15 @@ def run_ui(
         raise ValueError("The local MindMemOS UI only supports loopback hosts.")
     static_dir = _static_directory()
     config_manager = ConfigManager(config_dir)
+    launch_token = secrets.token_urlsafe(32)
     handler = functools.partial(
         _LocalUIHandler,
         directory=str(static_dir),
         config_manager=config_manager,
+        launch_token=launch_token,
     )
     server = http.server.ThreadingHTTPServer((host, port), handler)
-    url = f"http://{host}:{server.server_address[1]}"
+    url = f"http://{host}:{server.server_address[1]}/?token={launch_token}"
     print(f"MindMemOS local UI: {url}")
     print("Press Ctrl-C to stop.")
 
