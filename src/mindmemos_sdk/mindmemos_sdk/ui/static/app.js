@@ -11,6 +11,10 @@ const TAB_COPY = {
     title: "Memory",
     description: "View active memories owned by the configured user through the cloud API.",
   },
+  lite: {
+    title: "Lite",
+    description: "Inspect local Lite runtime traces and SQLite observability records.",
+  },
   settings: {
     title: "Settings",
     description: "Configure connection, identity, operation defaults, storage, and network behavior.",
@@ -20,6 +24,11 @@ const TAB_COPY = {
 let configState = null;
 let skillsState = [];
 let memoryLoaded = false;
+let liteTraceListState = null;
+let liteTraceDetailState = null;
+let activeLiteTraceKey = null;
+let activeLiteSpanId = null;
+let liteTraceRequestToken = 0;
 const compareContentState = { left: "", right: "" };
 const comparePaneMessages = {
   left: "Select a Skill to load its content.",
@@ -182,6 +191,238 @@ const loadMemories = async (path = memoryRequestPath(false)) => {
     list.innerHTML = `<div class="memory-empty-state"><div class="empty-icon small">!</div><strong>Unable to load Memory</strong><span>${escapeHtml(error.message)}</span></div>`;
     setMemoryNotice(error.message, "error");
   }
+};
+
+const setLiteNotice = (message, tone = "info") => {
+  const notice = document.querySelector("#lite-notice");
+  if (!notice) return;
+  notice.dataset.tone = tone;
+  notice.querySelector("span:last-child").textContent = message;
+};
+
+const formatDuration = (value) => {
+  const milliseconds = Number(value || 0);
+  if (milliseconds >= 60000) return `${(milliseconds / 60000).toFixed(2)} min`;
+  if (milliseconds >= 1000) return `${(milliseconds / 1000).toFixed(2)} s`;
+  if (milliseconds >= 1) return `${milliseconds.toFixed(milliseconds >= 100 ? 0 : 2)} ms`;
+  return `${(milliseconds * 1000).toFixed(1)} µs`;
+};
+
+const formatTraceTime = (value) => {
+  if (!value) return "Time unavailable";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
+
+const liteTraceKey = (trace) => `${trace.source}:${trace.trace_id}`;
+
+const renderLiteTraceList = (payload) => {
+  liteTraceListState = payload;
+  const traces = payload.traces || [];
+  const list = document.querySelector("#lite-trace-list");
+  document.querySelector("#lite-database-badge").textContent = `${payload.database_count || 0} DB`;
+  document.querySelector("#lite-trace-directory-label").textContent = payload.directory || "No directory selected";
+  document.querySelector("#lite-trace-count").textContent = `${payload.total || 0} trace${payload.total === 1 ? "" : "s"}`;
+  if (!traces.length) {
+    list.innerHTML = '<div class="lite-empty-state"><div class="empty-icon small">⌁</div><strong>No traces found</strong><span>The selected Lite databases do not contain any completed traces.</span></div>';
+    return;
+  }
+
+  list.innerHTML = traces.map((trace) => {
+    const key = liteTraceKey(trace);
+    const active = key === activeLiteTraceKey ? " active" : "";
+    const status = trace.status_code === "ERROR" ? " · ERROR" : "";
+    return `<button class="lite-trace-row${active}" type="button" data-trace-key="${escapeHtml(key)}" data-trace-id="${escapeHtml(trace.trace_id)}" data-trace-source="${escapeHtml(trace.source)}">
+      <span class="lite-trace-name" title="${escapeHtml(trace.root_span_name)}">${escapeHtml(trace.root_span_name)}</span>
+      <span class="lite-trace-duration">${escapeHtml(formatDuration(trace.duration_ms))}</span>
+      <span class="lite-trace-id">traceId ${escapeHtml(trace.trace_id)}</span>
+      <span class="lite-trace-meta">${escapeHtml(formatTraceTime(trace.start_time))} · ${trace.span_count} spans · ${trace.llm_call_count} LLM${escapeHtml(status)}</span>
+    </button>`;
+  }).join("");
+
+  list.querySelectorAll("[data-trace-id]").forEach((row) => {
+    row.addEventListener("click", () => loadLiteTraceDetail({
+      trace_id: row.dataset.traceId,
+      source: row.dataset.traceSource,
+    }));
+  });
+};
+
+const loadLiteTraces = async () => {
+  const directory = document.querySelector("#lite-trace-directory").value.trim();
+  const limit = document.querySelector("#lite-trace-limit").value.trim() || "100";
+  const list = document.querySelector("#lite-trace-list");
+  if (!directory) {
+    setLiteNotice("Enter a Lite trace directory or SQLite database path.", "error");
+    return;
+  }
+  const requestToken = ++liteTraceRequestToken;
+  activeLiteTraceKey = null;
+  activeLiteSpanId = null;
+  liteTraceDetailState = null;
+  document.querySelector("#lite-database-badge").textContent = "LOADING";
+  list.innerHTML = '<div class="lite-empty-state"><div class="empty-icon small">⌁</div><strong>Scanning Lite traces…</strong><span>Opening matching SQLite databases in read-only mode.</span></div>';
+  document.querySelector("#lite-flame-chart").innerHTML = '<div class="lite-empty-state"><div class="empty-icon">◇</div><strong>Waiting for a trace</strong><span>The first root span will open after the directory scan completes.</span></div>';
+  document.querySelector("#lite-span-detail").innerHTML = '<div class="lite-empty-state compact"><strong>Span details</strong><span>Select a trace, then click a flame block.</span></div>';
+  setLiteNotice("Scanning the selected directory for MindMemOS Lite trace databases…");
+  try {
+    const params = new URLSearchParams({ directory, limit });
+    const payload = await apiRequest(`/api/v1/lite/traces?${params.toString()}`);
+    if (requestToken !== liteTraceRequestToken) return;
+    renderLiteTraceList(payload);
+    setLiteNotice(`Loaded ${payload.count || 0} of ${payload.total || 0} traces from ${payload.database_count || 0} SQLite database${payload.database_count === 1 ? "" : "s"}.`, "success");
+    if ((payload.traces || []).length) await loadLiteTraceDetail(payload.traces[0], { requestToken });
+  } catch (error) {
+    if (requestToken !== liteTraceRequestToken) return;
+    liteTraceListState = null;
+    document.querySelector("#lite-database-badge").textContent = "UNAVAILABLE";
+    document.querySelector("#lite-trace-count").textContent = "Trace data unavailable";
+    list.innerHTML = `<div class="lite-empty-state"><div class="empty-icon small">!</div><strong>Unable to load Lite traces</strong><span>${escapeHtml(error.message)}</span></div>`;
+    setLiteNotice(error.message, "error");
+  }
+};
+
+const loadLiteTraceDetail = async (trace, { requestToken = null } = {}) => {
+  if (!trace?.trace_id || !trace?.source) return;
+  const detailToken = requestToken ?? ++liteTraceRequestToken;
+  if (requestToken !== null) liteTraceRequestToken = requestToken;
+  activeLiteTraceKey = liteTraceKey(trace);
+  activeLiteSpanId = null;
+  if (liteTraceListState) renderLiteTraceList(liteTraceListState);
+  document.querySelector("#lite-trace-status").textContent = "LOADING";
+  document.querySelector("#lite-flame-chart").innerHTML = '<div class="lite-empty-state"><div class="empty-icon">◇</div><strong>Loading trace subtree…</strong><span>Reading spans, events, and LLM projections from SQLite.</span></div>';
+  try {
+    const directory = document.querySelector("#lite-trace-directory").value.trim();
+    const params = new URLSearchParams({ directory, source: trace.source });
+    const payload = await apiRequest(`/api/v1/lite/traces/${encodeURIComponent(trace.trace_id)}?${params.toString()}`);
+    if (detailToken !== liteTraceRequestToken) return;
+    liteTraceDetailState = payload;
+    activeLiteSpanId = payload.trace.root_span_id || payload.spans?.[0]?.span_id || null;
+    renderLiteFlameChart(payload);
+    renderLiteSpanDetail(activeLiteSpanId);
+  } catch (error) {
+    if (detailToken !== liteTraceRequestToken) return;
+    document.querySelector("#lite-trace-status").textContent = "UNAVAILABLE";
+    document.querySelector("#lite-flame-chart").innerHTML = `<div class="lite-empty-state"><div class="empty-icon">!</div><strong>Unable to load trace</strong><span>${escapeHtml(error.message)}</span></div>`;
+    setLiteNotice(error.message, "error");
+  }
+};
+
+const buildFlameLayout = (spans) => {
+  const sorted = [...spans].sort((left, right) => {
+    if (left.depth !== right.depth) return left.depth - right.depth;
+    if (left.start_offset_ms !== right.start_offset_ms) return left.start_offset_ms - right.start_offset_ms;
+    return right.duration_ms - left.duration_ms;
+  });
+  const lanesByDepth = new Map();
+  const placed = sorted.map((span) => {
+    const lanes = lanesByDepth.get(span.depth) || [];
+    let lane = lanes.findIndex((end) => end <= span.start_offset_ms + 0.001);
+    if (lane < 0) lane = lanes.length;
+    lanes[lane] = Math.max(lanes[lane] || 0, span.end_offset_ms);
+    lanesByDepth.set(span.depth, lanes);
+    return { span, lane };
+  });
+  const depthOffsets = new Map();
+  let rowCount = 0;
+  [...lanesByDepth.keys()].sort((left, right) => left - right).forEach((depth) => {
+    depthOffsets.set(depth, rowCount);
+    rowCount += lanesByDepth.get(depth).length;
+  });
+  return {
+    rows: placed.map(({ span, lane }) => ({ span, row: depthOffsets.get(span.depth) + lane })),
+    rowCount,
+  };
+};
+
+const flameBlockTone = (span) => {
+  if (span.status_code === "ERROR") return "error";
+  if (span.llm_call || String(span.name).startsWith("llm.")) return "llm";
+  if (span.attributes?.["db.system"] || String(span.name).includes("persistence")) return "database";
+  return `depth-${Math.min(Number(span.depth || 0), 3)}`;
+};
+
+const renderLiteFlameChart = (payload) => {
+  const trace = payload.trace || {};
+  const spans = payload.spans || [];
+  const chart = document.querySelector("#lite-flame-chart");
+  const rootSpan = spans.find((span) => span.span_id === trace.root_span_id) || spans[0];
+  document.querySelector("#lite-trace-heading h2").textContent = rootSpan?.name || "Trace";
+  document.querySelector("#lite-trace-heading .card-description").textContent = `${trace.trace_id} · ${payload.source} · ${trace.span_count || spans.length} spans · ${formatDuration(trace.duration_ms)}`;
+  document.querySelector("#lite-trace-status").textContent = rootSpan?.status_code || "UNSET";
+  if (!spans.length) {
+    chart.innerHTML = '<div class="lite-empty-state"><div class="empty-icon">◇</div><strong>No spans stored</strong><span>This trace record does not have any persisted spans.</span></div>';
+    return;
+  }
+
+  const totalMs = Math.max(Number(trace.duration_ms || 0), ...spans.map((span) => Number(span.end_offset_ms || 0)), 0.001);
+  const layout = buildFlameLayout(spans);
+  const canvasHeight = Math.max(82, layout.rowCount * 33 + 18);
+  const blocks = layout.rows.map(({ span, row }) => {
+    const left = Math.min(99.3, Math.max(0, Number(span.start_offset_ms || 0) / totalMs * 100));
+    const rawWidth = Math.max(0, Number(span.duration_ms || 0) / totalMs * 100);
+    const width = Math.min(100 - left, Math.max(0.7, rawWidth));
+    const selected = span.span_id === activeLiteSpanId ? " selected" : "";
+    const title = `${span.name} · ${formatDuration(span.duration_ms)} · ${span.span_id}`;
+    return `<button class="lite-flame-block ${flameBlockTone(span)}${selected}" type="button" data-span-id="${escapeHtml(span.span_id)}" style="left:${left.toFixed(4)}%;width:${width.toFixed(4)}%;top:${row * 33 + 9}px" title="${escapeHtml(title)}">${escapeHtml(span.name)} · ${escapeHtml(formatDuration(span.duration_ms))}</button>`;
+  }).join("");
+  const gridlines = [25, 50, 75].map((left) => `<span class="lite-flame-gridline" style="left:${left}%"></span>`).join("");
+  chart.innerHTML = `<div class="lite-flame-axis"><span>0 ms</span><span>${escapeHtml(formatDuration(totalMs / 2))}</span><span>${escapeHtml(formatDuration(totalMs))}</span></div>
+    <div class="lite-flame-canvas" style="height:${canvasHeight}px">${gridlines}${blocks}</div>`;
+  chart.querySelectorAll("[data-span-id]").forEach((block) => {
+    block.addEventListener("click", () => {
+      activeLiteSpanId = block.dataset.spanId;
+      chart.querySelectorAll("[data-span-id]").forEach((candidate) => candidate.classList.toggle("selected", candidate.dataset.spanId === activeLiteSpanId));
+      renderLiteSpanDetail(activeLiteSpanId);
+    });
+  });
+};
+
+const renderJsonBlock = (value) => {
+  const hasValue = value && typeof value === "object" && Object.keys(value).length;
+  if (!hasValue) return '<span class="lite-empty-json">No stored values.</span>';
+  return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+};
+
+const renderLiteSpanDetail = (spanId) => {
+  const detail = document.querySelector("#lite-span-detail");
+  const span = liteTraceDetailState?.spans?.find((candidate) => candidate.span_id === spanId);
+  if (!span) {
+    detail.innerHTML = '<div class="lite-empty-state compact"><strong>Span details</strong><span>Click a flame block to inspect this module.</span></div>';
+    return;
+  }
+  const events = (span.events || []).length
+    ? `<div class="lite-event-list">${span.events.map((event) => `<div class="lite-event-row"><strong>${escapeHtml(event.name)}</strong><code>+${escapeHtml(formatDuration(event.offset_ms))}</code>${renderJsonBlock(event.attributes)}</div>`).join("")}</div>`
+    : '<span class="lite-empty-json">No span events.</span>';
+  const llm = span.llm_call
+    ? `<article class="lite-span-section"><h4>LLM projection</h4>${renderJsonBlock(span.llm_call)}</article>`
+    : "";
+  detail.innerHTML = `<div class="lite-span-detail-heading">
+      <div><p class="section-kicker">SELECTED SPAN</p><h3>${escapeHtml(span.name)}</h3></div>
+      <code>${escapeHtml(span.span_id)}</code>
+    </div>
+    <div class="lite-span-metrics">
+      <div class="lite-span-metric"><span>Duration</span><strong>${escapeHtml(formatDuration(span.duration_ms))}</strong></div>
+      <div class="lite-span-metric"><span>Start offset</span><strong>+${escapeHtml(formatDuration(span.start_offset_ms))}</strong></div>
+      <div class="lite-span-metric"><span>Status</span><strong>${escapeHtml(span.status_code || "UNSET")}</strong></div>
+      <div class="lite-span-metric"><span>Kind</span><strong>${escapeHtml(span.kind || "INTERNAL")}</strong></div>
+    </div>
+    <div class="lite-span-sections">
+      <article class="lite-span-section"><h4>Input</h4>${renderJsonBlock(span.io?.input)}</article>
+      <article class="lite-span-section"><h4>Output</h4>${renderJsonBlock(span.io?.output)}</article>
+      ${llm}
+      <article class="lite-span-section"><h4>Events</h4>${events}</article>
+      <article class="lite-span-section wide"><h4>All attributes</h4>${renderJsonBlock(span.attributes)}</article>
+      <article class="lite-span-section wide"><h4>Resource &amp; instrumentation</h4>${renderJsonBlock({ service_name: span.service_name, instrumentation_scope: span.instrumentation_scope, resource: span.resource, status_message: span.status_message })}</article>
+    </div>`;
 };
 
 const setSkillOperationStatus = (message, tone = "") => {
@@ -1279,6 +1520,18 @@ const setSkillView = (viewName) => {
   }
 };
 
+const setLiteView = (viewName) => {
+  const activeView = viewName === "runtime" ? "runtime" : "traces";
+  document.querySelectorAll("[data-lite-view]").forEach((tab) => {
+    const active = tab.dataset.liteView === activeView;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll("[data-lite-panel]").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.litePanel !== activeView);
+  });
+};
+
 const setActiveTab = (tabName, { updateHistory = true } = {}) => {
   const activeTab = TAB_COPY[tabName] ? tabName : "overview";
   const copy = TAB_COPY[activeTab];
@@ -1321,6 +1574,10 @@ window.addEventListener("hashchange", syncActiveTabFromLocation);
 
 document.querySelectorAll("[data-skill-view]").forEach((tab) => {
   tab.addEventListener("click", () => setSkillView(tab.dataset.skillView));
+});
+
+document.querySelectorAll("[data-lite-view]").forEach((tab) => {
+  tab.addEventListener("click", () => setLiteView(tab.dataset.liteView));
 });
 
 document.querySelector("#compare-left-select").addEventListener("change", () => loadCompareVersions("left"));
@@ -1369,8 +1626,17 @@ document.querySelector("#memory-query").addEventListener("keydown", (event) => {
     loadMemories(memoryRequestPath(Boolean(query)));
   }
 });
+document.querySelector("#lite-load-traces").addEventListener("click", loadLiteTraces);
+document.querySelector("#lite-refresh-traces").addEventListener("click", loadLiteTraces);
+document.querySelector("#lite-trace-directory").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    loadLiteTraces();
+  }
+});
 
 const initialTab = window.location.hash.slice(1);
 setActiveTab(TAB_COPY[initialTab] ? initialTab : "overview", { updateHistory: false });
 setSkillView("library");
+setLiteView("traces");
 Promise.all([loadConfig(), loadSkills()]);

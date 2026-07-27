@@ -124,4 +124,9 @@ active = manager.active_skill_context(registered.skill_id)
 
 Run `mindmemos ui` for the browser UI. Its editor creates browser-only drafts;
 publishing creates a new immutable UUID version instead of modifying an existing
-version in place.
+version in place. The **Lite → Traces** view accepts a Lite observability
+directory (the default runtime location is `.mindmemos/observability`) or a
+specific SQLite file. It lists root spans and renders every span in the selected
+trace as a clickable flame chart. SQLite databases are opened read-only; input
+and output content is available only when the Lite runtime wrote it with
+`observability.capture_content: true`.
