@@ -338,7 +338,7 @@ class TurnMessageRef(BaseModel):
 
     Purpose: Carry the text, role, timestamp, and extractability flag for one
     message inside a Turn. System messages are marked non-extractable.
-    Used in: Turn construction by TurnGrouper and downstream chunk components.
+    Used in: MessageChunker turn construction and downstream extraction.
     """
 
     text: str = Field(description="Message content.")
@@ -356,8 +356,8 @@ class TurnMessageRef(BaseModel):
 class Turn(BaseModel):
     """Purpose: A semantically grouped set of messages forming one conversational unit.
 
-    Used in: TurnGrouper output, ChunkPlanner input, history packing, and
-    extraction envelope construction. A turn represents one user intent and
+    Used in: MessageChunker grouping, chunk planning, history packing, and
+    extraction-envelope construction. A turn represents one user intent and
     the assistant response(s) associated with it.
     """
 
@@ -384,7 +384,7 @@ class Turn(BaseModel):
 class Chunk(BaseModel):
     """Purpose: A token-budgeted group of turns sent to LLM extraction as one unit.
 
-    Used in: ChunkPlanner output, extraction loop, and history packing. One
+    Used in: MessageChunker output, extraction loop, and history packing. One
     chunk produces one LLM extraction call.
     """
 
@@ -456,7 +456,7 @@ class ExtractionEnvelope(BaseModel):
 class TurnCompactionSummary(BaseModel):
     """Purpose: Structured output from the long-turn compaction summary prompt.
 
-    Used in: LongTurnCompactor output and TurnCompactionResult assembly. The
+    Used in: MessageChunker compaction and TurnCompactionResult assembly. The
     summary preserves context needed for later extraction without creating
     memories itself.
     """
@@ -473,7 +473,7 @@ class TurnCompactionSummary(BaseModel):
 class TurnCompactionResult(BaseModel):
     """Purpose: Result of compacting an oversized turn.
 
-    Used in: LongTurnCompactor output. Carries head (raw evidence), middle
+    Used in: MessageChunker output. Carries head (raw evidence), middle
     (structured summary), and tail (raw evidence). Head and tail remain
     extractable; middle is non-extractable context.
     """

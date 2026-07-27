@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from ..base import MindMemOSConfig, frozen_field
 from ..components import TextProcessingConfig
-from .add import VanillaAddChunkerConfig, VanillaAddConfig, VanillaAddRecallConfig, VanillaAddSafetyGateConfig
+from .add import VanillaAddConfig, VanillaAddRecallConfig, VanillaAddSafetyGateConfig
 from .dreaming import DreamingConfig
 from .search import (
     VANILLA_DEDUP_MAX_CANDIDATES,
@@ -32,7 +32,6 @@ __all__ = [
     "VANILLA_RECALL_SIZE_MAX",
     "TextProcessingConfig",
     "DreamingConfig",
-    "VanillaAddChunkerConfig",
     "VanillaAddConfig",
     "VanillaAddRecallConfig",
     "VanillaAddSafetyGateConfig",

@@ -8,13 +8,13 @@ from mindmemos.config import (
     DatabaseBackendRequirementsConfig,
     DatabaseConfig,
     MemoryConfig,
+    MessageChunkerConfig,
     MindMemOSConfig,
     ModelEndpointConfig,
     ModelRouterConfig,
     ObservabilityConfig,
     PgVectorConfig,
     TextProcessingConfig,
-    VanillaAddChunkerConfig,
     VanillaAddConfig,
     VanillaAddRecallConfig,
     VanillaAddSafetyGateConfig,
@@ -65,9 +65,9 @@ def test_memory_config_types_are_owned_by_component_modules() -> None:
     assert DatabaseBackendConfig.__module__ == "mindmemos.config.database.backend"
     assert PgVectorConfig.__module__ == "mindmemos.config.database.pgvector"
     assert DatabaseConfig.__module__ == "mindmemos.config.database.database"
+    assert MessageChunkerConfig.__module__ == "mindmemos.config.components.message_chunker"
     assert TextProcessingConfig.__module__ == "mindmemos.config.components.text_processing"
     assert VanillaAddConfig.__module__ == "mindmemos.config.vanilla.add"
-    assert VanillaAddChunkerConfig.__module__ == "mindmemos.config.vanilla.add"
     assert VanillaAddRecallConfig.__module__ == "mindmemos.config.vanilla.add"
     assert VanillaAddSafetyGateConfig.__module__ == "mindmemos.config.vanilla.add"
 
@@ -125,7 +125,7 @@ def test_example_config_selects_pgvector_with_typed_options() -> None:
         "recall",
         "safety_gate",
     ]
-    assert OmegaConf.get_type(cfg.algo_config.add.chunker) is VanillaAddChunkerConfig
+    assert OmegaConf.get_type(cfg.algo_config.add.chunker) is MessageChunkerConfig
     assert OmegaConf.get_type(cfg.algo_config.add.recall) is VanillaAddRecallConfig
     assert OmegaConf.get_type(cfg.algo_config.add.safety_gate) is VanillaAddSafetyGateConfig
     assert OmegaConf.get_type(cfg.algo_config.search) is VanillaSearchConfig

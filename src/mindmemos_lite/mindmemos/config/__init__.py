@@ -5,7 +5,7 @@ from .app import (
     default_config_path,
 )
 from .base import MindMemOSConfig, build, frozen_field, safe_dict, secret_field
-from .components import TextProcessingConfig
+from .components import MessageChunkerConfig, TextProcessingConfig
 from .context import (
     ConfigOverrides,
     bind_config_overrides,
@@ -24,7 +24,6 @@ from .observability import ObservabilityConfig
 from .validation import validate_config, validate_tree
 from .vanilla import (
     DreamingConfig,
-    VanillaAddChunkerConfig,
     VanillaAddConfig,
     VanillaAddRecallConfig,
     VanillaAddSafetyGateConfig,
@@ -40,6 +39,7 @@ __all__ = [
     "DatabaseConfig",
     "DreamingConfig",
     "MemoryConfig",
+    "MessageChunkerConfig",
     "MindMemOSConfig",
     "ModelEndpointConfig",
     "ModelRouterConfig",
@@ -47,7 +47,6 @@ __all__ = [
     "PgVectorConfig",
     "REPO_ROOT",
     "TextProcessingConfig",
-    "VanillaAddChunkerConfig",
     "VanillaAddConfig",
     "VanillaAddRecallConfig",
     "VanillaAddSafetyGateConfig",

@@ -6,12 +6,11 @@ from .message_chunker import (
     PreparedMessageChunk,
     PreparedTurnCompaction,
 )
-from .segmenter import MessageSegmenter, SourceAwareSegment
+from .source import SourceAwareSegment
 
 __all__ = [
     "MessageChunker",
     "MessageChunkingResult",
-    "MessageSegmenter",
     "PreparedMessageChunk",
     "PreparedTurnCompaction",
     "SourceAwareSegment",

@@ -1,34 +1,22 @@
-"""Behavior-equivalence tests for the unified message chunking module."""
+"""Behavior-contract tests for the independent message chunking module."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from types import SimpleNamespace
 
 import pytest
 from mindmemos.components.chunker import MessageChunker
-from mindmemos.components.chunker.vanilla import (
-    ChunkPlanner,
-    HistoryPacker,
-    LongTurnCompactor,
-    LongTurnSummarizer,
-    TurnGrouper,
-)
 from mindmemos.components.extractor.vanilla import MemoryExtractionResult
 from mindmemos.components.extractor.vanilla.add_builder import AddCoreBuilder
-from mindmemos.config import VanillaAddChunkerConfig, VanillaAddConfig
+from mindmemos.config import MessageChunkerConfig, VanillaAddConfig
 from mindmemos.typing import (
     AddPipelineInput,
-    Chunk,
     DialogueMessage,
     FileMessage,
-    HistoryPack,
     MemoryRequestContext,
     PreprocessedText,
     TextMessage,
-    TurnCompactionResult,
     TurnCompactionSummary,
-    TurnMessageRef,
     UrlMessage,
 )
 
@@ -110,158 +98,101 @@ def _context() -> MemoryRequestContext:
     )
 
 
-def _message_snapshot(message: TurnMessageRef) -> dict:
-    return message.model_dump(mode="json")
-
-
-def _chunk_snapshot(
-    chunk: Chunk,
-    history: HistoryPack,
-    extractable: Sequence[TurnMessageRef],
-    context: Sequence[TurnMessageRef],
-    compactions: Sequence[tuple[int, TurnCompactionResult]],
-) -> dict:
-    return {
-        "chunk": chunk.model_dump(mode="json"),
-        "history": history.model_dump(mode="json"),
-        "extractable": [_message_snapshot(message) for message in extractable],
-        "context": [_message_snapshot(message) for message in context],
-        "compactions": [
-            {
-                "turn_index": turn_index,
-                "result": result.model_dump(mode="json"),
-            }
-            for turn_index, result in compactions
-        ],
-    }
-
-
-async def _legacy_preprocessing_snapshot(
-    messages: Sequence[InputMessage],
-    config: VanillaAddChunkerConfig,
-    *,
-    llm_client=None,
-) -> list[dict]:
-    """Run the exact pre-refactor orchestration formerly in AddCoreBuilder."""
-
-    indexed_dialogue = [
-        (message_index, message)
-        for message_index, message in enumerate(messages)
-        if isinstance(message, (DialogueMessage, TextMessage))
-    ]
-    turns = TurnGrouper(config).group(indexed_dialogue)
-    chunks = ChunkPlanner(config).plan(turns)
-
-    compactor = LongTurnCompactor(config)
-    summarizer = LongTurnSummarizer(config, llm_client)
-    compactions_by_chunk: dict[int, list[tuple[int, TurnCompactionResult]]] = {}
-    for chunk in chunks:
-        if not chunk.needs_compaction:
-            continue
-        for turn_index in chunk.compacted_turn_indices:
-            original_turn = chunk.turns[turn_index]
-            parts = compactor.split(original_turn)
-            summary = await summarizer.summarize(parts.middle_text)
-            compacted_turn, result = compactor.compact(
-                original_turn,
-                summary=summary,
-                parts=parts,
-            )
-            chunk.turns[turn_index] = compacted_turn
-            compactions_by_chunk.setdefault(chunk.chunk_index, []).append((turn_index, result))
-        chunk.token_count = sum(turn.token_count for turn in chunk.turns)
-        if chunk.boundary == "complete":
-            chunk.boundary = "compacted"
-
-    history_packer = HistoryPacker(config)
-    previous_history = None
-    previous_chunk = None
-    snapshots: list[dict] = []
-    for chunk in chunks:
-        if chunk.chunk_index == 0:
-            history = history_packer.pack_for_first_chunk()
-        else:
-            history = history_packer.pack_for_chunk(
-                chunk.chunk_index,
-                previous_history,
-                previous_chunk,
-            )
-
-        extractable: list[TurnMessageRef] = []
-        context: list[TurnMessageRef] = []
-        for turn in chunk.turns:
-            for message in turn.messages:
-                (extractable if message.is_extractable else context).append(message)
-
-        snapshots.append(
-            _chunk_snapshot(
-                chunk,
-                history,
-                extractable,
-                context,
-                compactions_by_chunk.get(chunk.chunk_index, []),
-            )
-        )
-        previous_history = history
-        previous_chunk = chunk
-
-    return snapshots
-
-
-def _new_preprocessing_snapshot(result) -> list[dict]:
-    return [
-        _chunk_snapshot(
-            prepared.chunk,
-            prepared.history,
-            prepared.extractable_messages,
-            prepared.context_messages,
-            [(compaction.turn_index, compaction.result) for compaction in prepared.compactions],
-        )
-        for prepared in result.chunks
-    ]
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "messages",
+    (
+        "messages",
+        "chunk_boundaries",
+        "turn_boundaries",
+        "extractable_roles",
+        "extractable_indices",
+        "context_roles",
+    ),
     [
-        [],
-        [
-            DialogueMessage(role="system", content="Context without evidence"),
-        ],
-        [
-            DialogueMessage(role="user", content="First question"),
-            DialogueMessage(role="system", content="Context only"),
-            DialogueMessage(role="assistant", content="First answer"),
-            TextMessage(text="A trailing note"),
-        ],
-        [
-            DialogueMessage(role="Caroline", content="I moved to Boston."),
-            DialogueMessage(role="Melanie", content="That is exciting."),
-            DialogueMessage(role="Caroline", content="I like the parks."),
-            DialogueMessage(role="Melanie", content="Great."),
-        ],
-        [
-            DialogueMessage(role="assistant", content="Earlier answer"),
-            DialogueMessage(role="user", content="Current question"),
-            DialogueMessage(role="assistant", content="Current answer"),
-        ],
-        [
-            FileMessage(file_name="notes.pdf", file_path="oss://bucket/notes.pdf"),
-            DialogueMessage(role="user", content="Indexed after a file"),
-            UrlMessage(url="https://example.com/design"),
-            DialogueMessage(role="assistant", content="The original indices must survive"),
-            TextMessage(text="   "),
-        ],
-        [
-            DialogueMessage(role="user", content="First session", timestamp=0),
-            DialogueMessage(role="user", content="Later session", timestamp=3_600_000),
-        ],
-        [
-            DialogueMessage(role="user", content="Run the lookup"),
-            DialogueMessage(role="tool", content="Lookup result"),
-            DialogueMessage(role="assistant", content="Result explained"),
-        ],
+        ([], [], [], [], [], []),
+        (
+            [DialogueMessage(role="system", content="Context without evidence")],
+            ["complete"],
+            ["complete"],
+            [],
+            [],
+            ["system"],
+        ),
+        (
+            [
+                DialogueMessage(role="user", content="First question"),
+                DialogueMessage(role="system", content="Context only"),
+                DialogueMessage(role="assistant", content="First answer"),
+                TextMessage(text="A trailing note"),
+            ],
+            ["open_tail"],
+            ["complete", "open_tail"],
+            ["user", "assistant", "user"],
+            [0, 2, 3],
+            ["system"],
+        ),
+        (
+            [
+                DialogueMessage(role="Caroline", content="I moved to Boston."),
+                DialogueMessage(role="Melanie", content="That is exciting."),
+                DialogueMessage(role="Caroline", content="I like the parks."),
+                DialogueMessage(role="Melanie", content="Great."),
+            ],
+            ["complete"],
+            ["complete", "complete"],
+            ["speaker", "speaker", "speaker", "speaker"],
+            [0, 1, 2, 3],
+            [],
+        ),
+        (
+            [
+                DialogueMessage(role="assistant", content="Earlier answer"),
+                DialogueMessage(role="user", content="Current question"),
+                DialogueMessage(role="assistant", content="Current answer"),
+            ],
+            ["open_head"],
+            ["open_head", "complete"],
+            ["assistant", "user", "assistant"],
+            [0, 1, 2],
+            [],
+        ),
+        (
+            [
+                FileMessage(file_name="notes.pdf", file_path="oss://bucket/notes.pdf"),
+                DialogueMessage(role="user", content="Indexed after a file"),
+                UrlMessage(url="https://example.com/design"),
+                DialogueMessage(role="assistant", content="The original indices must survive"),
+                TextMessage(text="   "),
+            ],
+            ["complete"],
+            ["complete"],
+            ["user", "assistant"],
+            [1, 3],
+            [],
+        ),
+        (
+            [
+                DialogueMessage(role="user", content="First session", timestamp=0),
+                DialogueMessage(role="user", content="Later session", timestamp=3_600_000),
+            ],
+            ["open_tail"],
+            ["open_tail", "open_tail"],
+            ["user", "user"],
+            [0, 1],
+            [],
+        ),
+        (
+            [
+                DialogueMessage(role="user", content="Run the lookup"),
+                DialogueMessage(role="tool", content="Lookup result"),
+                DialogueMessage(role="assistant", content="Result explained"),
+            ],
+            ["complete"],
+            ["complete"],
+            ["user", "tool", "assistant"],
+            [0, 1, 2],
+            [],
+        ),
     ],
     ids=[
         "empty",
@@ -274,18 +205,30 @@ def _new_preprocessing_snapshot(result) -> list[dict]:
         "tool-message",
     ],
 )
-async def test_message_chunker_matches_existing_vanilla_preprocessing(messages: list[InputMessage]) -> None:
-    config = VanillaAddChunkerConfig()
+async def test_message_chunker_preserves_message_grouping_contract(
+    messages: list[InputMessage],
+    chunk_boundaries: list[str],
+    turn_boundaries: list[str],
+    extractable_roles: list[str],
+    extractable_indices: list[int],
+    context_roles: list[str],
+) -> None:
+    result = await MessageChunker(MessageChunkerConfig()).split(messages)
 
-    legacy = await _legacy_preprocessing_snapshot(messages, config)
-    result = await MessageChunker(config).split(messages)
-
-    assert _new_preprocessing_snapshot(result) == legacy
+    assert [prepared.chunk.boundary for prepared in result.chunks] == chunk_boundaries
+    assert [turn.boundary for prepared in result.chunks for turn in prepared.chunk.turns] == turn_boundaries
+    assert [
+        message.role for prepared in result.chunks for message in prepared.extractable_messages
+    ] == extractable_roles
+    assert [
+        message.message_index for prepared in result.chunks for message in prepared.extractable_messages
+    ] == extractable_indices
+    assert [message.role for prepared in result.chunks for message in prepared.context_messages] == context_roles
 
 
 @pytest.mark.asyncio
-async def test_message_chunker_matches_multi_chunk_history_flow() -> None:
-    config = VanillaAddChunkerConfig(
+async def test_message_chunker_preserves_multi_chunk_history_flow() -> None:
+    config = MessageChunkerConfig(
         chunk_soft_token_budget=20,
         chunk_hard_token_budget=40,
         turn_hard_token_budget=30,
@@ -310,19 +253,18 @@ async def test_message_chunker_matches_multi_chunk_history_flow() -> None:
             ]
         )
 
-    legacy = await _legacy_preprocessing_snapshot(messages, config)
     result = await MessageChunker(config).split(messages)
-    actual = _new_preprocessing_snapshot(result)
 
-    assert actual == legacy
-    assert len(actual) == 4
-    assert actual[0]["history"]["in_request_history"] == []
-    assert actual[1]["history"]["in_request_history"]
+    assert len(result.chunks) == 4
+    assert result.chunks[0].history.in_request_history == []
+    assert result.chunks[1].history.in_request_history == result.chunks[0].chunk.turns
+    assert result.chunks[2].history.in_request_history == result.chunks[1].chunk.turns
+    assert all(prepared.chunk.token_count == 16 for prepared in result.chunks)
 
 
 @pytest.mark.asyncio
-async def test_message_chunker_matches_long_turn_compaction_and_retains_diagnostics() -> None:
-    config = VanillaAddChunkerConfig(
+async def test_message_chunker_compacts_long_turn_and_retains_diagnostics() -> None:
+    config = MessageChunkerConfig(
         chunk_soft_token_budget=30,
         chunk_hard_token_budget=40,
         turn_hard_token_budget=10,
@@ -343,24 +285,24 @@ async def test_message_chunker_matches_long_turn_compaction_and_retains_diagnost
             content=" ".join(f"answer{word}" for word in range(40)),
         ),
     ]
-    legacy_llm = _SummaryLlm()
-    new_llm = _SummaryLlm()
+    llm_client = _SummaryLlm()
 
-    legacy = await _legacy_preprocessing_snapshot(messages, config, llm_client=legacy_llm)
-    result = await MessageChunker(config, llm_client=new_llm).split(messages)
-    actual = _new_preprocessing_snapshot(result)
+    result = await MessageChunker(config, llm_client=llm_client).split(messages)
 
-    assert actual == legacy
-    assert len(legacy_llm.calls) == len(new_llm.calls) == 1
-    assert actual[0]["chunk"]["boundary"] == "compacted"
-    assert actual[0]["compactions"][0]["result"]["is_lossy"] is True
-    assert actual[0]["extractable"][0]["text"] == "keep this complete user request"
-    assert actual[0]["context"][0]["role"] == "system"
+    assert len(llm_client.calls) == 1
+    assert len(result.chunks) == 1
+    prepared = result.chunks[0]
+    assert prepared.chunk.boundary == "compacted"
+    assert prepared.compactions[0].result.is_lossy is True
+    assert prepared.extractable_messages[0].text == "keep this complete user request"
+    assert prepared.extractable_messages[-1].text.endswith("answer39")
+    assert prepared.context_messages[0].role == "system"
+    assert '"general_summary": "preserved middle context"' in prepared.context_messages[0].text
 
 
 @pytest.mark.asyncio
-async def test_message_chunker_matches_summary_failure_fallback() -> None:
-    config = VanillaAddChunkerConfig(
+async def test_message_chunker_uses_summary_failure_fallback() -> None:
+    config = MessageChunkerConfig(
         chunk_soft_token_budget=30,
         chunk_hard_token_budget=40,
         turn_hard_token_budget=10,
@@ -378,20 +320,18 @@ async def test_message_chunker_matches_summary_failure_fallback() -> None:
         DialogueMessage(role="user", content="remember the request"),
         DialogueMessage(role="assistant", content=" ".join(f"token{word}" for word in range(40))),
     ]
-    legacy_llm = _SummaryLlm(fail=True)
-    new_llm = _SummaryLlm(fail=True)
+    llm_client = _SummaryLlm(fail=True)
 
-    legacy = await _legacy_preprocessing_snapshot(messages, config, llm_client=legacy_llm)
-    result = await MessageChunker(config, llm_client=new_llm).split(messages)
-    actual = _new_preprocessing_snapshot(result)
+    result = await MessageChunker(config, llm_client=llm_client).split(messages)
 
-    assert actual == legacy
-    assert "omitted" in actual[0]["compactions"][0]["result"]["middle_summary"]["general_summary"].lower()
+    assert len(llm_client.calls) == 1
+    summary = result.chunks[0].compactions[0].result.middle_summary
+    assert "omitted" in summary.general_summary.lower()
 
 
 @pytest.mark.asyncio
 async def test_add_core_builder_consumes_prepared_multi_chunk_history_without_changing_envelopes() -> None:
-    chunker_config = VanillaAddChunkerConfig(
+    chunker_config = MessageChunkerConfig(
         chunk_soft_token_budget=20,
         chunk_hard_token_budget=40,
         turn_hard_token_budget=30,
@@ -435,7 +375,7 @@ async def test_add_core_builder_consumes_prepared_multi_chunk_history_without_ch
 
 @pytest.mark.asyncio
 async def test_add_core_builder_preserves_compacted_envelope_contract() -> None:
-    chunker_config = VanillaAddChunkerConfig(
+    chunker_config = MessageChunkerConfig(
         chunk_soft_token_budget=30,
         chunk_hard_token_budget=40,
         turn_hard_token_budget=10,
