@@ -3,6 +3,7 @@ SHELL := /bin/bash
 PRESERVE_ENV_VARS := \
 	MINDMEMOS_CONFIG_NAME \
 	MINDMEMOS_CONFIG_PATH \
+	MINDMEMOS_API_KEY_FILE \
 	MINDMEMOS_API_HOST \
 	MINDMEMOS_API_PORT \
 	MINDMEMOS_QDRANT_URL \
@@ -65,6 +66,8 @@ export
 
 COMPOSE_ENV := $(if $(wildcard .env),--env-file .env,)
 COMPOSE := docker compose $(COMPOSE_ENV) -f dockers/docker-compose.memory.yml
+LITE_COMPOSE_ENV := $(if $(wildcard dockers-lite/.env),--env-file dockers-lite/.env,)
+LITE_COMPOSE := docker compose $(LITE_COMPOSE_ENV) -f dockers-lite/compose.yaml
 DEV_CORE_SERVICES := qdrant neo4j kafka kafka-ui kafka-exporter
 DB_OBSERVABILITY_SERVICES := $(DEV_CORE_SERVICES) clickhouse otel-collector grafana
 UV ?= $(shell command -v uv 2>/dev/null || printf uv)
@@ -92,7 +95,7 @@ PROFILE_SECONDS ?= 60
 PROFILE_RATE ?= 100
 PROFILE_PID ?= $(PID)
 
-.PHONY: dev dev-setup hooks-install format lint dev-core api profile-api db db-observability db-clean dev-down
+.PHONY: dev dev-lite dev-lite-api api-lite dev-setup hooks-install format lint dev-core api profile-api db db-observability db-clean dev-down
 
 dev-setup:
 	$(UV) sync
@@ -132,6 +135,16 @@ profile-api:
 	$(UV) run py-spy record --pid "$$pid" --subprocesses --duration "$(PROFILE_SECONDS)" --rate "$(PROFILE_RATE)" --output "$(PROFILE_OUT)"
 
 db: db-observability
+
+dev-lite:
+	$(LITE_COMPOSE) --profile pgvector up -d --wait pgvector
+
+api-lite:
+	$(UV) run --project src/mindmemos_lite --extra api mindmemos-lite-api --host $(API_HOST) --port $(API_PORT)
+
+dev-lite-api: dev-lite
+	@echo "Starting MindMemOS Lite FastAPI at http://$(API_HOST):$(API_PORT) (Ctrl-C to stop)"
+	$(UV) run --project src/mindmemos_lite --extra api mindmemos-lite-api --host $(API_HOST) --port $(API_PORT)
 
 dev-core:
 	$(COMPOSE) up -d --wait $(DEV_CORE_SERVICES)

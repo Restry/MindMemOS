@@ -16,6 +16,8 @@ config/mindmemos/*.yaml
 !config/mindmemos/api_keys.yaml
 config/mindmemos_eval/*.yaml
 !config/mindmemos_eval/*.example.yaml
+config/mindmemos_lite/*.yaml
+!config/mindmemos_lite/*.example.yaml
 
 # Virtual environments
 .venv
@@ -30,6 +32,7 @@ config/mindmemos_eval/*.yaml
 .mindmem-viewer.log
 .memos-viewer.pid
 .memos-viewer.log
+.mindmemos/
 
 # Tool caches
 .pytest_cache/
@@ -41,6 +44,9 @@ openspec/
 # Local LoCoMo run configuration
 scripts/locomo/locomo_eval.env
 .locomo-runs/
+.design/
+datasets/locomo/
+reports/locomo_lite_*
 
 # Eval / run outputs
 data/
