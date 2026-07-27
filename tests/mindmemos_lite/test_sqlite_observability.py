@@ -2,10 +2,10 @@ import json
 import sqlite3
 from types import SimpleNamespace
 
-import mindmemos.llm.chat as chat_module
+import mindmemos_lite.llm.chat as chat_module
 import pytest
-from mindmemos.infra.observability import SQLiteSpanExporter
-from mindmemos.llm.chat import LLMClient
+from mindmemos_lite.infra.observability import SQLiteSpanExporter
+from mindmemos_lite.llm.chat import LLMClient
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor

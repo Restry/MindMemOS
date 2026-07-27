@@ -55,7 +55,7 @@ def create_pipeline(
 ) -> PipelineBase:
     """Create one registered pipeline using the effective configuration.
 
-    When ``config`` is omitted, :func:`mindmemos.config.get_config` supplies
+    When ``config`` is omitted, :func:`mindmemos_lite.config.get_config` supplies
     the current ContextVar-bound config, so project-scoped overrides naturally
     reach ``PipelineBase.from_config``.
     """

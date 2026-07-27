@@ -26,7 +26,7 @@ def main() -> None:
     except ImportError as exc:  # pragma: no cover - exercised only in base-only installs
         raise SystemExit("FastAPI hosting is optional; install MindMemOS Lite with the 'api' extra") from exc
 
-    uvicorn.run("mindmemos.api.app:app", host=args.host, port=args.port)
+    uvicorn.run("mindmemos_lite.api.app:app", host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

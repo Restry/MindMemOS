@@ -5,11 +5,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from mindmemos.components.chunker import MessageChunker
-from mindmemos.components.extractor.vanilla import MemoryExtractionResult
-from mindmemos.components.extractor.vanilla.add_builder import AddCoreBuilder
-from mindmemos.config import MessageChunkerConfig, VanillaAddConfig
-from mindmemos.typing import (
+from mindmemos_lite.components.chunker import MessageChunker
+from mindmemos_lite.components.extractor.vanilla import MemoryExtractionResult
+from mindmemos_lite.components.extractor.vanilla.add_builder import AddCoreBuilder
+from mindmemos_lite.config import MessageChunkerConfig, VanillaAddConfig
+from mindmemos_lite.typing import (
     AddPipelineInput,
     DialogueMessage,
     FileMessage,

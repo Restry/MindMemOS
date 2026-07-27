@@ -1,6 +1,6 @@
 """Transport-neutral service commands and results.
 
-The public ``mindmemos`` API is currently exposed through FastAPI/Pydantic
+The public ``mindmemos_lite`` API is currently exposed through FastAPI/Pydantic
 models.  Lite keeps the same capability and business semantics, but the
 service boundary is deliberately independent of a transport:
 

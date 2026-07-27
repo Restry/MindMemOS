@@ -15,8 +15,8 @@ Identity recap (design §1):
 - ``version_label`` is the "tag": display-only, may repeat, never part of
   identity.
 
-DTOs here never import ``mindmemos.infra.db`` and never touch Qdrant; the
-business <-> DB mapping lives in ``mindmemos.mappers``.
+DTOs here never import ``mindmemos_lite.infra.db`` and never touch Qdrant; the
+business <-> DB mapping lives in ``mindmemos_lite.mappers``.
 """
 
 from __future__ import annotations

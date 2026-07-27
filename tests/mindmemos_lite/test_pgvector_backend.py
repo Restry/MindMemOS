@@ -4,8 +4,8 @@ from inspect import isabstract
 from typing import Any
 
 import pytest
-from mindmemos.config import build_config
-from mindmemos.infra.vector_store import (
+from mindmemos_lite.config import build_config
+from mindmemos_lite.infra.vector_store import (
     BackendConfig,
     BackendRegistry,
     DatabaseScope,
@@ -24,7 +24,7 @@ from mindmemos.infra.vector_store import (
     VectorValue,
     build_graph_registry,
 )
-from mindmemos.infra.vector_store.vector_store_impl.pgvector import (
+from mindmemos_lite.infra.vector_store.vector_store_impl.pgvector import (
     PgVectorBackend,
     PgVectorOptions,
     _decode_cursor,
@@ -36,7 +36,7 @@ from mindmemos.infra.vector_store.vector_store_impl.pgvector import (
     create_pgvector_backend,
     register_pgvector_backend,
 )
-from mindmemos.persistence import build_backend_config, register_builtin_backends
+from mindmemos_lite.persistence import build_backend_config, register_builtin_backends
 
 
 def _tables(*, sparse_dimensions: int = 2_000_000) -> TableRegistry:

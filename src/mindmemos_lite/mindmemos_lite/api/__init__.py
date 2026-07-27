@@ -1,6 +1,6 @@
 """Optional FastAPI adapter for MindMemOS Lite.
 
-Importing :mod:`mindmemos.runtime` never imports this package.  HTTP hosting is
+Importing :mod:`mindmemos_lite.runtime` never imports this package.  HTTP hosting is
 therefore an adapter over the same runtime, not a second application lifecycle.
 """
 

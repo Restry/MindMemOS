@@ -2,7 +2,7 @@
 
 This module contains only construction and execution interfaces.  Concrete
 algorithm implementations live outside this module and are expected to be
-registered with :mod:`mindmemos.pipeline.registry`.
+registered with :mod:`mindmemos_lite.pipeline.registry`.
 
 Pipeline construction deliberately has no legacy split database dependencies.
 Implementations may accept the persistence and orchestration dependencies they need through

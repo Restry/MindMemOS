@@ -6,9 +6,9 @@ from uuid import uuid4
 
 import psycopg
 import pytest
-from mindmemos.components.text import SparseVectorEncoder, TextPreprocessor
-from mindmemos.config import MemoryConfig, TextProcessingConfig, VanillaAddConfig, VanillaSearchConfig
-from mindmemos.infra.vector_store import (
+from mindmemos_lite.components.text import SparseVectorEncoder, TextPreprocessor
+from mindmemos_lite.config import MemoryConfig, TextProcessingConfig, VanillaAddConfig, VanillaSearchConfig
+from mindmemos_lite.infra.vector_store import (
     DatabaseScope,
     FieldSpec,
     FieldType,
@@ -30,13 +30,13 @@ from mindmemos.infra.vector_store import (
     VectorValue,
     with_graph_tables,
 )
-from mindmemos.infra.vector_store.vector_store_impl import PgVectorBackend, PgVectorOptions
-from mindmemos.persistence import MemoryPersistence
-from mindmemos.persistence.v2 import build_v2_registry
-from mindmemos.pipeline.vanilla_memory import VanillaAddPipeline, VanillaSearchPipeline
-from mindmemos.pipeline.vanilla_memory.search import VanillaSearchEngine
-from mindmemos.service.memory import VanillaMemoryService
-from mindmemos.service.schema import AddMemoryRequest, RequestContext, SearchMemoryRequest, TextMessage
+from mindmemos_lite.infra.vector_store.vector_store_impl import PgVectorBackend, PgVectorOptions
+from mindmemos_lite.persistence import MemoryPersistence
+from mindmemos_lite.persistence.v2 import build_v2_registry
+from mindmemos_lite.pipeline.vanilla_memory import VanillaAddPipeline, VanillaSearchPipeline
+from mindmemos_lite.pipeline.vanilla_memory.search import VanillaSearchEngine
+from mindmemos_lite.service.memory import VanillaMemoryService
+from mindmemos_lite.service.schema import AddMemoryRequest, RequestContext, SearchMemoryRequest, TextMessage
 from psycopg import sql
 
 

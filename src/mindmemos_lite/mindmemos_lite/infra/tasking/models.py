@@ -29,7 +29,7 @@ class TaskConfigContext:
 class TaskEnvelope:
     """Backend-neutral task message.
 
-    The payload is copied by :class:`~mindmemos.infra.tasking.TaskClient` before the
+    The payload is copied by :class:`~mindmemos_lite.infra.tasking.TaskClient` before the
     envelope is built. ``trace_context`` and ``config_context`` are carriers or
     snapshots, never live OpenTelemetry or request objects.
     """

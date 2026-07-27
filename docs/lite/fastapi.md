@@ -1,16 +1,16 @@
 # MindMemOS Lite FastAPI adapter
 
-Lite has one application lifecycle: `mindmemos.runtime.MindMemOS`. FastAPI is
+Lite has one application lifecycle: `mindmemos_lite.runtime.MindMemOS`. FastAPI is
 an optional transport over that runtime, so Python embedding and HTTP hosting
 initialize and close the same database, model clients, telemetry, and task
 backend resources.
 
 ## Python runtime
 
-The existing in-process entry point is unchanged:
+The in-process entry point now uses Lite's dedicated Python namespace:
 
 ```python
-from mindmemos.runtime import MindMemOS
+from mindmemos_lite.runtime import MindMemOS
 
 async with MindMemOS.from_config("config/mindmemos_lite/dev.yaml") as runtime:
     result = await runtime.memory.search(context, request)

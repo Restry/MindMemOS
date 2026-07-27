@@ -3,16 +3,16 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from mindmemos.components.text import SparseVectorEncoder, TextPreprocessor
-from mindmemos.config import MemoryConfig, TextProcessingConfig, VanillaAddConfig, VanillaSearchConfig
-from mindmemos.errors import MemoryUpdateError
-from mindmemos.infra.tasking import (
+from mindmemos_lite.components.text import SparseVectorEncoder, TextPreprocessor
+from mindmemos_lite.config import MemoryConfig, TextProcessingConfig, VanillaAddConfig, VanillaSearchConfig
+from mindmemos_lite.errors import MemoryUpdateError
+from mindmemos_lite.infra.tasking import (
     TaskBackendHealth,
     TaskClient,
     TaskHandlerRegistry,
     TaskReceipt,
 )
-from mindmemos.infra.vector_store import (
+from mindmemos_lite.infra.vector_store import (
     BackendCapabilities,
     DatabaseScope,
     GraphEdge,
@@ -31,19 +31,19 @@ from mindmemos.infra.vector_store import (
     VectorHit,
     VectorValue,
 )
-from mindmemos.persistence import MemoryPersistence
-from mindmemos.persistence.memory import _memory_view
-from mindmemos.persistence.v2 import ADD_RECORD_TABLE, SEARCH_RECORD_TABLE
-from mindmemos.pipeline.vanilla_memory import VanillaAddPipeline, VanillaSearchPipeline
-from mindmemos.pipeline.vanilla_memory.search import VanillaSearchEngine
-from mindmemos.service.memory import VanillaMemoryService
-from mindmemos.service.schema import (
+from mindmemos_lite.persistence import MemoryPersistence
+from mindmemos_lite.persistence.memory import _memory_view
+from mindmemos_lite.persistence.v2 import ADD_RECORD_TABLE, SEARCH_RECORD_TABLE
+from mindmemos_lite.pipeline.vanilla_memory import VanillaAddPipeline, VanillaSearchPipeline
+from mindmemos_lite.pipeline.vanilla_memory.search import VanillaSearchEngine
+from mindmemos_lite.service.memory import VanillaMemoryService
+from mindmemos_lite.service.schema import (
     AddMemoryRequest,
     RequestContext,
     SearchMemoryRequest,
     TextMessage,
 )
-from mindmemos.typing import (
+from mindmemos_lite.typing import (
     MemoryDbMemoryUpdateCommand,
     MemoryDbSearchQuery,
     MemoryRequestContext,

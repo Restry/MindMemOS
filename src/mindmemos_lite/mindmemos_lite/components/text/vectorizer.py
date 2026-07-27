@@ -23,7 +23,7 @@ MEMORY_EMBED_BATCH_SIZE = 10
 class EmbedClient(Protocol):
     """Minimal protocol for dense embedding.
 
-    Matches the real ``EmbedClient`` in ``mindmemos.llm.embedding`` which
+    Matches the real ``EmbedClient`` in ``mindmemos_lite.llm.embedding`` which
     returns ``EmbeddingResponse`` (vector at ``response.embeddings[0]``).
     """
 

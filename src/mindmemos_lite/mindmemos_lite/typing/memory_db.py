@@ -2,7 +2,7 @@
 
 These models describe database-bound memory operations and execution results.
 They are intentionally separate from the business memory DTOs in
-``mindmemos.typing.memory`` so the DB operator surface can evolve without
+``mindmemos_lite.typing.memory`` so the DB operator surface can evolve without
 mixing storage mutation semantics into the core memory contract.
 """
 

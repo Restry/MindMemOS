@@ -4,15 +4,15 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from mindmemos.components.activity import RecentActivityCollector
-from mindmemos.components.dreaming.action_planning import action_planning_parser
-from mindmemos.config import DreamingConfig, TextProcessingConfig
-from mindmemos.infra.tasking import InMemoryTaskBackend, TaskClient, TaskHandlerRegistry
-from mindmemos.persistence.memory import EntityMemoryCluster
-from mindmemos.pipeline.dreaming import MEMORY_DREAMING_TOPIC, DefaultDreamingPipeline
-from mindmemos.service.memory import VanillaMemoryService
-from mindmemos.service.schema import DreamingMemoryRequest, RequestContext
-from mindmemos.typing import (
+from mindmemos_lite.components.activity import RecentActivityCollector
+from mindmemos_lite.components.dreaming.action_planning import action_planning_parser
+from mindmemos_lite.config import DreamingConfig, TextProcessingConfig
+from mindmemos_lite.infra.tasking import InMemoryTaskBackend, TaskClient, TaskHandlerRegistry
+from mindmemos_lite.persistence.memory import EntityMemoryCluster
+from mindmemos_lite.pipeline.dreaming import MEMORY_DREAMING_TOPIC, DefaultDreamingPipeline
+from mindmemos_lite.service.memory import VanillaMemoryService
+from mindmemos_lite.service.schema import DreamingMemoryRequest, RequestContext
+from mindmemos_lite.typing import (
     ActivityRecordSnapshot,
     ActivityScope,
     ConsolidationAction,
@@ -23,7 +23,7 @@ from mindmemos.typing import (
     RecentActivityBundle,
     WrittenMemoryRef,
 )
-from mindmemos.typing.algo import ConsolidationLink, ConsolidationMerge
+from mindmemos_lite.typing.algo import ConsolidationLink, ConsolidationMerge
 
 
 class _FakePersistence:

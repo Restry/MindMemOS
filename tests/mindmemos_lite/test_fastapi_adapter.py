@@ -7,10 +7,10 @@ from typing import Any
 
 import httpx
 import pytest
-from mindmemos.api.app import create_app
-from mindmemos.api.auth import FileApiKeyProvider, ResolvedApiKey
-from mindmemos.errors import AuthenticationError
-from mindmemos.service.schema import (
+from mindmemos_lite.api.app import create_app
+from mindmemos_lite.api.auth import FileApiKeyProvider, ResolvedApiKey
+from mindmemos_lite.errors import AuthenticationError
+from mindmemos_lite.service.schema import (
     AddMemoryResult,
     MemoryAddEvent,
     MemoryItem,
@@ -240,7 +240,7 @@ async def test_fastapi_binds_api_key_project_config_for_request(monkeypatch) -> 
         bound_configs.append((tenant_config, project_config))
         yield
 
-    monkeypatch.setattr("mindmemos.api.deps.bind_config_overrides", capture_config)
+    monkeypatch.setattr("mindmemos_lite.api.deps.bind_config_overrides", capture_config)
     runtime = _FakeRuntime()
     app = create_app(
         runtime_factory=lambda: runtime,

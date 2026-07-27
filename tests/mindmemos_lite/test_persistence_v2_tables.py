@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from mindmemos.infra.vector_store import TableRegistry
-from mindmemos.persistence.v2 import (
+from mindmemos_lite.infra.vector_store import TableRegistry
+from mindmemos_lite.persistence.v2 import (
     ADD_RECORD_TABLE,
     ENTITY_TABLE,
     MEMORY_TABLE,

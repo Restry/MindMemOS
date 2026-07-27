@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import pytest
-from mindmemos.pipeline import MemoryPersistencePipelineMixin, PipelineBase, create_pipeline, register
+from mindmemos_lite.pipeline import MemoryPersistencePipelineMixin, PipelineBase, create_pipeline, register
 
 
 @dataclass(frozen=True)

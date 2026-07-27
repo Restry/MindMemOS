@@ -5,18 +5,18 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from mindmemos.config import (
+from mindmemos_lite.config import (
     MemoryModePipelineConfig,
     MixedAddPipelineConfig,
     PipelineRoutingConfig,
     validate_tree,
 )
-from mindmemos.errors import InvalidConfigError
-from mindmemos.infra.vector_store import FilterGroup, Predicate
-from mindmemos.persistence.memory import MemoryPersistence
-from mindmemos.persistence.v2 import MEMORY_TABLE
-from mindmemos.pipeline.mixed_memory import MixedAddPipeline, ModeSearchPipeline
-from mindmemos.typing import (
+from mindmemos_lite.errors import InvalidConfigError
+from mindmemos_lite.infra.vector_store import FilterGroup, Predicate
+from mindmemos_lite.persistence.memory import MemoryPersistence
+from mindmemos_lite.persistence.v2 import MEMORY_TABLE
+from mindmemos_lite.pipeline.mixed_memory import MixedAddPipeline, ModeSearchPipeline
+from mindmemos_lite.typing import (
     AddPipelineInput,
     AddPipelineSyncResult,
     MemoryAddEventItem,

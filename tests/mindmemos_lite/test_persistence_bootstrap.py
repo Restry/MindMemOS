@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from mindmemos.config import DatabaseConfig, PgVectorConfig
-from mindmemos.infra.vector_store import (
+from mindmemos_lite.config import DatabaseConfig, PgVectorConfig
+from mindmemos_lite.infra.vector_store import (
     BackendCapabilities,
     BackendRegistry,
     FieldSpec,
@@ -12,7 +12,7 @@ from mindmemos.infra.vector_store import (
     TableRegistry,
     TableSpec,
 )
-from mindmemos.persistence import ensure_database_schema
+from mindmemos_lite.persistence import ensure_database_schema
 
 
 class _BootstrapBackend:

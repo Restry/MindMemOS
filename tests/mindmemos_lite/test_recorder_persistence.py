@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from mindmemos.infra.vector_store import (
+from mindmemos_lite.infra.vector_store import (
     BackendCapabilities,
     DatabaseScope,
     FilterGroup,
@@ -13,9 +13,9 @@ from mindmemos.infra.vector_store import (
     ScopedVectorStore,
     VectorDBService,
 )
-from mindmemos.persistence import AddRecordPersistence, MemoryOperationRecorder, SearchRecordPersistence
-from mindmemos.persistence.v2 import ADD_RECORD_TABLE, SEARCH_RECORD_TABLE, build_v2_registry
-from mindmemos.typing import (
+from mindmemos_lite.persistence import AddRecordPersistence, MemoryOperationRecorder, SearchRecordPersistence
+from mindmemos_lite.persistence.v2 import ADD_RECORD_TABLE, SEARCH_RECORD_TABLE, build_v2_registry
+from mindmemos_lite.typing import (
     ActivityScope,
     AddPipelineInput,
     AddPipelineSyncResult,

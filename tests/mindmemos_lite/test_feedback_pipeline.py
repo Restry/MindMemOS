@@ -4,27 +4,27 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from mindmemos.components.activity import RecentActivityCollector
-from mindmemos.components.feedback import DefaultExplicitFeedbackPlanner, FeedbackMemorySearchDecision
-from mindmemos.infra.tasking import InMemoryTaskBackend, TaskClient, TaskHandlerRegistry
-from mindmemos.pipeline.feedback import MEMORY_FEEDBACK_TOPIC, DefaultFeedbackPipeline
-from mindmemos.pipeline.feedback.executor import FeedbackActionExecutor
-from mindmemos.pipeline.feedback.explicit import ExplicitFeedbackHandler
-from mindmemos.pipeline.feedback.implicit import (
+from mindmemos_lite.components.activity import RecentActivityCollector
+from mindmemos_lite.components.feedback import DefaultExplicitFeedbackPlanner, FeedbackMemorySearchDecision
+from mindmemos_lite.infra.tasking import InMemoryTaskBackend, TaskClient, TaskHandlerRegistry
+from mindmemos_lite.pipeline.feedback import MEMORY_FEEDBACK_TOPIC, DefaultFeedbackPipeline
+from mindmemos_lite.pipeline.feedback.executor import FeedbackActionExecutor
+from mindmemos_lite.pipeline.feedback.explicit import ExplicitFeedbackHandler
+from mindmemos_lite.pipeline.feedback.implicit import (
     ImplicitFeedbackHandler,
     ImplicitFeedbackRecordCollector,
     _PendingFeedbackActivityStore,
 )
-from mindmemos.service.memory import VanillaMemoryService
-from mindmemos.service.schema import (
+from mindmemos_lite.service.memory import VanillaMemoryService
+from mindmemos_lite.service.schema import (
     DialogueMessage as ServiceDialogueMessage,
 )
-from mindmemos.service.schema import (
+from mindmemos_lite.service.schema import (
     FeedbackMemoryRequest,
     MemoryItem,
     RequestContext,
 )
-from mindmemos.typing import (
+from mindmemos_lite.typing import (
     ActivityRecordSnapshot,
     ChatResponse,
     DialogueMessage,

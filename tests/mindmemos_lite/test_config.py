@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from mindmemos.config import (
+from mindmemos_lite.config import (
     DatabaseBackendConfig,
     DatabaseBackendRequirementsConfig,
     DatabaseConfig,
@@ -31,8 +31,8 @@ from mindmemos.config import (
     reset_config,
     validate_tree,
 )
-from mindmemos.errors import InvalidConfigError, MissingConfigValueError
-from mindmemos.persistence import build_backend_config
+from mindmemos_lite.errors import InvalidConfigError, MissingConfigValueError
+from mindmemos_lite.persistence import build_backend_config
 from omegaconf import OmegaConf
 from omegaconf.errors import ConfigKeyError, ReadonlyConfigError
 
@@ -63,22 +63,22 @@ def test_all_lite_config_schemas_share_the_recursive_base() -> None:
 
 
 def test_memory_config_types_are_owned_by_component_modules() -> None:
-    assert MemoryConfig.__module__ == "mindmemos.config.memory"
-    assert ObservabilityConfig.__module__ == "mindmemos.config.observability"
-    assert ModelEndpointConfig.__module__ == "mindmemos.config.model.endpoint"
-    assert ModelRouterConfig.__module__ == "mindmemos.config.model.router"
-    assert DatabaseBackendRequirementsConfig.__module__ == "mindmemos.config.database.backend"
-    assert DatabaseBackendConfig.__module__ == "mindmemos.config.database.backend"
-    assert PgVectorConfig.__module__ == "mindmemos.config.database.pgvector"
-    assert DatabaseConfig.__module__ == "mindmemos.config.database.database"
-    assert PipelineRoutingConfig.__module__ == "mindmemos.config.pipelines"
-    assert MemoryModePipelineConfig.__module__ == "mindmemos.config.pipelines"
-    assert MixedAddPipelineConfig.__module__ == "mindmemos.config.pipelines"
-    assert MessageChunkerConfig.__module__ == "mindmemos.config.components.message_chunker"
-    assert TextProcessingConfig.__module__ == "mindmemos.config.components.text_processing"
-    assert VanillaAddConfig.__module__ == "mindmemos.config.vanilla.add"
-    assert VanillaAddRecallConfig.__module__ == "mindmemos.config.vanilla.add"
-    assert VanillaAddSafetyGateConfig.__module__ == "mindmemos.config.vanilla.add"
+    assert MemoryConfig.__module__ == "mindmemos_lite.config.memory"
+    assert ObservabilityConfig.__module__ == "mindmemos_lite.config.observability"
+    assert ModelEndpointConfig.__module__ == "mindmemos_lite.config.model.endpoint"
+    assert ModelRouterConfig.__module__ == "mindmemos_lite.config.model.router"
+    assert DatabaseBackendRequirementsConfig.__module__ == "mindmemos_lite.config.database.backend"
+    assert DatabaseBackendConfig.__module__ == "mindmemos_lite.config.database.backend"
+    assert PgVectorConfig.__module__ == "mindmemos_lite.config.database.pgvector"
+    assert DatabaseConfig.__module__ == "mindmemos_lite.config.database.database"
+    assert PipelineRoutingConfig.__module__ == "mindmemos_lite.config.pipelines"
+    assert MemoryModePipelineConfig.__module__ == "mindmemos_lite.config.pipelines"
+    assert MixedAddPipelineConfig.__module__ == "mindmemos_lite.config.pipelines"
+    assert MessageChunkerConfig.__module__ == "mindmemos_lite.config.components.message_chunker"
+    assert TextProcessingConfig.__module__ == "mindmemos_lite.config.components.text_processing"
+    assert VanillaAddConfig.__module__ == "mindmemos_lite.config.vanilla.add"
+    assert VanillaAddRecallConfig.__module__ == "mindmemos_lite.config.vanilla.add"
+    assert VanillaAddSafetyGateConfig.__module__ == "mindmemos_lite.config.vanilla.add"
 
 
 def test_recursive_validation_runs_children_before_parent() -> None:

@@ -3,7 +3,7 @@
 These models define business contracts only. They do not import database
 clients, build Qdrant points, emit Cypher, or call LLM/embedding services.
 Conversions between these DTOs and low-level database primitives live in
-``mindmemos.mappers``.
+``mindmemos_lite.mappers``.
 
 Layered roles inside this module:
 
@@ -19,7 +19,7 @@ Layered roles inside this module:
   (``MemoryWrite`` / ``EntityWrite`` / ``SourceWrite`` / ``VectorWrite`` /
   ``EntityVectorWrite`` / graph relationship).
 * DB-layer operation DTOs prefixed with ``MemoryDb*`` live in
-  ``mindmemos.typing.memory_db``. Keep them out of this module so the business
+  ``mindmemos_lite.typing.memory_db``. Keep them out of this module so the business
   memory contract does not absorb storage operation semantics.
 """
 
