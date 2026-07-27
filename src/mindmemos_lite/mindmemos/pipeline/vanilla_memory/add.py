@@ -104,7 +104,7 @@ class VanillaAddPipeline(MemoryPersistencePipelineMixin):
         self._memory_extractor = memory_extractor or VanillaMemoryExtractor(llm_client=resolved_llm)
         self._candidate_deduplicator = candidate_deduplicator or CandidateDeduplicator()
         self._related_memory_recall = related_memory_recall or RelatedMemoryRecall(
-            db_reader=self.persistence,
+            persistence=self.persistence,
             sparse_encoder=self._sparse_encoder,
         )
         self._safety_gate = safety_gate or AddSafetyGate()

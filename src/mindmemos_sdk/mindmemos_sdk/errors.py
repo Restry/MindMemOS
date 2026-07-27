@@ -88,3 +88,11 @@ class SkillPendingUploadError(SkillError):
 
 class SkillInstallerError(SkillError):
     """Raised when a managed skill checkout cannot be safely applied."""
+
+
+class LocalSkillRepositoryError(SkillError):
+    """Raised when the centralized local Skill repository is invalid or cannot be updated."""
+
+
+class SkillSnapshotError(SkillError):
+    """Raised when a complete local Skill snapshot cannot be read or validated."""

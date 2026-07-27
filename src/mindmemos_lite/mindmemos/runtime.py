@@ -22,7 +22,7 @@ from .llm import close_llm_clients, init_embed_client, init_llm_client, validate
 from .logging import configure_logging, configure_tracing, get_logger
 from .persistence import MemoryPersistence, ensure_database_schema
 from .persistence.v2 import ENTITY_TABLE, MEMORY_TABLE, SOURCE_TABLE, build_v2_registry
-from .service.memory import VanillaMemoryService
+from .service.memory import MixedMemoryService
 from .service.ports.memory import MemoryService
 from .service.ports.skill import SkillService
 
@@ -178,7 +178,7 @@ class MindMemOS:
         if self._memory_service is None:
             if self._memory_persistence is None:
                 raise RuntimeError("memory persistence was not initialized")
-            self._memory_service = VanillaMemoryService.from_config(
+            self._memory_service = MixedMemoryService.from_config(
                 self._memory_persistence,
                 config=get_config(),
                 task_client=self._task_client,

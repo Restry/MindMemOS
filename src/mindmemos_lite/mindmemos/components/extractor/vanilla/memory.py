@@ -16,7 +16,7 @@ from ....typing import (
     MemoryType,
     PreprocessedText,
     Turn,
-    TurnMessageRef,
+    NormalizedMessage,
 )
 
 logger = get_logger(__name__)
@@ -422,7 +422,7 @@ def _context_turn_payload(turn: Turn) -> dict[str, Any] | None:
     return {"boundary": turn.boundary, "text": text, "messages": messages}
 
 
-def _context_message_payload(message: TurnMessageRef) -> dict[str, Any]:
+def _context_message_payload(message: NormalizedMessage) -> dict[str, Any]:
     return {
         "role": message.role,
         "raw_role": message.raw_role,
@@ -432,12 +432,12 @@ def _context_message_payload(message: TurnMessageRef) -> dict[str, Any]:
     }
 
 
-def _context_message_text(message: TurnMessageRef) -> str:
+def _context_message_text(message: NormalizedMessage) -> str:
     label = _context_message_label(message)
     return f"{label}: {message.text}" if label else message.text
 
 
-def _context_message_label(message: TurnMessageRef) -> str | None:
+def _context_message_label(message: NormalizedMessage) -> str | None:
     if message.speaker:
         return message.speaker
     if message.raw_role:

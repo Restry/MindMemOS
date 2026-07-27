@@ -31,8 +31,8 @@ from .memory import (
 class MemoryDbWritePlan(BaseModel):
     """Purpose: Batch all database writes produced by a memory operation.
 
-    Used in: ``pipelines.memory_db.MemoryDbWriter`` as the boundary between
-    business algorithms and low-level database stores.
+    Used by ``MemoryPersistence`` as the boundary between business algorithms
+    and the backend-neutral vector database service.
     """
 
     memories: list[MemoryWrite] = Field(default_factory=list)
@@ -217,8 +217,8 @@ class MemoryDbRelationshipDeleteCommand(BaseModel):
 class MemoryDbMutationPlan(BaseModel):
     """Purpose: Batch all database mutations produced by memory pipelines.
 
-    Used in: ``pipelines.memory_db.MemoryDbWriter`` as the unified boundary
-    for add, update, delete, feedback, dreaming, and schema merge flows.
+    Applied through ``MemoryPersistence`` for add, update, delete, feedback,
+    dreaming, and schema merge flows.
     """
 
     memory_writes: list[MemoryDbMemoryWriteCommand] = Field(default_factory=list)
@@ -339,10 +339,9 @@ class MemoryDbMutationPlan(BaseModel):
 
 
 class MemoryDbSearchQuery(BaseModel):
-    """Purpose: DB-layer search request for ``pipelines.memory_db.reader``.
+    """Purpose: Persistence-layer memory search request.
 
-    Used in: ``MemoryDbReader.search_dense / search_sparse / search_rrf /
-    search_by_filter``. Sparse search receives dense business-level
+    Used by ``MemoryPersistence`` search methods. Sparse search receives business-level
     ``indices`` / ``values`` instead of infra DB vector models. Higher-level pipelines translate their public
     ``SearchPipelineInput`` into this DB-shaped query before execution.
     """
@@ -378,7 +377,7 @@ class MemoryDbSearchHit(BaseModel):
 class MemoryDbSearchResult(BaseModel):
     """Purpose: DB-layer search response with raw hits and execution metadata.
 
-    Used in: ``MemoryDbReader`` return value and mapper ``to_search_result``.
+    Returned by ``MemoryPersistence`` and projected by search pipeline mappers.
     """
 
     query: str
@@ -394,8 +393,8 @@ MemoryDbDeleteCommand = MemoryDbMemoryDeleteCommand
 class MemoryDbMutationResult(BaseModel):
     """Purpose: Minimal DB-layer acknowledgement for update/delete operations.
 
-    Used in: ``MemoryDbWriter.update_memory / delete_memory`` return value
-    and mapper ``to_mutation_result``.
+    Returned from ``MemoryPersistence.apply_mutation_plan`` and projected by
+    service-layer mappers.
     """
 
     status: str = "ok"
@@ -421,8 +420,8 @@ class MemoryDbWriteSummary(BaseModel):
 class MemoryDbWriteResult(BaseModel):
     """Purpose: Summarize the outcome of writing one plan into Qdrant and Neo4j.
 
-    Used in: ``pipelines.memory_db.MemoryDbWriter`` return value. For unified
-    mutation plans, ``mutations`` carries per-command update/delete results.
+    Returned from ``MemoryPersistence.apply_mutation_plan``. For unified mutation
+    plans, ``mutations`` carries per-command update/delete results.
     """
 
     memory_ids: list[str] = Field(default_factory=list)

@@ -8,12 +8,15 @@ from mindmemos.config import (
     DatabaseBackendRequirementsConfig,
     DatabaseConfig,
     MemoryConfig,
+    MemoryModePipelineConfig,
     MessageChunkerConfig,
     MindMemOSConfig,
+    MixedAddPipelineConfig,
     ModelEndpointConfig,
     ModelRouterConfig,
     ObservabilityConfig,
     PgVectorConfig,
+    PipelineRoutingConfig,
     TextProcessingConfig,
     VanillaAddConfig,
     VanillaAddRecallConfig,
@@ -53,6 +56,9 @@ def test_all_lite_config_schemas_share_the_recursive_base() -> None:
     assert issubclass(DatabaseBackendConfig, MindMemOSConfig)
     assert issubclass(DatabaseBackendRequirementsConfig, MindMemOSConfig)
     assert issubclass(PgVectorConfig, MindMemOSConfig)
+    assert issubclass(PipelineRoutingConfig, MindMemOSConfig)
+    assert issubclass(MemoryModePipelineConfig, MindMemOSConfig)
+    assert issubclass(MixedAddPipelineConfig, MindMemOSConfig)
     assert issubclass(VanillaAlgorithmConfig, MindMemOSConfig)
 
 
@@ -65,6 +71,9 @@ def test_memory_config_types_are_owned_by_component_modules() -> None:
     assert DatabaseBackendConfig.__module__ == "mindmemos.config.database.backend"
     assert PgVectorConfig.__module__ == "mindmemos.config.database.pgvector"
     assert DatabaseConfig.__module__ == "mindmemos.config.database.database"
+    assert PipelineRoutingConfig.__module__ == "mindmemos.config.pipelines"
+    assert MemoryModePipelineConfig.__module__ == "mindmemos.config.pipelines"
+    assert MixedAddPipelineConfig.__module__ == "mindmemos.config.pipelines"
     assert MessageChunkerConfig.__module__ == "mindmemos.config.components.message_chunker"
     assert TextProcessingConfig.__module__ == "mindmemos.config.components.text_processing"
     assert VanillaAddConfig.__module__ == "mindmemos.config.vanilla.add"
@@ -103,6 +112,7 @@ def test_example_config_selects_pgvector_with_typed_options() -> None:
         "embed_model_router",
         "rerank_model_router",
         "database",
+        "pipelines",
         "algo_config",
     ]
     assert cfg.observability.enabled is True
@@ -116,6 +126,14 @@ def test_example_config_selects_pgvector_with_typed_options() -> None:
     assert cfg.database.backend.required.max_vector_dimensions == 2560
     assert cfg.database.pgvector.schema == "mindmemos"
     assert cfg.database.pgvector.dsn
+    assert OmegaConf.get_type(cfg.pipelines) is PipelineRoutingConfig
+    assert OmegaConf.get_type(cfg.pipelines.modes.vanilla) is MemoryModePipelineConfig
+    assert OmegaConf.get_type(cfg.pipelines.mixed_add) is MixedAddPipelineConfig
+    assert cfg.pipelines.default_search_mode == "vanilla"
+    assert list(cfg.pipelines.modes) == ["vanilla"]
+    assert cfg.pipelines.modes.vanilla.add_pipeline == "vanilla_add"
+    assert cfg.pipelines.modes.vanilla.search_pipeline == "vanilla_search"
+    assert list(cfg.pipelines.mixed_add.modes) == ["vanilla"]
     assert OmegaConf.get_type(cfg.algo_config) is VanillaAlgorithmConfig
     assert OmegaConf.get_type(cfg.algo_config.text_processing) is TextProcessingConfig
     assert OmegaConf.get_type(cfg.algo_config.add) is VanillaAddConfig
@@ -132,6 +150,14 @@ def test_example_config_selects_pgvector_with_typed_options() -> None:
     assert cfg.algo_config.add.chunker.chunk_hard_token_budget == 32000
     assert cfg.algo_config.add.recall.top_k == 5
     assert cfg.algo_config.search.recall_size == 20
+
+
+def test_example_config_supports_isolated_pgvector_schema(monkeypatch) -> None:
+    monkeypatch.setenv("PGVECTOR_SCHEMA", "eval_locomo_mixed_vanilla")
+
+    cfg = build_config(config_path=EXAMPLE_CONFIG_PATH)
+
+    assert cfg.database.pgvector.schema == "eval_locomo_mixed_vanilla"
 
 
 def test_example_config_explicitly_matches_the_complete_memory_config_shape() -> None:

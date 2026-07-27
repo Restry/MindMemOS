@@ -21,6 +21,7 @@ from .database import DatabaseBackendConfig, DatabaseBackendRequirementsConfig, 
 from .memory import MemoryConfig
 from .model import ModelEndpointConfig, ModelRouterConfig
 from .observability import ObservabilityConfig
+from .pipelines import MemoryModePipelineConfig, MixedAddPipelineConfig, PipelineRoutingConfig
 from .validation import validate_config, validate_tree
 from .vanilla import (
     DreamingConfig,
@@ -39,11 +40,14 @@ __all__ = [
     "DatabaseConfig",
     "DreamingConfig",
     "MemoryConfig",
+    "MemoryModePipelineConfig",
     "MessageChunkerConfig",
     "MindMemOSConfig",
     "ModelEndpointConfig",
     "ModelRouterConfig",
     "ObservabilityConfig",
+    "MixedAddPipelineConfig",
+    "PipelineRoutingConfig",
     "PgVectorConfig",
     "REPO_ROOT",
     "TextProcessingConfig",

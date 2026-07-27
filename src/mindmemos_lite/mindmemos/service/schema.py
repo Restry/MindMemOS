@@ -234,6 +234,7 @@ class SearchMemoryRequest:
     """Command for ``POST /v1/memory/search``."""
 
     query: str
+    memory_mode: str | None = None
     filters: Mapping[str, Any] | None = None
     top_k: int | None = 10
     search_strategy: SearchStrategy = "fast"
@@ -243,6 +244,7 @@ class SearchMemoryRequest:
 
     def __post_init__(self) -> None:
         _require_text(self.query, "query")
+        _validate_optional_text(self.memory_mode, "memory_mode")
         if self.top_k is not None and self.top_k < 1:
             raise ValueError("top_k must be positive when provided")
         if self.score_threshold is not None and not 0 <= self.score_threshold <= 1:

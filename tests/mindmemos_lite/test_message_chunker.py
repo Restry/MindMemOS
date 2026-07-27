@@ -227,6 +227,36 @@ async def test_message_chunker_preserves_message_grouping_contract(
 
 
 @pytest.mark.asyncio
+async def test_message_chunker_retains_message_file_and_url_source_refs() -> None:
+    messages: list[InputMessage] = [
+        FileMessage(file_name="notes.pdf", file_path="oss://bucket/notes.pdf"),
+        DialogueMessage(role="Customer", content="Remember the attachment"),
+        UrlMessage(url="https://example.com/design"),
+        DialogueMessage(role="Agent", content="I will remember it"),
+    ]
+
+    result = await MessageChunker(MessageChunkerConfig()).split(messages)
+
+    assert [(ref.source_type, ref.metadata["message_index"]) for ref in result.external_source_refs] == [
+        ("file", 0),
+        ("url", 2),
+    ]
+    assert result.external_source_refs[0].file_path == "oss://bucket/notes.pdf"
+    assert result.external_source_refs[1].uri == "https://example.com/design"
+    assert all(ref.source_id is None for ref in result.external_source_refs)
+
+    prepared = result.chunks[0]
+    assert len(prepared.source_refs) == len(prepared.extractable_messages) == 2
+    assert [ref.message_id for ref in prepared.source_refs] == [
+        "chunk0-evidence-0-message-1",
+        "chunk0-evidence-1-message-3",
+    ]
+    assert [ref.metadata["source_raw_role"] for ref in prepared.source_refs] == ["Customer", "Agent"]
+    assert [ref.metadata["evidence_index"] for ref in prepared.source_refs] == [0, 1]
+    assert all(ref.source_id is None for ref in prepared.source_refs)
+
+
+@pytest.mark.asyncio
 async def test_message_chunker_preserves_multi_chunk_history_flow() -> None:
     config = MessageChunkerConfig(
         chunk_soft_token_budget=20,
@@ -298,6 +328,9 @@ async def test_message_chunker_compacts_long_turn_and_retains_diagnostics() -> N
     assert prepared.extractable_messages[-1].text.endswith("answer39")
     assert prepared.context_messages[0].role == "system"
     assert '"general_summary": "preserved middle context"' in prepared.context_messages[0].text
+    assert len(prepared.source_refs) == len(prepared.extractable_messages)
+    assert [ref.metadata["message_index"] for ref in prepared.source_refs] == [0, 1]
+    assert [ref.metadata["evidence_index"] for ref in prepared.source_refs] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -371,6 +404,29 @@ async def test_add_core_builder_consumes_prepared_multi_chunk_history_without_ch
         assert envelope.history == prepared.history
         assert envelope.boundary == prepared.chunk.boundary
         assert envelope.chunk_index == prepared.chunk.chunk_index
+
+
+@pytest.mark.asyncio
+async def test_add_core_builder_consumes_chunker_owned_source_refs() -> None:
+    messages: list[InputMessage] = [
+        FileMessage(file_name="notes.pdf", file_path="oss://bucket/notes.pdf"),
+        DialogueMessage(role="user", content="Remember the attachment"),
+        UrlMessage(url="https://example.com/design"),
+        DialogueMessage(role="assistant", content="I will remember it"),
+    ]
+    extractor = _EnvelopeCaptureExtractor()
+
+    plan, _, _ = await _builder(extractor).build(
+        AddPipelineInput(messages=messages),
+        _context(),
+    )
+
+    assert [source.source_type for source in plan.sources] == ["file", "url", "message", "message"]
+    assert [source.persist_payload for source in plan.sources] == [True, True, False, False]
+    message_sources = [source for source in plan.sources if source.source_type == "message"]
+    assert [source.metadata["message_index"] for source in message_sources] == [1, 3]
+    assert [source.metadata["evidence_index"] for source in message_sources] == [0, 1]
+    assert all(source.source_id for source in plan.sources)
 
 
 @pytest.mark.asyncio

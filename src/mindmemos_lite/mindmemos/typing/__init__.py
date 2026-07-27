@@ -33,7 +33,7 @@ from .algo import (
     TurnBoundary,
     TurnCompactionResult,
     TurnCompactionSummary,
-    TurnMessageRef,
+    NormalizedMessage,
 )
 from .llm import ChatResponse, EmbeddingResponse, RerankHit, RerankResponse, Usage
 from .memory import (
@@ -300,7 +300,7 @@ __all__ = [
     "TurnBoundary",
     "TurnCompactionResult",
     "TurnCompactionSummary",
-    "TurnMessageRef",
+    "NormalizedMessage",
     "UpdatePipelineInput",
     "UpdatePipelineResult",
     "UrlMessage",

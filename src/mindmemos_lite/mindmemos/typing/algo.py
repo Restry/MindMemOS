@@ -333,7 +333,7 @@ TurnBoundary = Literal["complete", "open_head", "open_tail", "orphan"]
 ChunkBoundary = Literal["complete", "open_head", "open_tail", "orphan", "compacted"]
 
 
-class TurnMessageRef(BaseModel):
+class NormalizedMessage(BaseModel):
     """Reference to a single message within a turn.
 
     Purpose: Carry the text, role, timestamp, and extractability flag for one
@@ -361,7 +361,7 @@ class Turn(BaseModel):
     the assistant response(s) associated with it.
     """
 
-    messages: list[TurnMessageRef] = Field(description="Ordered messages in this turn.")
+    messages: list[NormalizedMessage] = Field(description="Ordered messages in this turn.")
     boundary: TurnBoundary = Field(description="Boundary type: complete, open_head, open_tail, or orphan.")
     token_count: int = Field(default=0, description="Total token count across all messages in this turn.")
 
@@ -371,7 +371,7 @@ class Turn(BaseModel):
         return hasattr(self, "_compaction_result") and self._compaction_result is not None
 
     @property
-    def extractable_messages(self) -> list[TurnMessageRef]:
+    def extractable_messages(self) -> list[NormalizedMessage]:
         """Messages that are extractable evidence (excludes system messages)."""
         return [m for m in self.messages if m.is_extractable]
 
@@ -431,10 +431,10 @@ class ExtractionEnvelope(BaseModel):
     non-extractable context so the LLM knows the boundary.
     """
 
-    extractable_messages: list[TurnMessageRef] = Field(
+    extractable_messages: list[NormalizedMessage] = Field(
         description="Primary evidence: current chunk messages that can produce memory candidates.",
     )
-    current_context_messages: list[TurnMessageRef] = Field(
+    current_context_messages: list[NormalizedMessage] = Field(
         default_factory=list,
         description="Non-extractable context within the current chunk (e.g. compaction summaries). "
         "Visible to the LLM for reference but must not produce memory candidates.",

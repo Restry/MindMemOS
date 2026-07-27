@@ -59,7 +59,7 @@ REL_DERIVED_FROM = "DERIVED_FROM"
 class DatabaseRequestBudget(BaseModel):
     """Purpose: Track remaining database read budget for one request.
 
-    Used in: memory DB readers that can amplify one graph lookup into many
+    Used by memory persistence operations that can amplify one graph lookup into many
     Neo4j rows or Qdrant point reads.
     """
 
@@ -108,7 +108,7 @@ class MemoryEdgeFilter(BaseModel):
 class GraphNeighborScope(BaseModel):
     """Purpose: Carry one graph recall scope for a seed memory.
 
-    Used in: memory DB reader and dreaming scope selection. ``source`` makes
+    Used in memory persistence and dreaming scope selection. ``source`` makes
     the traversal origin explicit, e.g. shared entity or direct memory relation.
     """
 
@@ -123,7 +123,7 @@ class GraphNeighborScope(BaseModel):
 class DirectRelatedMemory(BaseModel):
     """Purpose: Carry one direct Memory-to-Memory graph neighbor.
 
-    Used in: memory DB reader and dreaming graph recall composition before
+    Used in memory persistence and dreaming graph recall composition before
     direct neighbors are attached to seed/entity scopes.
     """
 
@@ -420,7 +420,7 @@ class RelatedMemoryRecallResult(BaseModel):
 class MemoryWrite(BaseModel):
     """Purpose: Define the minimal Qdrant ``memory_item_v1`` payload before mapping.
 
-    Used in: add/update/merge algorithms and ``pipelines.memory_db.MemoryDbWriter``.
+    Used by add/update/merge algorithms and applied through ``MemoryPersistence``.
     """
 
     memory_id: str
@@ -434,6 +434,9 @@ class MemoryWrite(BaseModel):
     request_id: str | None = None
     content: str
     mem_type: MemoryType = "fact"
+    memory_mode: str = "vanilla"
+    """Stable public mode used to isolate memories written by parallel algorithms."""
+
     mem_extract_type: str = "vanilla"
     mem_extract_version: str
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -589,6 +592,7 @@ class MemoryView(BaseModel):
     project_id: str
     content: str
     mem_type: MemoryType | str
+    memory_mode: str = "vanilla"
     mem_extract_type: str | None = None
     mem_extract_version: str | None = None
     status: MemoryStatus | str
@@ -658,7 +662,7 @@ class EntitySearchHit(BaseModel):
 
 
 class EntitySearchResult(BaseModel):
-    """Purpose: Return project-scoped entity recall results from the DB reader.
+    """Purpose: Return project-scoped entity recall results from memory persistence.
 
     Used in: add/merge pipelines that need entity candidate recall while
     keeping direct Qdrant access inside infrastructure code.

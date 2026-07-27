@@ -184,7 +184,10 @@ async def test_explicit_feedback_searches_once_and_deduplicates_by_memory_id() -
     assert [item.id for item in planner.planned_input.recalled_memories] == ["mem-1", "mem-2"]
 
 
-class _FakeDbReader:
+class _FakeFeedbackPersistence:
+    def __init__(self) -> None:
+        self.plans = []
+
     async def get_memory(self, _context, memory_id):
         if memory_id != "mem-1":
             return None
@@ -195,11 +198,6 @@ class _FakeDbReader:
             mem_type="fact",
             status="active",
         )
-
-
-class _FakeDbWriter:
-    def __init__(self) -> None:
-        self.plans = []
 
     async def apply_mutation_plan(self, _context, plan, *, consistency="fast"):
         self.plans.append((plan, consistency))
@@ -230,10 +228,9 @@ class _FakeSparse:
 
 @pytest.mark.asyncio
 async def test_feedback_executor_preserves_add_update_delete_mutation_shapes() -> None:
-    writer = _FakeDbWriter()
+    persistence = _FakeFeedbackPersistence()
     executor = FeedbackActionExecutor(
-        db_reader=_FakeDbReader(),
-        db_writer=writer,
+        persistence=persistence,
         embed_client=_FakeEmbed(),
         text_preprocessor=_FakePreprocessor(),
         sparse_encoder=_FakeSparse(),
@@ -252,13 +249,19 @@ async def test_feedback_executor_preserves_add_update_delete_mutation_shapes() -
     )
 
     assert [item.status for item in result] == ["ok", "ok", "ok"]
-    assert all(consistency == "strong" for _, consistency in writer.plans)
-    update_plan = writer.plans[1][0]
+    assert all(consistency == "strong" for _, consistency in persistence.plans)
+    update_plan = persistence.plans[1][0]
     assert update_plan.memory_updates[0].status == "archived"
     write_plan = update_plan.to_write_plan()
     assert write_plan.relationships[0].rel_type == "DERIVED_FROM"
     assert write_plan.relationships[0].target.node_id == "mem-1"
-    assert writer.plans[2][0].memory_deletes[0].reason == "feedback_delete"
+    assert persistence.plans[2][0].memory_deletes[0].reason == "feedback_delete"
+
+
+@pytest.mark.parametrize("legacy_dependency", ["db_reader", "db_writer"])
+def test_feedback_executor_rejects_legacy_persistence_dependencies(legacy_dependency: str) -> None:
+    with pytest.raises(TypeError, match=f"unexpected keyword argument '{legacy_dependency}'"):
+        FeedbackActionExecutor(**{legacy_dependency: object()})
 
 
 class _FakeActivityRecorder:

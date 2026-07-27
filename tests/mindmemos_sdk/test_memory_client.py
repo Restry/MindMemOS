@@ -6,6 +6,7 @@ import json
 
 import httpx
 import pytest
+from mindmemos_sdk.config import ConfigManager
 from mindmemos_sdk.errors import ApiError, AuthRequiredError, InvalidRequestError, MindMemOSSDKError, TransportError
 from mindmemos_sdk.memory import (
     DialogueMessage,
@@ -15,7 +16,14 @@ from mindmemos_sdk.memory import (
     TextMessage,
     UrlMessage,
 )
-from mindmemos_sdk.skills import HashState, SkillContext, SkillRecord
+from mindmemos_sdk.skills import (
+    HashState,
+    PushVersionResult,
+    RegisterLocalRequest,
+    SkillContext,
+    SkillManager,
+    SkillRecord,
+)
 from mindmemos_sdk.transport import HttpTransport
 
 
@@ -97,7 +105,7 @@ def test_add_sends_skill_context_when_provided():
             {
                 "name": "demo",
                 "content_hash": "hash-1",
-                "base_version_id": "v1",
+                "version_id": "v1",
                 "usage": "modified",
             }
         ],
@@ -107,7 +115,7 @@ def test_add_sends_skill_context_when_provided():
         {
             "name": "demo",
             "content_hash": "hash-1",
-            "base_version_id": "v1",
+            "version_id": "v1",
             "usage": "modified",
         }
     ]
@@ -199,11 +207,70 @@ def test_add_auto_detects_and_ensures_registered_skill(tmp_path):
         {
             "name": "demo",
             "content_hash": "hash-confirmed",
-            "base_version_id": "v1",
+            "version_id": "v1",
             "usage": "injected",
         }
     ]
     assert skills.flush_called is True
+
+
+def test_add_with_centralized_skill_pushes_uuid_before_sending_trace(tmp_path):
+    events = []
+    captured = {}
+    source = tmp_path / "demo"
+    source.mkdir()
+    content = "name: demo\n\nBody\n"
+    (source / "SKILL.md").write_text(content, encoding="utf-8")
+
+    class Cloud:
+        def push_version(self, request):
+            events.append(("push", request.version_id))
+            return PushVersionResult(
+                cloud_skill_id="00000000-0000-4000-8000-000000000010",
+                version_id=request.version_id,
+                content_hash=request.expected_content_hash,
+                status="observed",
+                created_at=request.created_at,
+                received_at="2026-07-25T00:00:01Z",
+            )
+
+    manager = SkillManager.from_config_manager(
+        ConfigManager(config_dir=tmp_path / "config"),
+        Cloud(),
+    )
+    registered = manager.register_local(
+        RegisterLocalRequest(source_path=str(source))
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        events.append(("add", None))
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"code": "ok", "data": {"memories": []}},
+        )
+
+    client = MemoryClient(
+        _transport(handler),
+        default_user_id="u_1",
+        skill_manager=manager,
+    )
+    client.add(
+        messages=[
+            DialogueMessage(
+                role="assistant",
+                content=f'[tool_call] read({{"path":"{source / "SKILL.md"}"}})',
+                timestamp=1,
+            ),
+            DialogueMessage(role="tool", content=content, timestamp=2),
+        ]
+    )
+
+    assert events == [("push", registered.version_id), ("add", None)]
+    [context] = captured["body"]["skill_context"]
+    assert context["version_id"] == registered.version_id
+    assert "base_version_id" not in context
+    assert "linked_files" not in context
 
 
 def test_add_async_queued_empty():

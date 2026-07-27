@@ -177,7 +177,7 @@ class ImplicitFeedbackRecordCollector:
     ) -> None:
         self._window_days = window_days
         self._page_size = page_size
-        self._memory_reader = persistence
+        self._persistence = persistence
         self._operation_recorder = operation_recorder or (
             MemoryOperationRecorder.from_service(persistence.service) if persistence is not None else None
         )
@@ -292,14 +292,14 @@ class ImplicitFeedbackRecordCollector:
         if isinstance(session_id, str) and session_id:
             must.append(FieldCondition(field="session_id", op="match", value=session_id))
         filters = SearchFilter(must=must)
-        memories, _ = await self._reader.list_memories(context, filters=filters, limit=100)
+        memories, _ = await self.persistence.list_memories(context, filters=filters, limit=100)
         return memories
 
     @property
-    def _reader(self) -> MemoryPersistence:
-        if self._memory_reader is None:
+    def persistence(self) -> MemoryPersistence:
+        if self._persistence is None:
             raise RuntimeError("implicit feedback collection requires Lite memory persistence")
-        return self._memory_reader
+        return self._persistence
 
     @property
     def _recorder(self) -> MemoryOperationRecorder:

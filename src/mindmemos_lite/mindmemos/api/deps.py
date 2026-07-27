@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from uuid import uuid4
 
 from fastapi import Depends, Header, Request
 from opentelemetry import trace
 
+from ..config import bind_config_overrides
 from ..errors import AuthenticationError, BadRequestError, PermissionDeniedError
 from ..service.ports.memory import MemoryService
 from ..service.schema import RequestContext
@@ -26,7 +27,7 @@ async def get_memory_service(request: Request) -> MemoryService:
 async def get_request_context(
     request: Request,
     authorization: str | None = Header(default=None),
-) -> RequestContext:
+) -> AsyncIterator[RequestContext]:
     api_key = _extract_bearer_token(authorization)
     provider: ApiKeyProvider = request.app.state.api_key_provider
     resolved = provider.resolve(api_key)
@@ -45,7 +46,11 @@ async def get_request_context(
         scopes=resolved.scopes,
     )
     _annotate_trace(context)
-    return context
+    if resolved.project_config:
+        with bind_config_overrides(project_config=resolved.project_config):
+            yield context
+        return
+    yield context
 
 
 def require_scopes(*required_scopes: str):

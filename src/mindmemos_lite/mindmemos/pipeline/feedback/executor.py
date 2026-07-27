@@ -35,15 +35,12 @@ class FeedbackActionExecutor:
         self,
         *,
         persistence: MemoryPersistence | None = None,
-        db_reader: MemoryPersistence | None = None,
-        db_writer: MemoryPersistence | None = None,
         embed_client: EmbedClient | None = None,
         text_config: TextProcessingConfig | None = None,
         text_preprocessor: TextPreprocessor | None = None,
         sparse_encoder: SparseVectorEncoder | None = None,
     ) -> None:
-        self._db_reader = db_reader or persistence
-        self._db_writer = db_writer or persistence
+        self._persistence = persistence
         self._embed_client = embed_client
         self._text_config = text_config
         self._text_preprocessor = text_preprocessor
@@ -76,7 +73,7 @@ class FeedbackActionExecutor:
         now = datetime.now(UTC)
         memory_id = str(uuid4())
         vector = await self._vectorize(action.after_content)
-        result = await self._db_writer.apply_mutation_plan(
+        result = await self.persistence.apply_mutation_plan(
             context,
             MemoryDbMutationPlan.from_write_plan(
                 MemoryDbWritePlan(
@@ -115,7 +112,7 @@ class FeedbackActionExecutor:
     ) -> FeedbackActionResult:
         """通过创建新记忆版本 + 归档旧记忆来实现更新，版本关系通过 Neo4j DERIVED_FROM 维系。"""
         now = datetime.now(UTC)
-        memory = await self._db_reader.get_memory(context, action.target_memory_id)
+        memory = await self.persistence.get_memory(context, action.target_memory_id)
         if memory is None:
             return action.model_copy(update={"result_memory_id": action.target_memory_id, "status": "error"})
 
@@ -179,7 +176,7 @@ class FeedbackActionExecutor:
         plan = MemoryDbMutationPlan.from_write_plan(write_plan)
         plan.memory_updates = [archive_command]
 
-        result = await self._db_writer.apply_mutation_plan(context, plan, consistency="strong")
+        result = await self.persistence.apply_mutation_plan(context, plan, consistency="strong")
 
         write_success = new_memory_id in result.memory_ids
         mutation = result.mutations[0] if result.mutations else None
@@ -197,9 +194,8 @@ class FeedbackActionExecutor:
         context: MemoryRequestContext,
     ) -> FeedbackActionResult:
         """归档记忆并记录原因。旧记忆在 Qdrant 中保留（status="archived"），不再写 FeedbackPatch。"""
-        memory = await self._db_reader.get_memory(context, action.target_memory_id)
         command = MemoryDbDeleteCommand(memory_id=action.target_memory_id, reason="feedback_delete")
-        result = await self._db_writer.apply_mutation_plan(
+        result = await self.persistence.apply_mutation_plan(
             context,
             MemoryDbMutationPlan(memory_deletes=[command]),
             consistency=command.consistency,
@@ -224,24 +220,10 @@ class FeedbackActionExecutor:
         )
 
     @property
-    def _db_reader(self) -> MemoryPersistence:
-        if self.__db_reader is None:
+    def persistence(self) -> MemoryPersistence:
+        if self._persistence is None:
             raise RuntimeError("feedback action execution requires Lite memory persistence")
-        return self.__db_reader
-
-    @_db_reader.setter
-    def _db_reader(self, value: MemoryPersistence | None) -> None:
-        self.__db_reader = value
-
-    @property
-    def _db_writer(self) -> MemoryPersistence:
-        if self.__db_writer is None:
-            raise RuntimeError("feedback action execution requires Lite memory persistence")
-        return self.__db_writer
-
-    @_db_writer.setter
-    def _db_writer(self, value: MemoryPersistence | None) -> None:
-        self.__db_writer = value
+        return self._persistence
 
     @property
     def _embed_client(self) -> EmbedClient:

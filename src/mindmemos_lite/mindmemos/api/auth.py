@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import yaml
 
@@ -25,6 +25,7 @@ class ResolvedApiKey:
     key_id: str
     memory_algorithm: str
     scopes: tuple[str, ...]
+    project_config: dict[str, Any] | None = None
 
 
 class ApiKeyProvider(Protocol):
@@ -75,12 +76,16 @@ class FileApiKeyProvider:
             scopes = entry.get("scopes") or []
             if not isinstance(scopes, list) or not all(isinstance(scope, str) and scope for scope in scopes):
                 raise RuntimeError(f"api_keys[{index}].scopes in {path} must be a list of strings")
+            project_config = entry.get("project_override_config")
+            if project_config is not None and not isinstance(project_config, dict):
+                raise RuntimeError(f"api_keys[{index}].project_override_config in {path} must be a mapping")
             resolved[api_key] = ResolvedApiKey(
                 account_id=str(entry.get("account_id") or STANDALONE_ACCOUNT_ID),
                 project_id=_required_text(entry, "project_id", path, index),
                 key_id=_required_text(entry, "key_id", path, index),
                 memory_algorithm=str(entry.get("memory_algorithm") or "vanilla"),
                 scopes=tuple(scopes),
+                project_config=project_config,
             )
         return resolved
 

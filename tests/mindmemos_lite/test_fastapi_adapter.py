@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime
+from typing import Any
 
 import httpx
 import pytest
@@ -15,16 +17,24 @@ from mindmemos.service.schema import (
     MemoryListResult,
     MemoryMutationResult,
 )
+from mindmemos_sdk.memory import AsyncMemoryClient
+from mindmemos_sdk.transport import AsyncHttpTransport
 
 
 class _StaticApiKeyProvider:
-    def __init__(self, *, scopes: tuple[str, ...] = ("memory:read", "memory:write")) -> None:
+    def __init__(
+        self,
+        *,
+        scopes: tuple[str, ...] = ("memory:read", "memory:write"),
+        project_config: dict[str, Any] | None = None,
+    ) -> None:
         self._resolved = ResolvedApiKey(
             account_id="account-1",
             project_id="project-1",
             key_id="key-1",
             memory_algorithm="vanilla",
             scopes=scopes,
+            project_config=project_config,
         )
 
     def resolve(self, api_key: str) -> ResolvedApiKey:
@@ -164,7 +174,7 @@ async def test_fastapi_search_preserves_response_shape_and_enforces_scopes() -> 
             search = await client.post(
                 "/v1/memory/search",
                 headers={"Authorization": "Bearer secret"},
-                json={"query": "stored"},
+                json={"query": "stored", "memory_mode": "vanilla"},
             )
             forbidden = await client.post(
                 "/v1/memory/add",
@@ -174,6 +184,8 @@ async def test_fastapi_search_preserves_response_shape_and_enforces_scopes() -> 
             unauthenticated = await client.post("/v1/memory/search", json={"query": "stored"})
 
     assert search.status_code == 200
+    search_call = next(call for call in runtime._memory.calls if call[0] == "search")
+    assert search_call[2].memory_mode == "vanilla"
     assert search.json()["data"]["memories"] == [
         {
             "id": "memory-1",
@@ -189,6 +201,65 @@ async def test_fastapi_search_preserves_response_shape_and_enforces_scopes() -> 
     assert forbidden.json()["code"] == "auth.insufficient_scope"
     assert unauthenticated.status_code == 401
     assert unauthenticated.json()["code"] == "auth.missing_authorization"
+
+
+@pytest.mark.asyncio
+async def test_sdk_async_memory_client_uses_lite_http_api() -> None:
+    runtime = _FakeRuntime()
+    app = create_app(
+        runtime_factory=lambda: runtime,
+        api_key_provider=_StaticApiKeyProvider(),
+    )
+
+    async with app.router.lifespan_context(app):
+        http_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+        transport = AsyncHttpTransport(base_url="http://test", api_key="secret", client=http_client)
+        memory = AsyncMemoryClient(transport)
+        try:
+            add_result = await memory.add(
+                [{"role": "user", "content": "remember this"}],
+                user_id="user-1",
+            )
+            search_result = await memory.search("stored", user_id="user-1")
+        finally:
+            await http_client.aclose()
+
+    assert add_result.code == "ok"
+    assert add_result.memories[0].memory_id == "memory-1"
+    assert search_result.memories[0].id == "memory-1"
+    assert search_result.memories[0].memory == "stored memory"
+
+
+@pytest.mark.asyncio
+async def test_fastapi_binds_api_key_project_config_for_request(monkeypatch) -> None:
+    project_config = {"algo_config": {"search": {"recall_size": 50}}}
+    bound_configs = []
+
+    @contextmanager
+    def capture_config(*, tenant_config=None, project_config=None):
+        bound_configs.append((tenant_config, project_config))
+        yield
+
+    monkeypatch.setattr("mindmemos.api.deps.bind_config_overrides", capture_config)
+    runtime = _FakeRuntime()
+    app = create_app(
+        runtime_factory=lambda: runtime,
+        api_key_provider=_StaticApiKeyProvider(project_config=project_config),
+    )
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/v1/memory/search",
+                headers={"Authorization": "Bearer secret"},
+                json={"query": "stored"},
+            )
+
+    assert response.status_code == 200
+    assert bound_configs == [(None, project_config)]
 
 
 @pytest.mark.asyncio
@@ -223,6 +294,10 @@ api_keys:
     memory_algorithm: vanilla
     enabled: true
     scopes: [memory:read]
+    project_override_config:
+      algo_config:
+        search:
+          recall_size: 50
   - key_id: disabled-key
     api_key: disabled-secret
     project_id: project-2
@@ -233,6 +308,8 @@ api_keys:
 
     provider = FileApiKeyProvider(path)
 
-    assert provider.resolve("enabled-secret").project_id == "project-1"
+    resolved = provider.resolve("enabled-secret")
+    assert resolved.project_id == "project-1"
+    assert resolved.project_config == {"algo_config": {"search": {"recall_size": 50}}}
     with pytest.raises(AuthenticationError, match="invalid API key"):
         provider.resolve("disabled-secret")

@@ -123,11 +123,14 @@ class BaseMemoryService(ABC):
         """Run search and persist the exact query/result snapshot."""
 
         pipeline_context = self.to_pipeline_context(context)
+        memory_mode = request.memory_mode or pipeline_context.memory_algorithm or self.search_pipeline_name
+        pipeline_context = pipeline_context.model_copy(update={"memory_algorithm": memory_mode})
         payload = SearchPipelineInput(
             query=request.query,
             filters=dict(request.filters) if request.filters is not None else None,
             top_k=request.top_k,
-            search_pipeline=self.search_pipeline_name,
+            search_pipeline=memory_mode,
+            memory_mode=memory_mode,
             rerank=request.rerank,
             score_threshold=request.score_threshold,
             agentic=request.search_strategy == "agentic",

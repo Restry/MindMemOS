@@ -7,6 +7,7 @@ from .base import MindMemOSConfig, frozen_field
 from .database import DatabaseConfig
 from .model import ModelRouterConfig
 from .observability import ObservabilityConfig
+from .pipelines import PipelineRoutingConfig
 from .validation import join_path
 from .vanilla import VanillaAlgorithmConfig
 
@@ -20,6 +21,7 @@ class MemoryConfig(MindMemOSConfig):
     embed_model_router: ModelRouterConfig = field(default_factory=ModelRouterConfig)
     rerank_model_router: ModelRouterConfig = field(default_factory=ModelRouterConfig)
     database: DatabaseConfig = frozen_field(default_factory=DatabaseConfig)
+    pipelines: PipelineRoutingConfig = field(default_factory=PipelineRoutingConfig)
     algo_config: VanillaAlgorithmConfig = field(default_factory=VanillaAlgorithmConfig)
 
     @classmethod

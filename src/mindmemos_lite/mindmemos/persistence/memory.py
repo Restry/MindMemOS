@@ -83,12 +83,11 @@ class EntityMemoryCluster:
 
 
 class MemoryPersistence:
-    """Implement the database operations required by vanilla add/search.
+    """Implement the memory reads, searches, and mutations required by Lite pipelines.
 
-    ``MemoryPersistence`` deliberately presents the legacy reader/writer
-    method shape to the copied algorithm.  It is nevertheless a native Lite
-    implementation: every operation is expressed through ``VectorDBService``
-    and the tables declared under ``persistence.v2``.
+    This is Lite's single business/storage translation API. Every operation is
+    expressed through ``VectorDBService`` and the tables declared under
+    ``persistence.v2``.
     """
 
     def __init__(
@@ -148,7 +147,7 @@ class MemoryPersistence:
             MEMORY_TABLE,
             RecordQuery(
                 scope=_query_scope(ctx),
-                filters=_filter_expression(filters),
+                filters=_with_memory_mode(ctx, _filter_expression(filters)),
                 sort=(Sort(field="created_at", direction="desc"),),
                 page=Page(limit=max(1, limit), cursor=cursor),
             ),
@@ -172,7 +171,7 @@ class MemoryPersistence:
                 sparse_indices=tuple(indices),
                 sparse_values=tuple(values),
                 mode="sparse",
-                filters=_filter_expression(query.filters),
+                filters=_with_memory_mode(ctx, _filter_expression(query.filters)),
                 top_k=max(1, query.top_k),
             )
         )
@@ -193,7 +192,7 @@ class MemoryPersistence:
                 vector_name="semantic",
                 dense_vector=tuple(dense_vector),
                 mode="dense",
-                filters=_filter_expression(query.filters),
+                filters=_with_memory_mode(ctx, _filter_expression(query.filters)),
                 top_k=max(1, query.top_k),
             )
         )
@@ -219,7 +218,7 @@ class MemoryPersistence:
                 sparse_indices=tuple(sparse_vector.indices),
                 sparse_values=tuple(sparse_vector.values),
                 mode="hybrid",
-                filters=_filter_expression(query.filters),
+                filters=_with_memory_mode(ctx, _filter_expression(query.filters)),
                 top_k=max(1, query.top_k),
                 dense_limit=dense_limit,
                 sparse_limit=sparse_limit,
@@ -264,7 +263,19 @@ class MemoryPersistence:
                 errors.append(f"{label}: {exc}")
                 graph_pending = graph_pending or label == "graph"
 
-        memory_commands = list(plan.memory_writes)
+        # The orchestration context is the source of truth for mode ownership.
+        # Child algorithms may keep their own extraction labels, but they do
+        # not need to know how mixed-mode persistence is represented.
+        memory_commands = [
+            command.model_copy(
+                update={
+                    "memory": command.memory.model_copy(
+                        update={"memory_mode": ctx.memory_algorithm or command.memory.memory_mode}
+                    )
+                }
+            )
+            for command in plan.memory_writes
+        ]
         entity_commands = [*plan.entity_writes, *plan.entity_updates_as_writes()]
         source_commands = [command for command in plan.source_writes if command.source.persist_payload]
 
@@ -739,7 +750,11 @@ class MemoryPersistence:
     ) -> Record | None:
         query = RecordQuery(
             scope=_query_scope(ctx),
-            filters=Predicate(field=_primary_key(table), op="eq", value=record_id),
+            filters=_table_scoped_filter(
+                table,
+                ctx,
+                Predicate(field=_primary_key(table), op="eq", value=record_id),
+            ),
             page=Page(limit=2),
         )
         if with_vectors:
@@ -763,7 +778,11 @@ class MemoryPersistence:
             table,
             RecordQuery(
                 scope=_query_scope(ctx),
-                filters=Predicate(field=_primary_key(table), op="in", value=tuple(ids)),
+                filters=_table_scoped_filter(
+                    table,
+                    ctx,
+                    Predicate(field=_primary_key(table), op="in", value=tuple(ids)),
+                ),
                 page=Page(limit=max(1, len(ids))),
             ),
         )
@@ -786,6 +805,30 @@ def _query_scope(ctx: MemoryRequestContext) -> DatabaseScope:
     # The original memory DB forces project isolation only. Actor dimensions
     # remain business filters owned by each algorithm call.
     return DatabaseScope(project_id=ctx.project_id)
+
+
+def _with_memory_mode(
+    ctx: MemoryRequestContext,
+    filters: FilterExpression | None,
+) -> FilterExpression | None:
+    """Force the selected mode into every memory-table read."""
+
+    if not ctx.memory_algorithm:
+        return filters
+    mode_filter = Predicate(field="memory_mode", op="eq", value=ctx.memory_algorithm)
+    if filters is None:
+        return mode_filter
+    return FilterGroup(operator="and", clauses=(mode_filter, filters))
+
+
+def _table_scoped_filter(
+    table: str,
+    ctx: MemoryRequestContext,
+    filters: FilterExpression,
+) -> FilterExpression:
+    if table != MEMORY_TABLE:
+        return filters
+    return _with_memory_mode(ctx, filters) or filters
 
 
 def _graph_scope(project_id: str) -> DatabaseScope:

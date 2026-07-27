@@ -31,6 +31,7 @@ def memory_table_definitions(
                     column("request_id", FieldType.UUID),
                     required("content", FieldType.TEXT),
                     column("mem_type", FieldType.TEXT, nullable=False, default="fact"),
+                    column("memory_mode", FieldType.TEXT, nullable=False, default="vanilla"),
                     column("mem_extract_type", FieldType.TEXT, nullable=False, default="vanilla"),
                     required("mem_extract_version", FieldType.TEXT),
                     column("status", FieldType.TEXT, nullable=False, default="active"),
@@ -49,6 +50,7 @@ def memory_table_definitions(
                 ),
                 indexes=(
                     IndexSpec(name="memory_v2_status_idx", fields=("status",)),
+                    IndexSpec(name="memory_v2_mode_idx", fields=("memory_mode",)),
                     IndexSpec(name="memory_v2_created_idx", fields=("created_at",)),
                     IndexSpec(name="memory_v2_content_fts_idx", fields=("content",), kind=IndexKind.FULL_TEXT),
                     IndexSpec(name="memory_v2_entity_idx", fields=("entity_id",)),

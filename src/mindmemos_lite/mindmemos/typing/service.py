@@ -18,7 +18,7 @@ from .memory import (
 )
 
 ServiceResultStatus = Literal["ok", "error", "queued"]
-SearchPipelineStrategy = Literal["default", "vanilla", "schema"]
+SearchPipelineStrategy = str
 
 
 def _utc_millis() -> int:
@@ -191,6 +191,9 @@ class SearchPipelineInput(BaseModel):
 
     search_pipeline: SearchPipelineStrategy = "default"
     """Internal search engine key used by search_pipeline before optional agentic orchestration."""
+
+    memory_mode: str | None = None
+    """Public memory mode selected for this search, or None to use the configured default."""
 
     rerank: bool = False
     """Whether to rerank final candidates before applying top_k."""

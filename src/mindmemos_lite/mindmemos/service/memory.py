@@ -11,6 +11,7 @@ from ..persistence import MemoryOperationRecorder
 from ..persistence.memory import MemoryPersistence
 from ..pipeline.dreaming.default import MEMORY_DREAMING_TOPIC, DefaultDreamingPipeline
 from ..pipeline.feedback.default import MEMORY_FEEDBACK_TOPIC, DefaultFeedbackPipeline
+from ..pipeline.mixed_memory import MixedAddPipeline, ModeSearchPipeline
 from ..pipeline.utils import (
     format_memory_event_time,
     format_source_timestamp,
@@ -241,6 +242,64 @@ class VanillaMemoryService(BaseMemoryService):
         return MemoryRequestContext.model_validate(task.payload["context"])
 
 
+class MixedMemoryService(VanillaMemoryService):
+    """Memory service using config-driven parallel add and mode-aware search."""
+
+    def __init__(
+        self,
+        persistence: MemoryPersistence,
+        *,
+        config: MemoryConfig | None = None,
+        task_client: TaskClient | None = None,
+        add_pipeline: MixedAddPipeline | None = None,
+        search_pipeline: ModeSearchPipeline | None = None,
+        direct_add_pipeline: VanillaAddPipeline | None = None,
+        dreaming_pipeline: DefaultDreamingPipeline | None = None,
+        feedback_pipeline: DefaultFeedbackPipeline | None = None,
+        recorder: MemoryOperationRecorder | None = None,
+    ) -> None:
+        resolved_config = config or get_config()
+        super().__init__(
+            persistence,
+            config=resolved_config,
+            task_client=task_client,
+            add_pipeline=add_pipeline
+            or MixedAddPipeline.from_config(
+                resolved_config,
+                persistence=persistence,
+            ),
+            search_pipeline=search_pipeline
+            or ModeSearchPipeline.from_config(
+                resolved_config,
+                persistence=persistence,
+            ),
+            direct_add_pipeline=direct_add_pipeline,
+            dreaming_pipeline=dreaming_pipeline,
+            feedback_pipeline=feedback_pipeline,
+            recorder=recorder,
+        )
+
+    @property
+    def search_pipeline_name(self) -> str:
+        """Return the configured mode used by backward-compatible searches."""
+
+        return self._config.pipelines.default_search_mode
+
+    @classmethod
+    def from_config(
+        cls,
+        persistence: MemoryPersistence,
+        *,
+        config: MemoryConfig | None = None,
+        task_client: TaskClient | None = None,
+    ) -> "MixedMemoryService":
+        return cls(
+            persistence,
+            config=config,
+            task_client=task_client,
+        )
+
+
 def _service_memory_item(memory) -> MemoryItem:
     return MemoryItem(
         memory_id=memory.memory_id,
@@ -288,7 +347,10 @@ def _feedback_service_result(result) -> FeedbackMemoryResult:
             for action in result.actions
         ),
     )
+
+
 assert isinstance(VanillaMemoryService, type)
 _port_check: type[MemoryService] = VanillaMemoryService
+_mixed_port_check: type[MemoryService] = MixedMemoryService
 
-__all__ = ["VanillaMemoryService"]
+__all__ = ["MixedMemoryService", "VanillaMemoryService"]

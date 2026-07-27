@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from ....logging import get_logger
+from ....persistence.memory import MemoryPersistence
 from ....typing import (
     FieldCondition,
     MemoryDbSearchQuery,
@@ -27,14 +28,14 @@ class RelatedMemoryRecall(AddRecallStrategy):
     def __init__(
         self,
         *,
-        db_reader,
+        persistence: MemoryPersistence,
         sparse_encoder: SparseVectorEncoder,
         top_k: int = 5,
         scan_limit: int = 100,
         fusion_weights: dict[str, float] | None = None,
         fusion_k: int = 60,
     ) -> None:
-        self._db_reader = db_reader
+        self.persistence = persistence
         self._sparse_encoder = sparse_encoder
         self._top_k = top_k
         self._scan_limit = scan_limit
@@ -77,7 +78,7 @@ class RelatedMemoryRecall(AddRecallStrategy):
         return await self._list_active_memories(ctx)
 
     async def _list_active_memories(self, ctx: MemoryRequestContext) -> list[MemoryView]:
-        memories, _ = await self._db_reader.list_memories(
+        memories, _ = await self.persistence.list_memories(
             ctx,
             filters=SearchFilter(
                 must=[*_context_conditions(ctx), FieldCondition(field="status", op="match", value="active")]
@@ -151,7 +152,7 @@ class RelatedMemoryRecall(AddRecallStrategy):
             mode="bm25",
             ranking="score",
         )
-        result = await self._db_reader.search_sparse(
+        result = await self.persistence.search_sparse(
             ctx,
             req,
             indices=list(sparse.indices),

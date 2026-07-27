@@ -82,6 +82,7 @@ def to_add_command(payload: AddRequest) -> AddMemoryRequest:
 def to_search_command(payload: SearchRequest) -> SearchMemoryRequest:
     return SearchMemoryRequest(
         query=payload.query,
+        memory_mode=payload.memory_mode,
         filters=payload.filters,
         top_k=payload.top_k,
         search_strategy=payload.search_strategy,

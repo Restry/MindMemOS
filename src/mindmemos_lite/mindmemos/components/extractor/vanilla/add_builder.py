@@ -24,11 +24,11 @@ from ....typing import (
     MemoryDbWritePlan,
     MemoryRequestContext,
     MemoryWrite,
+    NormalizedMessage,
     PreprocessedText,
     RelatedMemoryRecallResult,
     SourceRef,
     SourceWrite,
-    TurnMessageRef,
     VectorWrite,
 )
 from ...chunker import MessageChunker, SourceAwareSegment
@@ -78,18 +78,6 @@ def _source_time_metadata(segment: SourceAwareSegment) -> dict[str, object]:
     return metadata
 
 
-def _message_source_metadata(msg_ref: TurnMessageRef) -> dict[str, object]:
-    metadata: dict[str, object] = {
-        "message_index": msg_ref.message_index,
-        "source_role": msg_ref.role,
-    }
-    if msg_ref.raw_role:
-        metadata["source_raw_role"] = msg_ref.raw_role
-    if msg_ref.speaker:
-        metadata["source_speaker"] = msg_ref.speaker
-    return metadata
-
-
 def _datetime_from_millis(value: int | None) -> datetime | None:
     if value is None:
         return None
@@ -98,40 +86,6 @@ def _datetime_from_millis(value: int | None) -> datetime | None:
 
 def _segment_event_timestamp(segment: SourceAwareSegment, inp: AddPipelineInput) -> int:
     return segment.timestamp if segment.timestamp is not None else inp.event_timestamp
-
-
-def _extract_file_url_source_refs(inp: AddPipelineInput) -> list[SourceRef]:
-    """Extract SourceRef for FileMessage and UrlMessage from input.
-
-    DialogueMessage and TextMessage are handled by the chunking pipeline.
-    This only collects file/URL sources for graph edges.
-    """
-    from ....typing import FileMessage, UrlMessage
-
-    source_refs: list[SourceRef] = []
-    for index, message in enumerate(inp.messages):
-        if isinstance(message, FileMessage):
-            source_refs.append(
-                SourceRef(
-                    source_type="file",
-                    file_path=message.file_path,
-                    file_name=message.file_name,
-                    mime_type=message.file_type or None,
-                    is_parsed=False,
-                    metadata={"message_index": index},
-                )
-            )
-        elif isinstance(message, UrlMessage):
-            source_refs.append(
-                SourceRef(
-                    source_type="url",
-                    uri=message.url,
-                    title=message.url,
-                    is_parsed=False,
-                    metadata={"message_index": index},
-                )
-            )
-    return source_refs
 
 
 def _recall_memory_ids(recall_result: RelatedMemoryRecallResult | None) -> set[str]:
@@ -248,7 +202,7 @@ def _prefix_segment_ref_ids(
 class _MessageExtractionContext:
     """Per-message context needed by Phase 5-6 for source resolution."""
 
-    msg_ref: TurnMessageRef
+    msg_ref: NormalizedMessage
     source_ref: SourceRef
     segment: SourceAwareSegment
     preprocessed: PreprocessedText
@@ -481,8 +435,9 @@ class AddCoreBuilder:
             llm_client=self._llm_client,
         ).split(inp.messages)
 
-        file_url_source_refs = _extract_file_url_source_refs(inp)
-        for source_ref in file_url_source_refs:
+        # File/URL refs are retained by MessageChunker even though they do not enter
+        # conversational chunks. Bind them to this request before persistence.
+        for source_ref in chunking_result.external_source_refs:
             source_ref = generate_source_id(source_ref, context)
             sources_by_id.setdefault(source_ref.source_id or "", build_source_write(source_ref, context, now))
 
@@ -508,27 +463,23 @@ class AddCoreBuilder:
             history_pack = prepared_chunk.history
             extractable_refs = list(prepared_chunk.extractable_messages)
             current_context_refs = list(prepared_chunk.context_messages)
+            unbound_source_refs = list(prepared_chunk.source_refs)
 
             if not extractable_refs:
                 continue
+            if len(unbound_source_refs) != len(extractable_refs):
+                raise RuntimeError("chunk source refs must align with extractable messages")
 
             # Phase 2: Preprocess extractable messages and build per-message context
             preprocessed_texts: list[PreprocessedText] = []
             message_context_by_index: dict[int, _MessageExtractionContext] = {}
             original_message_contexts_by_index: dict[int, list[_MessageExtractionContext]] = {}
-            pending_message_contexts: list[tuple[int, TurnMessageRef, SourceRef, SourceAwareSegment]] = []
-            for evidence_index, msg_ref in enumerate(extractable_refs):
-                source_ref = SourceRef(
-                    source_type="message",
-                    message_id=f"chunk{chunk.chunk_index}-evidence-{evidence_index}-message-{msg_ref.message_index}",
-                    is_parsed=True,
-                    metadata={
-                        **_message_source_metadata(msg_ref),
-                        "evidence_index": evidence_index,
-                    },
-                )
-                source_ref = generate_source_id(source_ref, context)
-                segment = _ref_to_segment(msg_ref, inp)
+            pending_message_contexts: list[tuple[int, NormalizedMessage, SourceRef, SourceAwareSegment]] = []
+            for evidence_index, (msg_ref, unbound_source_ref) in enumerate(
+                zip(extractable_refs, unbound_source_refs, strict=True)
+            ):
+                source_ref = generate_source_id(unbound_source_ref, context)
+                segment = _ref_to_segment(msg_ref, source_ref)
                 segment = segment.model_copy(
                     update={
                         "segment_id": f"chunk{chunk.chunk_index}_evidence{evidence_index}_msg{msg_ref.message_index}",
@@ -1092,18 +1043,12 @@ class AddCoreBuilder:
         )
 
 
-def _ref_to_segment(msg_ref: TurnMessageRef, inp: AddPipelineInput) -> SourceAwareSegment:
-    """Build a synthetic SourceAwareSegment from a TurnMessageRef.
+def _ref_to_segment(msg_ref: NormalizedMessage, source_ref: SourceRef) -> SourceAwareSegment:
+    """Build a synthetic segment around a chunker-owned message source ref.
 
     This bridges chunk-level messages back to the segment-based Phase 5-6
     code so that metadata, graph edges, and vectorization work unchanged.
     """
-    source_ref = SourceRef(
-        source_type="message",
-        message_id=f"message-{msg_ref.message_index}",
-        is_parsed=True,
-        metadata=_message_source_metadata(msg_ref),
-    )
     return SourceAwareSegment(
         segment_id=f"chunk-msg-{msg_ref.message_index}",
         text=msg_ref.text,

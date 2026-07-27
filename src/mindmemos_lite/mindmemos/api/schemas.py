@@ -64,6 +64,7 @@ class AddRequest(ActorIdentityRequest):
 
 class SearchRequest(ActorIdentityRequest):
     query: NonEmptyStr
+    memory_mode: NonEmptyStr | None = None
     filters: dict[str, Any] | None = None
     top_k: int | None = Field(default=10, ge=1)
     search_strategy: Literal["fast", "agentic"] = "fast"

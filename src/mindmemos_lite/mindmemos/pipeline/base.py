@@ -4,8 +4,8 @@ This module contains only construction and execution interfaces.  Concrete
 algorithm implementations live outside this module and are expected to be
 registered with :mod:`mindmemos.pipeline.registry`.
 
-Pipeline construction deliberately has no database-reader/writer dependency.
-Implementations may accept whatever dependencies they need through
+Pipeline construction deliberately has no legacy split database dependencies.
+Implementations may accept the persistence and orchestration dependencies they need through
 ``from_config(config, **kwargs)`` while the operation contracts below remain
 small and independent of a particular storage backend.
 """

@@ -24,8 +24,8 @@ class MessageChunkerConfig:
         └── soft_extractable_budget
             = soft - template - output - recall - history_soft
 
-    ``VanillaAddConfig`` composes this shared configuration without owning it,
-    so other extraction algorithms can reuse ``MessageChunker`` directly.
+    Extraction algorithms compose this shared configuration without owning it,
+    so they can reuse ``MessageChunker`` without an algorithm-specific config.
     """
 
     chunk_soft_token_budget: int = field(default=26000)
