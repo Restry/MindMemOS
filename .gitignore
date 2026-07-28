@@ -54,6 +54,8 @@ results/
 outputs/
 docs/paper/
 docs/superpowers/
+docs/lite/
+docs/sdk/
 resources/memory/
 
 # Node / openclaw plugin build artifacts
