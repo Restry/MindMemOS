@@ -73,8 +73,8 @@ class AuthContext(BaseModel):
     scopes: list[str] = Field(default_factory=list)
 
 
-# Actor identity: ``user_id`` is required for add/search/feedback and optional
-# for dreaming. It is supplied in the request body. The Qdrant payload schema
+# Actor identity: ``user_id`` is required for add/search/feedback/dreaming.
+# It is supplied in the request body. The Qdrant payload schema
 # indexes all four fields as plain KEYWORD values with no storage-level not-null
 # constraint.
 
@@ -83,7 +83,7 @@ class ActorIdentityRequest(BaseModel):
     """Actor identity supplied by request bodies that scope memory operations."""
 
     user_id: NonEmptyStr | None = None
-    """Business actor user ID. Required by add/search/feedback service methods."""
+    """Business actor user ID. Required by add/search/feedback/dreaming service methods."""
 
     app_id: NonEmptyStr | None = None
 
@@ -253,7 +253,9 @@ class DreamingRequest(ActorIdentityRequest):
     """HTTP body for ``POST /v1/memory/dreaming``.
 
     Mirrors :class:`mindmemos.typing.service.DreamingPipelineInput` plus actor
-    identity. Converted by ``api.mappers.to_dreaming_pipeline_input``.
+    identity. ``user_id`` is enforced by the service so both hot-memory
+    selection and graph-neighbor hydration stay within one user. Converted by
+    ``api.mappers.to_dreaming_pipeline_input``.
     """
 
     model_config = ConfigDict(extra="forbid")

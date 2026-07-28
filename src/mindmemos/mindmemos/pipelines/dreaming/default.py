@@ -98,6 +98,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
     # -- public API ----------------------------------------------------------
 
     async def dream(self, inp: DreamingPipelineInput, context: MemoryRequestContext) -> DreamingPipelineResult:
+        _require_user_id(context)
         await get_producer().send(
             MEMORY_DREAMING_TOPIC,
             value={
@@ -110,6 +111,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         return DreamingPipelineResult(status="queued", message="consolidation queued")
 
     async def dream_sync(self, _inp: DreamingPipelineInput, context: MemoryRequestContext) -> DreamingPipelineResult:
+        _require_user_id(context)
         summary = await self._consolidate_memory(context)
         return DreamingPipelineResult(status="ok", message=f"consolidation complete: {summary}")
 
@@ -257,11 +259,34 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         if not rows:
             return []
 
-        # Step 3: filter noise entities (too many associated memories)
+        # Qdrant is the source of truth for actor identity. Neo4j memory nodes
+        # are project-scoped and may connect memories owned by different users,
+        # so hydrate every graph candidate before building clusters and keep
+        # only memories owned by the requested dreaming user.
+        candidate_memory_ids = list(
+            dict.fromkeys(
+                str(memory_id)
+                for row in rows
+                for memory_id in (row.get("memory_ids") or [])
+                if memory_id
+            )
+        )
+        memory_view_map = {
+            memory.memory_id: memory
+            for memory in await self.db_reader.get_memories(context, candidate_memory_ids)
+            if memory.status == "active" and memory.user_id == context.user_id
+        }
+
+        # Step 3: filter cross-user neighbors and noise entities (too many
+        # same-user associated memories).
         entity_clusters: list[dict] = []
         for row in rows:
             eid = str(row["entity_id"])
-            mem_ids = [str(m) for m in (row.get("memory_ids") or []) if m]
+            mem_ids = [
+                memory_id
+                for memory_id in dict.fromkeys(str(m) for m in (row.get("memory_ids") or []) if m)
+                if memory_id in memory_view_map
+            ]
             if len(mem_ids) < self._cfg.min_cluster_size:
                 continue
             if len(mem_ids) > self._cfg.max_entity_memory_count:
@@ -293,7 +318,6 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
 
         # Step 5: assemble each cluster into a ConsolidationScope
         scopes_and_ids: list[tuple[ConsolidationScope, list[str]]] = []
-        all_memory_ids: set[str] = set()
         for cluster in unique_clusters:
             mem_ids = cluster["memory_ids"]
             # Primary = first seed memory in the cluster (by add-record count)
@@ -319,14 +343,6 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
                 primary_memory_id=primary_memory_id,
             )
             scopes_and_ids.append((scope, mem_ids))
-            all_memory_ids.update(mem_ids)
-
-        # Batch read all memories from Qdrant in one call
-        memory_view_map: dict[str, MemoryView] = {}
-        if all_memory_ids and hasattr(self.db_reader, "get_memories"):
-            for mv in await self.db_reader.get_memories(context, list(all_memory_ids)):
-                if mv.status == "active":
-                    memory_view_map[mv.memory_id] = mv
 
         # Distribute memories to each scope
         result: list[tuple[ConsolidationScope, list[MemoryView]]] = []
@@ -930,6 +946,11 @@ def _memory_effective_time(memory: MemoryView) -> datetime:
     if isinstance(millis, int | float):
         return datetime.fromtimestamp(millis / 1000, tz=UTC)
     return memory.created_at or memory.update_at or datetime.min.replace(tzinfo=UTC)
+
+
+def _require_user_id(context: MemoryRequestContext) -> None:
+    if not context.user_id:
+        raise ValueError("user_id is required for dreaming")
 
 
 def _format_memory_time(value: datetime | None) -> str:

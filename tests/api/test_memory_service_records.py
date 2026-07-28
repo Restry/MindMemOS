@@ -680,10 +680,25 @@ async def test_memory_service_dream_sync_mode_calls_sync_pipeline() -> None:
         operation_recorder=FakeRecorder(),
     )
 
-    result = await service.dream(make_context(), DreamingRequest(mode="sync"))
+    result = await service.dream(make_context(), DreamingRequest(mode="sync", user_id="dreamer-1"))
 
     assert result.status == "ok"
     assert [(name, inp.mode) for name, inp, _ctx in pipeline.calls] == [("sync", "sync")]
+
+
+@pytest.mark.asyncio
+async def test_memory_service_dream_requires_user_id() -> None:
+    pipeline = FakeDreamingPipeline()
+    service = make_service(
+        dreaming_pipeline=pipeline,
+        dreaming_pipeline_name="default_dreaming",
+        operation_recorder=FakeRecorder(),
+    )
+
+    with pytest.raises(BadRequestError, match="user_id is required"):
+        await service.dream(make_context(), DreamingRequest(mode="sync"))
+
+    assert pipeline.calls == []
 
 
 @pytest.mark.asyncio

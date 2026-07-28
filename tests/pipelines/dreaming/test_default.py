@@ -185,6 +185,7 @@ def memory(
     memory_id: str,
     *,
     content: str,
+    user_id: str = "user",
     entity_id: str = "entity-1",
     property_name: str = "preference",
     content_hash: str | None = None,
@@ -201,6 +202,7 @@ def memory(
         mem_type="fact",
         status="active",
         metadata=metadata,
+        user_id=user_id,
         root_id=["root-1"],
         entity_id=entity_id,
         entity_type="person",
@@ -289,6 +291,57 @@ async def test_dreaming_skips_entity_clusters_over_memory_limit():
     assert clusters == []
     _query, params = reader.neo4j_read_calls[0]
     assert params["entity_probe_limit"] == 3
+
+
+@pytest.mark.asyncio
+async def test_dreaming_excludes_cross_user_graph_neighbors_before_clustering():
+    memories = [
+        memory("m1", content="Alice likes green tea", user_id="user"),
+        memory("m2", content="Alice likes jasmine tea", user_id="user"),
+        memory("other-user", content="Alice likes coffee", user_id="other-user"),
+    ]
+    pipe, _reader, _writer = pipeline(memories=memories, action=ConsolidationAction())
+
+    clusters = await pipe._cluster_hot_memories(ctx())
+
+    assert len(clusters) == 1
+    scope, scoped_memories = clusters[0]
+    assert scope.seed_memory_ids == ("m1", "m2")
+    assert [item.memory_id for item in scoped_memories] == ["m1", "m2"]
+
+
+@pytest.mark.asyncio
+async def test_dreaming_never_mutates_cross_user_graph_neighbors():
+    memories = [
+        memory("m1", content="Alice likes green tea", user_id="user", content_hash="same", created_offset=1),
+        memory("m2", content="Alice likes jasmine tea", user_id="user"),
+        memory(
+            "other-user",
+            content="Alice likes green tea",
+            user_id="other-user",
+            content_hash="same",
+            created_offset=2,
+        ),
+    ]
+    pipe, _reader, writer = pipeline(memories=memories, action=ConsolidationAction())
+
+    await pipe.dream_sync(DreamingPipelineInput(), ctx())
+
+    assert writer.deleted == []
+    assert writer.updated == []
+
+
+@pytest.mark.asyncio
+async def test_dreaming_pipeline_rejects_missing_user_id():
+    memories = [
+        memory("m1", content="Alice likes green tea"),
+        memory("m2", content="Alice likes jasmine tea"),
+    ]
+    pipe, _reader, _writer = pipeline(memories=memories, action=ConsolidationAction())
+    project_context = ctx().model_copy(update={"user_id": None})
+
+    with pytest.raises(ValueError, match="user_id is required for dreaming"):
+        await pipe.dream_sync(DreamingPipelineInput(), project_context)
 
 
 @pytest.mark.asyncio

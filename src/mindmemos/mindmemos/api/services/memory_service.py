@@ -330,7 +330,7 @@ class MemoryService:
         if pipeline is None:
             raise NotImplementedError("dreaming pipeline implementation is not wired yet")
         payload = to_dreaming_pipeline_input(request)
-        ctx = to_memory_request_context(auth, request)
+        ctx = to_memory_request_context(auth, request, require_user_id=True)
         if payload.mode == "sync":
             return await pipeline.dream_sync(payload, ctx)
         return await pipeline.dream(payload, ctx)
