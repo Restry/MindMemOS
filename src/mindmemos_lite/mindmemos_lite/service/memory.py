@@ -6,10 +6,11 @@ from dataclasses import asdict
 
 from ..config import MemoryConfig, get_config
 from ..infra.tasking import TaskClient, TaskEnvelope
+from ..logging import traced
 from ..mappers import parse_search_dsl
 from ..persistence import MemoryOperationRecorder
 from ..persistence.memory import MemoryPersistence
-from ..pipeline.dreaming.default import MEMORY_DREAMING_TOPIC, DefaultDreamingPipeline
+from ..pipeline.dreaming.consolidation import MEMORY_DREAMING_TOPIC, MemoryConsolidationPipeline
 from ..pipeline.feedback.default import MEMORY_FEEDBACK_TOPIC, DefaultFeedbackPipeline
 from ..pipeline.mixed_memory import MixedAddPipeline, ModeSearchPipeline
 from ..pipeline.utils import (
@@ -57,7 +58,7 @@ class VanillaMemoryService(BaseMemoryService):
         add_pipeline: VanillaAddPipeline | None = None,
         direct_add_pipeline: VanillaAddPipeline | None = None,
         search_pipeline: VanillaSearchPipeline | None = None,
-        dreaming_pipeline: DefaultDreamingPipeline | None = None,
+        dreaming_pipeline: MemoryConsolidationPipeline | None = None,
         feedback_pipeline: DefaultFeedbackPipeline | None = None,
         recorder: MemoryOperationRecorder | None = None,
     ) -> None:
@@ -116,6 +117,7 @@ class VanillaMemoryService(BaseMemoryService):
             llm_client=None,
         )
 
+    @traced("memory.service.get")
     async def get(self, context: RequestContext, request: GetMemoryRequest) -> MemoryListResult:
         memories, _ = await self._persistence.list_memories(
             self.to_pipeline_context(context),
@@ -127,6 +129,7 @@ class VanillaMemoryService(BaseMemoryService):
             memories=tuple(_service_memory_item(memory) for memory in memories),
         )
 
+    @traced("memory.service.delete")
     async def delete(self, context: RequestContext, request: DeleteMemoryRequest) -> MemoryMutationResult:
         result = await self._persistence.delete_memory(
             self.to_pipeline_context(context),
@@ -137,6 +140,7 @@ class VanillaMemoryService(BaseMemoryService):
             message=None if result.changed else "memory not found",
         )
 
+    @traced("memory.service.update")
     async def update(self, context: RequestContext, request: UpdateMemoryRequest) -> MemoryMutationResult:
         result = await self._persistence.update_memory(
             self.to_pipeline_context(context),
@@ -147,6 +151,7 @@ class VanillaMemoryService(BaseMemoryService):
             message=None if result.changed else "memory not found",
         )
 
+    @traced("memory.service.feedback")
     async def feedback(
         self,
         context: RequestContext,
@@ -185,6 +190,7 @@ class VanillaMemoryService(BaseMemoryService):
         result = await self._get_feedback_pipeline().feedback_sync(payload, pipeline_context)
         return _feedback_service_result(result)
 
+    @traced("memory.service.dream")
     async def dream(
         self,
         context: RequestContext,
@@ -218,9 +224,9 @@ class VanillaMemoryService(BaseMemoryService):
         payload = FeedbackPipelineInput.model_validate(task.payload["input"]).model_copy(update={"mode": "sync"})
         await self._get_feedback_pipeline().feedback_sync(payload, pipeline_context)
 
-    def _get_dreaming_pipeline(self) -> DefaultDreamingPipeline:
+    def _get_dreaming_pipeline(self) -> MemoryConsolidationPipeline:
         if self._dreaming_pipeline is None:
-            self._dreaming_pipeline = DefaultDreamingPipeline.from_config(
+            self._dreaming_pipeline = MemoryConsolidationPipeline.from_config(
                 self._config,
                 persistence=self._persistence,
                 operation_recorder=self._dreaming_recorder,
@@ -254,7 +260,7 @@ class MixedMemoryService(VanillaMemoryService):
         add_pipeline: MixedAddPipeline | None = None,
         search_pipeline: ModeSearchPipeline | None = None,
         direct_add_pipeline: VanillaAddPipeline | None = None,
-        dreaming_pipeline: DefaultDreamingPipeline | None = None,
+        dreaming_pipeline: MemoryConsolidationPipeline | None = None,
         feedback_pipeline: DefaultFeedbackPipeline | None = None,
         recorder: MemoryOperationRecorder | None = None,
     ) -> None:

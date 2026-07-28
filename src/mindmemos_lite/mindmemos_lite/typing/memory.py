@@ -91,20 +91,6 @@ class MemoryRequestContext(BaseModel):
     database_budget: DatabaseRequestBudget | None = None
 
 
-class MemoryEdgeFilter(BaseModel):
-    """Purpose: Constrain Memory-to-Memory graph traversal sources.
-
-    Used in: graph recall readers and dreaming pipeline scope selection when
-    direct memory relation neighbors are composed with shared-entity scopes.
-    """
-
-    rel_types: tuple[MemoryRelationType, ...] = (REL_RELATES_TO,)
-    direction: GraphDirection = "both"
-    edge_types: tuple[str, ...] | None = None
-    relation_types: tuple[str, ...] | None = None
-    active_only: bool = True
-
-
 class GraphNeighborScope(BaseModel):
     """Purpose: Carry one graph recall scope for a seed memory.
 
@@ -118,21 +104,6 @@ class GraphNeighborScope(BaseModel):
     entity_type: str | None = None
     memory_ids: tuple[str, ...] = Field(default_factory=tuple)
     source: GraphNeighborSource = "shared_entity"
-
-
-class DirectRelatedMemory(BaseModel):
-    """Purpose: Carry one direct Memory-to-Memory graph neighbor.
-
-    Used in memory persistence and dreaming graph recall composition before
-    direct neighbors are attached to seed/entity scopes.
-    """
-
-    seed_memory_id: str
-    memory_id: str
-    rel_type: MemoryRelationType
-    direction: GraphDirection = "both"
-    edge_type: str | None = None
-    relation_type: str | None = None
 
 
 class FileMessage(BaseModel):

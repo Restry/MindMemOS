@@ -122,11 +122,45 @@ registered = manager.register_local(
 active = manager.active_skill_context(registered.skill_id)
 ```
 
+Backend Skill calls use one SDK DTO surface. API mode uses the MindMemOS HTTP
+contract, while Lite mode borrows an already-running transport-neutral Skill
+service. In both cases `skills.local` remains the SDK-owned local version
+manager:
+
+```python
+from mindmemos_sdk import AsyncSkillClient
+from mindmemos_sdk.config import ConfigManager
+from mindmemos_sdk.transport import AsyncHttpTransport
+
+# MindMemOS API mode
+skills = AsyncSkillClient.from_http(
+    AsyncHttpTransport(base_url=settings.base_url, api_key=settings.auth.api_key),
+    config_manager=ConfigManager(),
+    owns_transport=True,
+)
+
+# MindMemOS Lite mode
+skills = AsyncSkillClient.from_lite_runtime(
+    runtime,
+    project_id="local-project",
+    config_manager=ConfigManager(),
+)
+
+local_versions = skills.local.list_local()
+backend_skills = await skills.list_skills()
+```
+
+The Lite runtime/service is borrowed: the SDK neither starts nor closes it.
+`mindmemos_lite` is imported only when a Lite factory is used. The runtime must
+have been composed with a concrete transport-neutral `SkillService`; the Lite
+package's service `Protocol` is not instantiated as an implementation.
+
 Run `mindmemos ui` for the browser UI. Its editor creates browser-only drafts;
 publishing creates a new immutable UUID version instead of modifying an existing
 version in place. The **Lite → Traces** view accepts a Lite observability
 directory (the default runtime location is `.mindmemos/observability`) or a
-specific SQLite file. It lists root spans and renders every span in the selected
-trace as a clickable flame chart. SQLite databases are opened read-only; input
-and output content is available only when the Lite runtime wrote it with
-`observability.capture_content: true`.
+specific SQLite file. It lists individual spans with server-side name filtering
+and pagination. Selecting any span resolves its root span, displays the ancestry
+path, and renders the complete trace as a clickable flame chart. SQLite
+databases are opened read-only; input and output content is available only when
+the Lite runtime wrote it with `observability.capture_content: true`.

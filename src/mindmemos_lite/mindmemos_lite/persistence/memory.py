@@ -8,11 +8,9 @@ graph primitives.
 
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from ..components.text import SparseVectorEncoder, TextPreprocessor, get_text_preprocessor
 from ..config import TextProcessingConfig, get_config
@@ -30,6 +28,7 @@ from ..infra.vector_store import (
     Predicate,
     Record,
     RecordQuery,
+    ScopeValue,
     Sort,
     SparseVector,
     VectorDBService,
@@ -39,9 +38,7 @@ from ..infra.vector_store import (
 from ..llm import EmbedClient, get_embed_client
 from ..logging import get_logger, traced
 from ..typing import (
-    DirectRelatedMemory,
     FieldCondition,
-    GraphNeighborScope,
     MemoryDbDeleteCommand,
     MemoryDbMemoryUpdateCommand,
     MemoryDbMutationPlan,
@@ -49,9 +46,7 @@ from ..typing import (
     MemoryDbSearchHit,
     MemoryDbSearchQuery,
     MemoryDbSearchResult,
-    MemoryDbWritePlan,
     MemoryDbWriteResult,
-    MemoryEdgeFilter,
     MemoryRequestContext,
     MemoryView,
     SearchFilter,
@@ -69,17 +64,9 @@ _SCOPE_FIELDS = (
     "session_id",
     "agent_id",
 )
+_QUERY_CONTEXT_SCOPE_FIELDS = frozenset({"project_id"})
+_TRUSTED_WRITE_SCOPE_FIELDS = frozenset({"account_id", "project_id", "api_key_uuid"})
 _SCOPE_METADATA_KEY = "__scope"
-
-
-@dataclass(frozen=True, slots=True)
-class EntityMemoryCluster:
-    """One active entity-centered memory cluster used by dreaming."""
-
-    entity_id: str
-    entity_name: str | None
-    entity_type: str | None
-    memory_ids: tuple[str, ...]
 
 
 class MemoryPersistence:
@@ -90,6 +77,8 @@ class MemoryPersistence:
     ``persistence.v2``.
     """
 
+    _PROTECTED_BOUND_SCOPE_FIELDS = _TRUSTED_WRITE_SCOPE_FIELDS
+
     def __init__(
         self,
         service: VectorDBService,
@@ -98,16 +87,110 @@ class MemoryPersistence:
         text_preprocessor: TextPreprocessor | None = None,
         sparse_encoder: SparseVectorEncoder | None = None,
         embed_client: EmbedClient | None = None,
+        _bound_scope: DatabaseScope | None = None,
     ) -> None:
         self._service = service
         self._text_config = text_config
         self._text_preprocessor = text_preprocessor
         self._sparse_encoder = sparse_encoder
         self._embed_client = embed_client
+        resolved_bound_scope = _bound_scope if _bound_scope is not None else DatabaseScope()
+        protected = self._PROTECTED_BOUND_SCOPE_FIELDS.intersection(dict(resolved_bound_scope.items()))
+        if protected:
+            names = ", ".join(sorted(protected))
+            raise ValueError(f"{names} is trusted context scope and cannot be supplied through _bound_scope")
+        self._bound_scope = resolved_bound_scope
 
     @property
     def service(self) -> VectorDBService:
         return self._service
+
+    @property
+    def bound_scope(self) -> DatabaseScope:
+        """Return the immutable scope dimensions attached by ``bind``."""
+
+        return self._bound_scope
+
+    def bind(
+        self,
+        scope: Mapping[str, ScopeValue | None] | None = None,
+        /,
+        **dimensions: ScopeValue | None,
+    ) -> "MemoryPersistence":
+        """Return an isolated persistence view with additional forced scope dimensions.
+
+        Trusted tenant dimensions remain owned by ``MemoryRequestContext`` and
+        cannot be rebound by an algorithm. Bound dimensions are additive and
+        conflicts fail before any database operation.
+        """
+
+        supplied = dict(scope or {})
+        for name, value in dimensions.items():
+            if name in supplied and supplied[name] != value:
+                raise ValueError(f"scope dimension {name!r} was supplied more than once with different values")
+            supplied[name] = value
+        protected = self._PROTECTED_BOUND_SCOPE_FIELDS.intersection(supplied)
+        if protected:
+            names = ", ".join(sorted(protected))
+            raise ValueError(f"{names} is trusted context scope and cannot be bound by an algorithm")
+        for name, value in supplied.items():
+            if value is None or value == "":
+                raise ValueError(f"bound scope dimension {name!r} must have a non-empty scalar value")
+
+        return type(self)(
+            self._service,
+            text_config=self._text_config,
+            text_preprocessor=self._text_preprocessor,
+            sparse_encoder=self._sparse_encoder,
+            embed_client=self._embed_client,
+            _bound_scope=_merge_scopes(self._bound_scope, DatabaseScope(supplied)),
+        )
+
+    def _scope(self, ctx: MemoryRequestContext, value: Any | None = None) -> DatabaseScope:
+        """Resolve the project and optional bound scope used by read paths."""
+
+        value_scope = (
+            DatabaseScope({field: getattr(value, field, None) for field in _SCOPE_FIELDS})
+            if value is not None
+            else DatabaseScope()
+        )
+        mandatory_scope = DatabaseScope({field: getattr(ctx, field, None) for field in _QUERY_CONTEXT_SCOPE_FIELDS})
+        missing = mandatory_scope.missing_required_fields(_QUERY_CONTEXT_SCOPE_FIELDS)
+        if missing:
+            raise ValueError(f"missing mandatory persistence scope dimensions: {', '.join(missing)}")
+        return _merge_scopes(value_scope, mandatory_scope, self._bound_scope)
+
+    def _write_scope(self, ctx: MemoryRequestContext, value: Any) -> DatabaseScope:
+        """Resolve and validate scope before a value crosses the write boundary."""
+
+        for field in sorted(_TRUSTED_WRITE_SCOPE_FIELDS):
+            context_value = getattr(ctx, field, None)
+            if not isinstance(context_value, str) or not context_value.strip():
+                raise ValueError(f"trusted write scope dimension {field!r} must be a non-empty string")
+
+        value_scope = DatabaseScope({field: getattr(value, field, None) for field in _SCOPE_FIELDS})
+        supported_fields = tuple(field for field in _SCOPE_FIELDS if hasattr(value, field))
+        context_dimensions: dict[str, ScopeValue] = {}
+        for field in supported_fields:
+            context_value = getattr(ctx, field, None)
+            value_value = getattr(value, field, None)
+            if field in _TRUSTED_WRITE_SCOPE_FIELDS:
+                if not isinstance(value_value, str) or not value_value.strip():
+                    raise ValueError(f"trusted write scope dimension {field!r} must be a non-empty string")
+                if value_value != context_value:
+                    raise ValueError(
+                        f"write scope dimension {field!r} conflicts with trusted request context: "
+                        f"value {value_value!r}, context {context_value!r}"
+                    )
+            if context_value is not None:
+                context_dimensions[field] = context_value
+
+        return _merge_scopes(value_scope, DatabaseScope(context_dimensions), self._bound_scope)
+
+    def _validate_relationship_write_scope(self, ctx: MemoryRequestContext, relationship: Any) -> None:
+        self._write_scope(ctx, relationship)
+        self._write_scope(ctx, relationship.source)
+        self._write_scope(ctx, relationship.target)
 
     def _ensure_text_components(self) -> tuple[TextPreprocessor, SparseVectorEncoder]:
         if self._text_preprocessor is None or self._sparse_encoder is None:
@@ -146,7 +229,7 @@ class MemoryPersistence:
         records, next_cursor = await self._service.query_records(
             MEMORY_TABLE,
             RecordQuery(
-                scope=_query_scope(ctx),
+                scope=self._scope(ctx),
                 filters=_with_memory_mode(ctx, _filter_expression(filters)),
                 sort=(Sort(field="created_at", direction="desc"),),
                 page=Page(limit=max(1, limit), cursor=cursor),
@@ -166,7 +249,7 @@ class MemoryPersistence:
         hits = await self._service.search_vectors(
             VectorQuery(
                 table=MEMORY_TABLE,
-                scope=_query_scope(ctx),
+                scope=self._scope(ctx),
                 vector_name="bm25",
                 sparse_indices=tuple(indices),
                 sparse_values=tuple(values),
@@ -188,7 +271,7 @@ class MemoryPersistence:
         hits = await self._service.search_vectors(
             VectorQuery(
                 table=MEMORY_TABLE,
-                scope=_query_scope(ctx),
+                scope=self._scope(ctx),
                 vector_name="semantic",
                 dense_vector=tuple(dense_vector),
                 mode="dense",
@@ -212,7 +295,7 @@ class MemoryPersistence:
         hits = await self._service.search_vectors(
             VectorQuery(
                 table=MEMORY_TABLE,
-                scope=_query_scope(ctx),
+                scope=self._scope(ctx),
                 vector_name="semantic",
                 dense_vector=tuple(dense_vector),
                 sparse_indices=tuple(sparse_vector.indices),
@@ -225,20 +308,6 @@ class MemoryPersistence:
             )
         )
         return _search_result(query.query, hits)
-
-    @traced("persistence.memory.write")
-    async def write(
-        self,
-        ctx: MemoryRequestContext,
-        plan: MemoryDbWritePlan,
-        *,
-        consistency: str = "fast",
-    ) -> MemoryDbWriteResult:
-        return await self.apply_mutation_plan(
-            ctx,
-            MemoryDbMutationPlan.from_write_plan(plan),
-            consistency=consistency,
-        )
 
     @traced("persistence.memory.apply_mutation_plan")
     async def apply_mutation_plan(
@@ -278,31 +347,36 @@ class MemoryPersistence:
         ]
         entity_commands = [*plan.entity_writes, *plan.entity_updates_as_writes()]
         source_commands = [command for command in plan.source_writes if command.source.persist_payload]
+        memory_records = [
+            _memory_record(command.memory, command.vector, self._write_scope(ctx, command.memory))
+            for command in memory_commands
+        ]
+        entity_records = [
+            _entity_record(command.entity, command.core_vector, self._write_scope(ctx, command.entity))
+            for command in entity_commands
+        ]
+        source_records = [
+            _source_record(command.source, self._write_scope(ctx, command.source)) for command in source_commands
+        ]
+        if self._service.graph_enabled:
+            for command in plan.relationship_writes:
+                self._validate_relationship_write_scope(ctx, command.relationship)
 
         await execute(
             "memory",
-            lambda: self._service.upsert_records(
-                MEMORY_TABLE,
-                [_memory_record(command.memory, command.vector) for command in memory_commands],
-            ),
+            lambda: self._service.upsert_records(MEMORY_TABLE, memory_records),
         )
         await execute(
             "entity",
-            lambda: self._service.upsert_records(
-                ENTITY_TABLE,
-                [_entity_record(command.entity, command.core_vector) for command in entity_commands],
-            ),
+            lambda: self._service.upsert_records(ENTITY_TABLE, entity_records),
         )
         await execute(
             "source",
-            lambda: self._service.upsert_records(
-                SOURCE_TABLE,
-                [_source_record(command.source) for command in source_commands],
-            ),
+            lambda: self._service.upsert_records(SOURCE_TABLE, source_records),
         )
 
         if self._service.graph_enabled and plan.relationship_writes:
-            await execute("graph", lambda: self._write_graph(plan))
+            await execute("graph", lambda: self._write_graph(ctx, plan))
 
         for command in plan.memory_updates:
             try:
@@ -344,14 +418,28 @@ class MemoryPersistence:
         ctx: MemoryRequestContext,
         req: MemoryDbMemoryUpdateCommand,
     ) -> MemoryDbMutationResult:
-        return await self._update_memory(ctx, req)
+        result = await self.apply_mutation_plan(
+            ctx,
+            MemoryDbMutationPlan(memory_updates=[req]),
+            consistency=req.consistency,
+        )
+        if result.mutations:
+            return result.mutations[0]
+        raise RuntimeError("; ".join(result.errors) or f"memory update {req.memory_id!r} produced no result")
 
     async def delete_memory(
         self,
         ctx: MemoryRequestContext,
         req: MemoryDbDeleteCommand,
     ) -> MemoryDbMutationResult:
-        return await self._delete_memory(ctx, req)
+        result = await self.apply_mutation_plan(
+            ctx,
+            MemoryDbMutationPlan(memory_deletes=[req]),
+            consistency=req.consistency,
+        )
+        if result.mutations:
+            return result.mutations[0]
+        raise RuntimeError("; ".join(result.errors) or f"memory delete {req.memory_id!r} produced no result")
 
     async def get_memory_lineage(
         self,
@@ -360,7 +448,7 @@ class MemoryPersistence:
     ) -> dict[str, list[str]]:
         seed_ids = _dedupe(memory_ids)
         if self._service.graph_enabled and seed_ids:
-            graph_scope = _graph_scope(ctx.project_id)
+            graph_scope = self._scope(ctx)
             result = await self._service.traverse(
                 GraphTraversalQuery(
                     scope=graph_scope,
@@ -401,173 +489,93 @@ class MemoryPersistence:
         ctx: MemoryRequestContext,
         memory_ids: list[str],
         *,
-        limit_per_memory: int = 20,
+        steps: Sequence[GraphStep] | None = None,
+        result_uniqueness: Literal["path", "end_node"] = "end_node",
+        active_only: bool = True,
+        limit_per_memory: int | None = 20,
         max_candidates: int = 200,
-    ) -> list[dict[str, str]]:
-        if not self._service.graph_enabled or not memory_ids or max_candidates <= 0:
+    ) -> list[dict[str, Any]]:
+        """List visible memories reached through caller-specified graph relations.
+
+        The default is one bidirectional ``RELATES_TO`` hop. Multi-step callers,
+        such as Dreaming's shared-entity grouping, receive the traversed node
+        path plus optional entity metadata without adding another persistence
+        operation.
+        """
+
+        if (
+            not self._service.graph_enabled
+            or not memory_ids
+            or max_candidates <= 0
+            or (limit_per_memory is not None and limit_per_memory <= 0)
+        ):
             return []
-        graph_scope = _graph_scope(ctx.project_id)
+        graph_scope = self._scope(ctx)
         seeds = tuple(GraphNodeRef(scope=graph_scope, kind="Memory", node_id=value) for value in _dedupe(memory_ids))
+        resolved_steps = tuple(steps) if steps is not None else (
+            GraphStep(
+                relations=("RELATES_TO",),
+                direction="both",
+                target_kinds=("Memory",),
+            ),
+        )
         result = await self._service.traverse(
             GraphTraversalQuery(
                 scope=graph_scope,
                 seeds=seeds,
-                steps=(
-                    GraphStep(
-                        relations=("RELATES_TO",),
-                        direction="both",
-                        target_kinds=("Memory",),
-                    ),
-                ),
-                result_uniqueness="end_node",
+                steps=resolved_steps,
+                result_uniqueness=result_uniqueness,
                 limit=max_candidates,
-                limit_per_seed=max(1, limit_per_memory),
+                limit_per_seed=limit_per_memory,
             )
         )
+        memory_paths = [path for path in result.paths if path.end.ref.kind == "Memory"]
         visible = {
             memory.memory_id
-            for memory in await self.get_memories(ctx, [path.end.ref.node_id for path in result.paths])
-            if memory.status == "active"
+            for memory in await self.get_memories(ctx, [path.end.ref.node_id for path in memory_paths])
+            if not active_only or memory.status == "active"
         }
-        return [
-            {"memory_id": path.end.ref.node_id, "seed_memory_id": path.seed.node_id}
-            for path in result.paths
-            if path.end.ref.node_id in visible
-        ]
-
-    async def list_direct_related_memories(
-        self,
-        ctx: MemoryRequestContext,
-        memory_ids: list[str],
-        *,
-        edge_filter: MemoryEdgeFilter,
-        limit_per_memory: int = 20,
-        max_candidates: int = 200,
-    ) -> list[DirectRelatedMemory]:
-        del edge_filter
-        rows = await self.get_related_memory_ids(
-            ctx,
-            memory_ids,
-            limit_per_memory=limit_per_memory,
-            max_candidates=max_candidates,
+        entity_ids = _dedupe(
+            node.ref.node_id
+            for path in memory_paths
+            for node in path.nodes[1:-1]
+            if node.ref.kind == "Entity"
         )
-        return [
-            DirectRelatedMemory(
-                seed_memory_id=row["seed_memory_id"],
-                memory_id=row["memory_id"],
-                rel_type="RELATES_TO",
-                direction="both",
-            )
-            for row in rows
-        ]
-
-    async def list_memories_by_shared_entities(
-        self,
-        ctx: MemoryRequestContext,
-        memory_ids: list[str],
-        *,
-        include_seed: bool = True,
-        active_only: bool = True,
-        limit_per_entity: int = 50,
-    ) -> list[GraphNeighborScope]:
-        if not self._service.graph_enabled or not memory_ids:
-            return []
-        graph_scope = _graph_scope(ctx.project_id)
-        seeds = tuple(GraphNodeRef(scope=graph_scope, kind="Memory", node_id=value) for value in _dedupe(memory_ids))
-        result = await self._service.traverse(
-            GraphTraversalQuery(
-                scope=graph_scope,
-                seeds=seeds,
-                steps=(
-                    GraphStep(relations=("MENTIONS",), direction="out", target_kinds=("Entity",)),
-                    GraphStep(relations=("MENTIONS",), direction="in", target_kinds=("Memory",)),
-                ),
-                result_uniqueness="path",
-                limit=max(1, len(seeds) * max(1, limit_per_entity) * 8),
-            )
-        )
-        candidate_ids = [path.end.ref.node_id for path in result.paths]
-        visible_memories = await self.get_memories(ctx, candidate_ids)
-        visible = {memory.memory_id for memory in visible_memories if not active_only or memory.status == "active"}
-        grouped: dict[tuple[str, str], list[str]] = defaultdict(list)
-        for path in result.paths:
-            if len(path.nodes) < 3:
-                continue
-            seed_id = path.seed.node_id
-            entity_id = path.nodes[1].ref.node_id
-            memory_id = path.end.ref.node_id
-            if memory_id not in visible or (not include_seed and memory_id == seed_id):
-                continue
-            values = grouped[(seed_id, entity_id)]
-            if memory_id not in values and len(values) < max(0, limit_per_entity):
-                values.append(memory_id)
-        entity_records = await self._records_for_ids(
-            ENTITY_TABLE,
-            ctx,
-            [entity_id for _, entity_id in grouped],
-        )
+        entity_records = await self._records_for_ids(ENTITY_TABLE, ctx, entity_ids)
         entity_by_id = {record.record_id: record for record in entity_records}
-        return [
-            GraphNeighborScope(
-                seed_memory_id=seed_id,
-                entity_id=entity_id,
-                entity_name=(
-                    str(entity_by_id[entity_id].payload.get("entity_name"))
-                    if entity_id in entity_by_id and entity_by_id[entity_id].payload.get("entity_name") is not None
-                    else None
+        rows: list[dict[str, Any]] = []
+        for path in memory_paths:
+            memory_id = path.end.ref.node_id
+            if memory_id not in visible:
+                continue
+            row: dict[str, Any] = {
+                "memory_id": memory_id,
+                "seed_memory_id": path.seed.node_id,
+                "path": tuple(
+                    {"kind": node.ref.kind, "node_id": node.ref.node_id}
+                    for node in path.nodes
                 ),
-                entity_type=(
-                    str(entity_by_id[entity_id].payload.get("entity_type"))
-                    if entity_id in entity_by_id and entity_by_id[entity_id].payload.get("entity_type") is not None
-                    else None
-                ),
-                memory_ids=tuple(values),
-                source="shared_entity",
-            )
-            for (seed_id, entity_id), values in grouped.items()
-        ]
+            }
+            entity_node = next((node for node in path.nodes[1:-1] if node.ref.kind == "Entity"), None)
+            if entity_node is not None:
+                entity_id = entity_node.ref.node_id
+                entity_record = entity_by_id.get(entity_id)
+                row.update(
+                    {
+                        "entity_id": entity_id,
+                        "entity_name": entity_record.payload.get("entity_name") if entity_record is not None else None,
+                        "entity_type": entity_record.payload.get("entity_type") if entity_record is not None else None,
+                    }
+                )
+            rows.append(row)
+        return rows
 
-    @traced("persistence.memory.list_entity_clusters")
-    async def list_entity_memory_clusters(
-        self,
-        ctx: MemoryRequestContext,
-        seed_memory_ids: list[str],
-        *,
-        limit_per_entity: int,
-    ) -> list[EntityMemoryCluster]:
-        """Collapse per-seed graph scopes into unique entity-centered clusters."""
-
-        scopes = await self.list_memories_by_shared_entities(
-            ctx,
-            seed_memory_ids,
-            include_seed=True,
-            active_only=True,
-            limit_per_entity=max(1, limit_per_entity),
-        )
-        grouped: dict[str, list[str]] = defaultdict(list)
-        metadata: dict[str, tuple[str | None, str | None]] = {}
-        for scope in scopes:
-            metadata.setdefault(scope.entity_id, (scope.entity_name, scope.entity_type))
-            memory_ids = grouped[scope.entity_id]
-            for memory_id in (scope.seed_memory_id, *scope.memory_ids):
-                if memory_id not in memory_ids and len(memory_ids) < limit_per_entity:
-                    memory_ids.append(memory_id)
-        return [
-            EntityMemoryCluster(
-                entity_id=entity_id,
-                entity_name=metadata[entity_id][0],
-                entity_type=metadata[entity_id][1],
-                memory_ids=tuple(memory_ids),
-            )
-            for entity_id, memory_ids in grouped.items()
-        ]
-
-    async def _write_graph(self, plan: MemoryDbMutationPlan) -> None:
+    async def _write_graph(self, ctx: MemoryRequestContext, plan: MemoryDbMutationPlan) -> None:
         relationships = [command.relationship for command in plan.relationship_writes]
         refs: dict[tuple[str, str], GraphNodeRef] = {}
         edges: list[GraphEdge] = []
         for relationship in relationships:
-            scope = _graph_scope(relationship.project_id)
+            scope = self._write_scope(ctx, relationship)
             source = GraphNodeRef(
                 scope=scope,
                 kind=relationship.source.kind,
@@ -716,7 +724,7 @@ class MemoryPersistence:
             if self._service.graph_enabled:
                 await self._service.delete_node(
                     GraphNodeRef(
-                        scope=_graph_scope(ctx.project_id),
+                        scope=self._scope(ctx),
                         kind="Memory",
                         node_id=record.record_id,
                     )
@@ -749,7 +757,7 @@ class MemoryPersistence:
         with_vectors: bool = False,
     ) -> Record | None:
         query = RecordQuery(
-            scope=_query_scope(ctx),
+            scope=self._scope(ctx),
             filters=_table_scoped_filter(
                 table,
                 ctx,
@@ -777,7 +785,7 @@ class MemoryPersistence:
         records, _ = await self._service.query_records(
             table,
             RecordQuery(
-                scope=_query_scope(ctx),
+                scope=self._scope(ctx),
                 filters=_table_scoped_filter(
                     table,
                     ctx,
@@ -797,15 +805,18 @@ def _primary_key(table: str) -> str:
     }[table]
 
 
-def _write_scope(value: Any) -> DatabaseScope:
-    return DatabaseScope({field: getattr(value, field, None) for field in _SCOPE_FIELDS})
+def _merge_scopes(*scopes: DatabaseScope) -> DatabaseScope:
+    """Merge scope dimensions without allowing a later source to override one."""
 
-
-def _query_scope(ctx: MemoryRequestContext) -> DatabaseScope:
-    # The original memory DB forces project isolation only. Actor dimensions
-    # remain business filters owned by each algorithm call.
-    return DatabaseScope(project_id=ctx.project_id)
-
+    merged: dict[str, ScopeValue] = {}
+    for scope in scopes:
+        for name, value in scope.items():
+            if name in merged and merged[name] != value:
+                raise ValueError(
+                    f"scope dimension {name!r} conflicts: existing value {merged[name]!r}, new value {value!r}"
+                )
+            merged[name] = value
+    return DatabaseScope(merged)
 
 def _with_memory_mode(
     ctx: MemoryRequestContext,
@@ -829,10 +840,6 @@ def _table_scoped_filter(
     if table != MEMORY_TABLE:
         return filters
     return _with_memory_mode(ctx, filters) or filters
-
-
-def _graph_scope(project_id: str) -> DatabaseScope:
-    return DatabaseScope(project_id=project_id)
 
 
 def _dense_from_command(command: MemoryDbMemoryUpdateCommand) -> list[float] | None:
@@ -874,8 +881,7 @@ def _clean_metadata(metadata: Any) -> dict[str, Any]:
     return result
 
 
-def _memory_record(memory, vector) -> Record:
-    scope = _write_scope(memory)
+def _memory_record(memory, vector, scope: DatabaseScope) -> Record:
     payload = memory.model_dump(mode="python", exclude=set(_SCOPE_FIELDS))
     payload["schema_version"] = 2
     payload["metadata"] = _with_scope_metadata(payload.get("metadata"), scope)
@@ -898,8 +904,7 @@ def _memory_record(memory, vector) -> Record:
     )
 
 
-def _entity_record(entity, vector) -> Record:
-    scope = _write_scope(entity)
+def _entity_record(entity, vector, scope: DatabaseScope) -> Record:
     payload = entity.model_dump(mode="python", exclude=set(_SCOPE_FIELDS))
     payload["schema_version"] = 2
     payload["metadata"] = _with_scope_metadata(payload.get("metadata"), scope)
@@ -922,8 +927,7 @@ def _entity_record(entity, vector) -> Record:
     )
 
 
-def _source_record(source) -> Record:
-    scope = _write_scope(source)
+def _source_record(source, scope: DatabaseScope) -> Record:
     payload = source.model_dump(mode="python", exclude={*set(_SCOPE_FIELDS), "persist_payload"})
     payload["schema_version"] = 2
     payload["metadata"] = _with_scope_metadata(payload.get("metadata"), scope)

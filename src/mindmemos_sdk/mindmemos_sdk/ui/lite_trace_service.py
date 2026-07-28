@@ -19,6 +19,117 @@ _MAX_SCAN_DEPTH = 6
 class LiteTraceService:
     """Discover and query Lite trace databases without mutating them."""
 
+    def list_spans(
+        self,
+        directory: str | Path,
+        *,
+        span_name: str = "",
+        limit: int = 25,
+        offset: int = 0,
+    ) -> dict[str, object]:
+        root = _resolve_input_path(directory)
+        databases = _discover_databases(root)
+        normalized_name = span_name.strip()
+        if len(normalized_name) > 200:
+            raise ValueError("span_name must not exceed 200 characters.")
+        rows: list[dict[str, object]] = []
+        total = 0
+        local_limit = limit + offset
+        where_sql = "WHERE instr(lower(span.name), lower(?)) > 0" if normalized_name else ""
+        filter_params: tuple[object, ...] = (normalized_name,) if normalized_name else ()
+
+        for database in databases:
+            source = _source_name(root, database)
+            with closing(_connect_read_only(database)) as connection:
+                total += int(
+                    connection.execute(
+                        f"SELECT COUNT(*) FROM spans span {where_sql}",  # noqa: S608 - fixed SQL fragment.
+                        filter_params,
+                    ).fetchone()[0]
+                )
+                database_rows = connection.execute(
+                    f"""
+                    SELECT
+                        span.trace_id,
+                        span.span_id,
+                        span.parent_span_id,
+                        span.name,
+                        span.kind,
+                        span.start_time_ns,
+                        span.end_time_ns,
+                        span.duration_ns,
+                        span.status_code,
+                        span.status_message,
+                        span.service_name,
+                        trace.root_span_id AS stored_root_span_id,
+                        root.span_id AS resolved_root_span_id,
+                        root.name AS root_span_name
+                    FROM spans span
+                    JOIN traces trace ON trace.trace_id = span.trace_id
+                    LEFT JOIN spans root
+                      ON root.trace_id = trace.trace_id
+                     AND root.span_id = trace.root_span_id
+                    {where_sql}
+                    ORDER BY span.start_time_ns DESC, span.span_id
+                    LIMIT ?
+                    """,  # noqa: S608 - only the fixed optional WHERE fragment is interpolated.
+                    (*filter_params, local_limit),
+                ).fetchall()
+                for row in database_rows:
+                    start_ns = int(row["start_time_ns"])
+                    end_ns = int(row["end_time_ns"])
+                    root_span_id, root_span_status = _resolve_root_span_id(
+                        row["stored_root_span_id"],
+                        row["resolved_root_span_id"],
+                    )
+                    rows.append(
+                        {
+                            "trace_id": row["trace_id"],
+                            "span_id": row["span_id"],
+                            "parent_span_id": row["parent_span_id"],
+                            "name": row["name"],
+                            "kind": row["kind"],
+                            "start_time": _ns_to_iso(start_ns),
+                            "start_time_ns": str(start_ns),
+                            "end_time": _ns_to_iso(end_ns),
+                            "duration_ms": _ns_to_ms(int(row["duration_ns"])),
+                            "status_code": row["status_code"],
+                            "status_message": row["status_message"],
+                            "service_name": row["service_name"],
+                            "root_span_id": root_span_id,
+                            "root_span_status": root_span_status,
+                            "root_span_name": _root_span_name(row["root_span_name"], root_span_status),
+                            "is_root": root_span_id is not None and str(row["span_id"]) == root_span_id,
+                            "source": source,
+                        }
+                    )
+
+        rows.sort(key=lambda item: int(str(item["start_time_ns"])), reverse=True)
+        selected = rows[offset : offset + limit]
+        total_pages = max(1, (total + limit - 1) // limit)
+        page = offset // limit + 1
+        return {
+            "directory": str(root),
+            "databases": [
+                {
+                    "source": _source_name(root, database),
+                    "size_bytes": database.stat().st_size,
+                }
+                for database in databases
+            ],
+            "database_count": len(databases),
+            "spans": selected,
+            "count": len(selected),
+            "total": total,
+            "span_name": normalized_name,
+            "limit": limit,
+            "offset": offset,
+            "page": page,
+            "total_pages": total_pages,
+            "has_previous": page > 1,
+            "has_next": offset + len(selected) < total,
+        }
+
     def list_traces(
         self,
         directory: str | Path,
@@ -48,6 +159,7 @@ class LiteTraceService:
                         trace.request_id,
                         trace.project_id,
                         trace.api_key_uuid,
+                        root.span_id AS resolved_root_span_id,
                         root.name AS root_span_name,
                         root.duration_ns AS root_duration_ns,
                         root.status_code AS root_status_code,
@@ -58,16 +170,7 @@ class LiteTraceService:
                     FROM traces trace
                     LEFT JOIN spans root
                       ON root.trace_id = trace.trace_id
-                     AND root.span_id = COALESCE(
-                        trace.root_span_id,
-                        (
-                            SELECT fallback.span_id
-                            FROM spans fallback
-                            WHERE fallback.trace_id = trace.trace_id
-                            ORDER BY fallback.start_time_ns, fallback.span_id
-                            LIMIT 1
-                        )
-                     )
+                     AND root.span_id = trace.root_span_id
                     ORDER BY trace.start_time_ns DESC
                     LIMIT ?
                     """,
@@ -77,11 +180,16 @@ class LiteTraceService:
                     start_ns = int(row["start_time_ns"])
                     end_ns = int(row["end_time_ns"])
                     duration_ns = int(row["root_duration_ns"] or max(0, end_ns - start_ns))
+                    root_span_id, root_span_status = _resolve_root_span_id(
+                        row["root_span_id"],
+                        row["resolved_root_span_id"],
+                    )
                     rows.append(
                         {
                             "trace_id": row["trace_id"],
-                            "root_span_id": row["root_span_id"],
-                            "root_span_name": row["root_span_name"] or "(root span unavailable)",
+                            "root_span_id": root_span_id,
+                            "root_span_status": root_span_status,
+                            "root_span_name": _root_span_name(row["root_span_name"], root_span_status),
                             "service_name": row["service_name"],
                             "start_time": _ns_to_iso(start_ns),
                             "start_time_ns": str(start_ns),
@@ -123,6 +231,7 @@ class LiteTraceService:
         *,
         source: str,
         trace_id: str,
+        selected_span_id: str | None = None,
     ) -> dict[str, object]:
         root = _resolve_input_path(directory)
         database = _resolve_database(root, source)
@@ -199,7 +308,7 @@ class LiteTraceService:
             for row in llm_rows
         }
 
-        root_span_id = _select_root_span_id(trace["root_span_id"], span_rows)
+        root_span_id, root_span_status = _resolve_trace_root_span(trace["root_span_id"], span_rows)
         depths = _span_depths(root_span_id, span_rows)
         spans: list[dict[str, object]] = []
         for row in span_rows:
@@ -234,12 +343,24 @@ class LiteTraceService:
                 }
             )
 
+        spans_by_id = {str(span["span_id"]): span for span in spans}
+        resolved_selected_span_id = selected_span_id or root_span_id or (str(spans[0]["span_id"]) if spans else None)
+        if resolved_selected_span_id is not None and resolved_selected_span_id not in spans_by_id:
+            raise ValueError(f"Span {resolved_selected_span_id!r} was not found in trace {trace_id!r}.")
+        ancestry = _span_ancestry(
+            root_span_id,
+            resolved_selected_span_id,
+            spans_by_id,
+        )
+
         return {
             "directory": str(root),
             "source": _source_name(root, database),
             "trace": {
                 "trace_id": trace["trace_id"],
                 "root_span_id": root_span_id,
+                "root_span_status": root_span_status,
+                "time_range_kind": "root" if root_span_status == "resolved" else "observed",
                 "service_name": trace["service_name"],
                 "start_time": _ns_to_iso(trace_start_ns),
                 "start_time_ns": str(trace_start_ns),
@@ -255,6 +376,13 @@ class LiteTraceService:
                 "llm_call_count": len(llm_rows),
             },
             "spans": spans,
+            "selected_span_id": resolved_selected_span_id,
+            "root_span": _span_summary(spans_by_id.get(root_span_id)),
+            "selected_span": _span_summary(spans_by_id.get(resolved_selected_span_id)),
+            "ancestry": [_span_summary(span) for span in ancestry],
+            "selected_connected_to_root": bool(
+                ancestry and root_span_id is not None and str(ancestry[0]["span_id"]) == root_span_id
+            ),
         }
 
 
@@ -346,17 +474,36 @@ def _is_trace_database(database: Path) -> bool:
     return _REQUIRED_TABLES.issubset(tables)
 
 
-def _select_root_span_id(
+def _resolve_trace_root_span(
     stored_root_span_id: object,
     spans: list[sqlite3.Row],
-) -> str | None:
+) -> tuple[str | None, str]:
     span_ids = {str(row["span_id"]) for row in spans}
-    if stored_root_span_id is not None and str(stored_root_span_id) in span_ids:
-        return str(stored_root_span_id)
-    for row in spans:
-        if row["parent_span_id"] is None:
-            return str(row["span_id"])
-    return str(spans[0]["span_id"]) if spans else None
+    resolved_root_span_id = (
+        str(stored_root_span_id)
+        if stored_root_span_id is not None and str(stored_root_span_id) in span_ids
+        else None
+    )
+    return _resolve_root_span_id(stored_root_span_id, resolved_root_span_id)
+
+
+def _resolve_root_span_id(
+    stored_root_span_id: object,
+    resolved_root_span_id: object,
+) -> tuple[str | None, str]:
+    if stored_root_span_id is None:
+        return None, "pending"
+    if resolved_root_span_id is not None:
+        return str(resolved_root_span_id), "resolved"
+    return None, "missing"
+
+
+def _root_span_name(value: object, status: str) -> str:
+    if status == "pending":
+        return "(root span pending)"
+    if status == "missing":
+        return "(root span unavailable)"
+    return str(value)
 
 
 def _span_depths(
@@ -385,6 +532,41 @@ def _span_depths(
     for current_span_id in parents:
         depth(current_span_id, set())
     return memo
+
+
+def _span_ancestry(
+    root_span_id: str | None,
+    selected_span_id: str | None,
+    spans_by_id: dict[str, dict[str, object]],
+) -> list[dict[str, object]]:
+    if selected_span_id is None:
+        return []
+    path: list[dict[str, object]] = []
+    visited: set[str] = set()
+    current_id: str | None = selected_span_id
+    while current_id is not None and current_id in spans_by_id and current_id not in visited:
+        visited.add(current_id)
+        span = spans_by_id[current_id]
+        path.append(span)
+        if current_id == root_span_id:
+            break
+        parent_span_id = span.get("parent_span_id")
+        current_id = str(parent_span_id) if parent_span_id is not None else None
+    path.reverse()
+    return path
+
+
+def _span_summary(span: dict[str, object] | None) -> dict[str, object] | None:
+    if span is None:
+        return None
+    return {
+        "span_id": span["span_id"],
+        "parent_span_id": span["parent_span_id"],
+        "name": span["name"],
+        "duration_ms": span["duration_ms"],
+        "status_code": span["status_code"],
+        "depth": span["depth"],
+    }
 
 
 def _load_json(value: object) -> object:

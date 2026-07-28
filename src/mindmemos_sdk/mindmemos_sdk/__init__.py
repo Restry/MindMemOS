@@ -1,5 +1,6 @@
 """MindMemOS SDK package."""
 
+from .async_client import AsyncMindMemOSClient
 from .client import MindMemOSClient
 from .config import ConfigManager, SDKConfig
 from .errors import (
@@ -7,6 +8,8 @@ from .errors import (
     AuthRequiredError,
     ConfigError,
     InvalidRequestError,
+    LiteExecutionError,
+    LiteUnavailableError,
     MindMemOSSDKError,
     TransportError,
 )
@@ -23,12 +26,15 @@ from .memory import (
     TextMessage,
     UrlMessage,
 )
+from .skills import AsyncSkillClient
 
 __all__ = [
     "__version__",
+    "AsyncMindMemOSClient",
     "MindMemOSClient",
     "MemoryClient",
     "AsyncMemoryClient",
+    "AsyncSkillClient",
     "FeedbackMode",
     "ConfigManager",
     "SDKConfig",
@@ -42,6 +48,8 @@ __all__ = [
     "FileMessage",
     "MindMemOSSDKError",
     "InvalidRequestError",
+    "LiteExecutionError",
+    "LiteUnavailableError",
     "ConfigError",
     "AuthRequiredError",
     "TransportError",

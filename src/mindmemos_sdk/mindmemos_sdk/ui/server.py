@@ -114,10 +114,13 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
             if path in {"/api/v1/memories", "/api/v1/memories/search"}:
                 self._handle_memory_get(path)
                 return
-            if path == "/api/v1/lite/traces" or path.startswith("/api/v1/lite/traces/"):
+            if path == "/api/v1/lite/spans" or path == "/api/v1/lite/traces" or path.startswith("/api/v1/lite/traces/"):
                 if not self._validate_local_request():
                     return
-                self._handle_lite_trace_get(path)
+                if path == "/api/v1/lite/spans":
+                    self._handle_lite_span_get()
+                else:
+                    self._handle_lite_trace_get(path)
                 return
             if path.startswith("/api/v1/skills/"):
                 self._handle_skill_get(path)
@@ -184,6 +187,19 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
                 directory,
                 source=source,
                 trace_id=trace_id,
+                selected_span_id=(query.get("span_id") or [None])[0],
+            )
+        )
+
+    def _handle_lite_span_get(self) -> None:
+        query = parse_qs(urlsplit(self.path).query)
+        directory = (query.get("directory") or [""])[0]
+        self._send_json(
+            LiteTraceService().list_spans(
+                directory,
+                span_name=(query.get("span_name") or [""])[0],
+                limit=_query_bounded_int(query, "limit", default=25, minimum=1, maximum=500),
+                offset=_query_bounded_int(query, "offset", default=0, minimum=0, maximum=1_000_000),
             )
         )
 
@@ -211,9 +227,7 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
                 to_version_id = (query.get("to") or [None])[0]
                 if not from_version_id or not to_version_id:
                     raise ValueError("compare requires from and to version IDs")
-                self._send_json(
-                    service.compare(skill_ref, from_version_id, to_version_id).model_dump(mode="json")
-                )
+                self._send_json(service.compare(skill_ref, from_version_id, to_version_id).model_dump(mode="json"))
                 return
             self._send_json({"error": "not_found", "message": "Unknown Skill route."}, status=404)
         finally:
@@ -350,9 +364,7 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
             if version_id is None:
                 raise ValueError("version_id must be a non-empty string")
             revision = payload.get("expected_cloud_revision")
-            if revision is not None and (
-                not isinstance(revision, int) or isinstance(revision, bool)
-            ):
+            if revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)):
                 raise ValueError("expected_cloud_revision must be an integer")
             result = LocalSkillUIService(manager).promote(
                 skill_ref,

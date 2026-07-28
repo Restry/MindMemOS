@@ -6,10 +6,44 @@ and deduplicates by canonical name + entity type.
 
 from __future__ import annotations
 
-from ....typing import Entity
+from datetime import datetime
+
+from ....typing import Entity, EntityWrite, MemoryRequestContext
 from .memory import ExtractedEntityCandidate, ExtractedMemoryCandidate
 
 _LOCAL_FALLBACK_ENTITY_STOPWORDS = {"user", "the_user", "用户", "assistant", "助手"}
+
+
+def build_entity_write(
+    entity: Entity,
+    entity_id: str,
+    context: MemoryRequestContext,
+    now: datetime,
+) -> EntityWrite:
+    """Convert an extracted entity into the Vanilla add persistence DTO."""
+    return EntityWrite(
+        entity_id=entity_id,
+        account_id=context.account_id,
+        project_id=context.project_id,
+        api_key_uuid=context.api_key_uuid,
+        user_id=context.user_id,
+        app_id=context.app_id,
+        session_id=context.session_id,
+        agent_id=context.agent_id,
+        request_id=context.request_id,
+        entity_name=entity.canonical_name or entity.name,
+        entity_type=entity.entity_type,
+        description=entity.description,
+        created_at=now,
+        root_id=[entity_id],
+        metadata={
+            "aliases": list(entity.aliases),
+            "confidence": entity.confidence,
+            "extractor": entity.extractor,
+            "offsets": entity.offsets,
+            **dict(entity.metadata),
+        },
+    )
 
 
 def resolve_candidate_entities(

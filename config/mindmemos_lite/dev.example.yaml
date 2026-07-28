@@ -172,6 +172,7 @@ algo_config:
 
   add:
     enable_entities: false
+    embedding_batch_size: 32
     chunker:
       chunk_soft_token_budget: 26000
       chunk_hard_token_budget: 32000

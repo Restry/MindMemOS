@@ -12,7 +12,7 @@ def format_datetime(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def format_optional_datetime(value: datetime | None) -> str | None:
+def _format_optional_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
     return format_datetime(value)
@@ -28,15 +28,15 @@ def format_source_timestamp(memory: Any) -> str | None:
 
 
 def format_memory_event_time(memory: Any, *, fallback_to_source_timestamp: bool = False) -> str | None:
-    resolved = resolved_event_datetime(memory.metadata)
+    resolved = _resolved_event_datetime(memory.metadata)
     if resolved is not None:
         return format_datetime(resolved)
     if fallback_to_source_timestamp:
         return format_source_timestamp(memory)
-    return format_optional_datetime(memory.validate_from)
+    return _format_optional_datetime(memory.validate_from)
 
 
-def resolved_event_datetime(metadata: dict) -> datetime | None:
+def _resolved_event_datetime(metadata: dict) -> datetime | None:
     value = metadata.get("resolved_event_datetime")
     parsed = _parse_datetime_value(value)
     if parsed is not None:

@@ -72,8 +72,12 @@ uv run python -m mindmemos_eval.cli memory \
   --benchmark-list locomo \
   --algorithm schema \
   --manifest-output output/locomo_manifest.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml
+  --auth-config-output config/mindmemos/eval_api_keys.yaml
 ```
+
+`--auth-config-output` writes the complete MindMemOS HTTP benchmark identity config; it is distinct from
+the model-provider API keys configured under `runner.*llm.api_key`. `--api-key-output` is a deprecated
+compatibility alias and will be removed in a future release.
 
 ### Evaluation of Persona Memory
 
@@ -101,7 +105,7 @@ uv run python -m mindmemos_eval.cli memory \
   --benchmark-list personamem \
   --algorithm schema \
   --manifest-output output/personamem_manifest.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml
+  --auth-config-output config/mindmemos/eval_api_keys.yaml
 ```
 
 ### Evaluation of Dreaming

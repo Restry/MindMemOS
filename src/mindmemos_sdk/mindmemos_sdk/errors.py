@@ -96,3 +96,15 @@ class LocalSkillRepositoryError(SkillError):
 
 class SkillSnapshotError(SkillError):
     """Raised when a complete local Skill snapshot cannot be read or validated."""
+
+
+class LiteUnavailableError(MindMemOSSDKError):
+    """Raised when the optional Lite runtime or a required Lite capability is unavailable."""
+
+
+class LiteExecutionError(MindMemOSSDKError):
+    """Raised when an in-process Lite operation fails."""
+
+    def __init__(self, *, operation: str, message: str) -> None:
+        super().__init__(f"{operation} failed: {message}")
+        self.operation = operation

@@ -58,6 +58,9 @@ class MindMemOS:
             registered automatically.
         task_backend: Optional backend owned by this runtime.
         task_handlers: Optional handler registry; defaults to the process registry.
+        skill_service: Optional concrete transport-neutral Skill service. The
+            runtime owns only the reference; its implementation defines any
+            additional resource lifecycle.
         load_config_from_env: Resolve config through ``MINDMEMOS_CONFIG_PATH``
             or ``MINDMEMOS_CONFIG_NAME`` at startup.
     """
@@ -72,6 +75,7 @@ class MindMemOS:
         task_backend: TaskBackend | None = None,
         task_handlers: TaskHandlerRegistry | None = None,
         vector_db_service: VectorDBService | None = None,
+        skill_service: SkillService | None = None,
     ) -> None:
         if load_config_from_env and config_path is not None:
             raise ValueError("config_path cannot be combined with load_config_from_env=True")
@@ -99,7 +103,7 @@ class MindMemOS:
             TaskClient(task_backend, resolved_task_handlers) if task_backend is not None else None
         )
         self._memory_service: MemoryService | None = None
-        self._skill_service: SkillService | None = None
+        self._skill_service = skill_service
 
     @classmethod
     def from_env(
@@ -108,6 +112,7 @@ class MindMemOS:
         start_workers: bool = True,
         task_backend: TaskBackend | None = None,
         task_handlers: TaskHandlerRegistry | None = None,
+        skill_service: SkillService | None = None,
     ) -> Self:
         """Build a runtime whose config is resolved from the environment."""
 
@@ -116,6 +121,7 @@ class MindMemOS:
             load_config_from_env=True,
             task_backend=task_backend,
             task_handlers=task_handlers,
+            skill_service=skill_service,
         )
 
     @classmethod
@@ -126,6 +132,7 @@ class MindMemOS:
         start_workers: bool = False,
         task_backend: TaskBackend | None = None,
         task_handlers: TaskHandlerRegistry | None = None,
+        skill_service: SkillService | None = None,
     ) -> Self:
         """Build a runtime from an explicit YAML config path."""
 
@@ -134,6 +141,7 @@ class MindMemOS:
             start_workers=start_workers,
             task_backend=task_backend,
             task_handlers=task_handlers,
+            skill_service=skill_service,
         )
 
     @property
@@ -191,7 +199,7 @@ class MindMemOS:
 
         self._require_running()
         if self._skill_service is None:
-            self._skill_service = SkillService()
+            raise RuntimeError("skill service is not configured; inject a concrete SkillService into the Lite runtime")
         return self._skill_service
 
     async def start(self) -> Self:

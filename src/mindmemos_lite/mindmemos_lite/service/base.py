@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from ..infra.tasking import TaskClient, TaskEnvelope
+from ..logging import traced
 from ..persistence import MemoryOperationRecorder
 from ..persistence.memory import MemoryPersistence
 from ..pipeline import AddPipeline, SearchPipeline
@@ -72,6 +73,7 @@ class BaseMemoryService(ABC):
     def search_pipeline_name(self) -> str:
         """Return the search strategy name persisted on search records."""
 
+    @traced("memory.service.add")
     async def add(self, context: RequestContext, request: AddMemoryRequest) -> AddMemoryResult:
         """Run add with the default operation-record and async-task lifecycle."""
 
@@ -119,6 +121,7 @@ class BaseMemoryService(ABC):
             raise
         return _add_service_result(result)
 
+    @traced("memory.service.search")
     async def search(self, context: RequestContext, request: SearchMemoryRequest) -> MemoryListResult:
         """Run search and persist the exact query/result snapshot."""
 

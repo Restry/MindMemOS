@@ -46,7 +46,7 @@ scripts/locomo/locomo_eval.env
 .locomo-runs/
 .design/
 datasets/locomo/
-reports/locomo_lite_*
+reports/
 
 # Eval / run outputs
 data/

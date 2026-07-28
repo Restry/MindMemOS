@@ -1,5 +1,5 @@
 """Offline memory-consolidation pipeline."""
 
-from .default import MEMORY_DREAMING_TOPIC, DefaultDreamingPipeline
+from .consolidation import MEMORY_DREAMING_TOPIC, MemoryConsolidationPipeline
 
-__all__ = ["DefaultDreamingPipeline", "MEMORY_DREAMING_TOPIC"]
+__all__ = ["MemoryConsolidationPipeline", "MEMORY_DREAMING_TOPIC"]

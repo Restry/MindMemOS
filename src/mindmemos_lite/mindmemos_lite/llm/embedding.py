@@ -165,8 +165,12 @@ class EmbedClient:
             raise
         usage = usage_tokens(getattr(resp, "usage", None))
         model_name = get_response_value(resp, "model", target) or target
+        response_items = list(getattr(resp, "data", []) or [])
+        indexed_items = list(enumerate(response_items))
+        indexed_items.sort(key=lambda pair: _embedding_response_index(pair[1], pair[0]))
+
         embeddings: list[list[float]] = []
-        for item in getattr(resp, "data", []) or []:
+        for _, item in indexed_items:
             if isinstance(item, dict):
                 embeddings.append(item.get("embedding") or [])
             else:
@@ -204,3 +208,10 @@ class EmbedClient:
             usage=usage,
             raw_response=dump_response(resp),
         )
+
+
+def _embedding_response_index(item: Any, fallback: int) -> int:
+    index = get_response_value(item, "index", fallback)
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return fallback
+    return index

@@ -142,12 +142,14 @@ def test_example_config_selects_pgvector_with_typed_options() -> None:
         "chunker",
         "recall",
         "safety_gate",
+        "embedding_batch_size",
     ]
     assert OmegaConf.get_type(cfg.algo_config.add.chunker) is MessageChunkerConfig
     assert OmegaConf.get_type(cfg.algo_config.add.recall) is VanillaAddRecallConfig
     assert OmegaConf.get_type(cfg.algo_config.add.safety_gate) is VanillaAddSafetyGateConfig
     assert OmegaConf.get_type(cfg.algo_config.search) is VanillaSearchConfig
     assert cfg.algo_config.add.chunker.chunk_hard_token_budget == 32000
+    assert cfg.algo_config.add.embedding_batch_size == 32
     assert cfg.algo_config.add.recall.top_k == 5
     assert cfg.algo_config.search.recall_size == 20
 

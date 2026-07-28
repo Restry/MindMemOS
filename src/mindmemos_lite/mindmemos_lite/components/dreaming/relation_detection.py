@@ -37,7 +37,7 @@ class DetectedMemoryIssueGroup(BaseModel):
 
     Purpose: Carries one issue category and the memory IDs involved in that
     issue, so the second LLM can focus on solving one problem type at a time.
-    Used in: DefaultDreamingPipeline relation detection output and action
+    Used in: MemoryConsolidationPipeline relation detection output and action
     planning input construction.
     """
 

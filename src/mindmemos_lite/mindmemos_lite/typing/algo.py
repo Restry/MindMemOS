@@ -232,7 +232,7 @@ class ConsolidationCreate(BaseModel):
 
     Purpose: Carries a create action emitted by the consolidation prompt
     without exposing storage primitives.
-    Used in: Dreaming consolidation parser and DefaultDreamingPipeline action
+    Used in: Dreaming consolidation parser and MemoryConsolidationPipeline action
     application.
     """
 
@@ -252,7 +252,7 @@ class ConsolidationUpdate(BaseModel):
     """A memory content, quality signal, or metadata update from consolidation.
 
     Purpose: Carries a patch action emitted by the consolidation prompt.
-    Used in: Dreaming consolidation parser and DefaultDreamingPipeline action
+    Used in: Dreaming consolidation parser and MemoryConsolidationPipeline action
     application.
     """
 
@@ -267,7 +267,7 @@ class ConsolidationMerge(BaseModel):
     """A merge operation: archive source memories and create a consolidated target.
 
     Purpose: Carries a merge action emitted by the consolidation prompt.
-    Used in: Dreaming consolidation parser and DefaultDreamingPipeline action
+    Used in: Dreaming consolidation parser and MemoryConsolidationPipeline action
     application.
     """
 
@@ -284,7 +284,7 @@ class ConsolidationArchive(BaseModel):
     """A memory to archive with replacement lineage.
 
     Purpose: Carries an archive action emitted by the consolidation prompt.
-    Used in: Dreaming consolidation parser and DefaultDreamingPipeline action
+    Used in: Dreaming consolidation parser and MemoryConsolidationPipeline action
     application.
     """
 
@@ -297,7 +297,7 @@ class ConsolidationLink(BaseModel):
     """A graph edge intent between existing memories/entities in the cluster.
 
     Purpose: Carries a graph link action emitted by the consolidation prompt.
-    Used in: Dreaming consolidation parser and DefaultDreamingPipeline action
+    Used in: Dreaming consolidation parser and MemoryConsolidationPipeline action
     application. Links must not reference memories created by the same action
     plan; the pipeline creates evidence/timeline edges for new memories.
     """
@@ -316,7 +316,7 @@ class ConsolidationAction(BaseModel):
     """Structured business intent from LLM consolidation decisions.
 
     Purpose: Groups all consolidation mutations returned by the prompt.
-    Used in: Dreaming consolidation parser and DefaultDreamingPipeline action
+    Used in: Dreaming consolidation parser and MemoryConsolidationPipeline action
     application.
     """
 

@@ -25,6 +25,7 @@ from .algo import (
     ImplicitFeedbackSignalResult,
     LanguageCode,
     LanguageResult,
+    NormalizedMessage,
     SparseFallbackMode,
     SparseVector,
     SupplementalSearchQuery,
@@ -33,7 +34,6 @@ from .algo import (
     TurnBoundary,
     TurnCompactionResult,
     TurnCompactionSummary,
-    NormalizedMessage,
 )
 from .llm import ChatResponse, EmbeddingResponse, RerankHit, RerankResponse, Usage
 from .memory import (
@@ -52,7 +52,6 @@ from .memory import (
     ConsistencyMode,
     DatabaseRequestBudget,
     DialogueMessage,
-    DirectRelatedMemory,
     Entity,
     EntitySearchHit,
     EntitySearchResult,
@@ -68,7 +67,6 @@ from .memory import (
     GraphNodeKind,
     GraphNodeRef,
     GraphRelationship,
-    MemoryEdgeFilter,
     MemoryOperation,
     MemoryRelationType,
     MemoryRequestContext,
@@ -183,7 +181,6 @@ __all__ = [
     "DeletePipelineInput",
     "DeletePipelineResult",
     "DialogueMessage",
-    "DirectRelatedMemory",
     "DreamingPipelineInput",
     "DreamingPipelineResult",
     "EmbeddingResponse",
@@ -242,7 +239,6 @@ __all__ = [
     "MemoryDbWritePlan",
     "MemoryDbWriteResult",
     "MemoryDbWriteSummary",
-    "MemoryEdgeFilter",
     "MemoryLineage",
     "MemoryOperation",
     "MemoryRef",

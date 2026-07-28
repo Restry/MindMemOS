@@ -29,6 +29,7 @@ class RunContext:
     request_ids: dict[str, list[str]] = field(
         default_factory=lambda: {
             "add": [],
+            "dreaming": [],
             "search": [],
             "answer": [],
             "eval": [],
@@ -50,7 +51,6 @@ class RunContext:
             "stage": stage,
             "index": index,
         }
-
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,7 @@ class RunnerConfig:
     max_score_concurrency: int | None = None
     judge_runs: int = 1
     add: bool = True
+    dreaming_after_add: bool = False
     score: bool = True
     show_progress: bool = True
     llm_model: str = "gpt-4o-mini"
@@ -97,8 +98,6 @@ class RunnerConfig:
     judge_llm_model: str | None = None
     judge_llm_api_key: str | None = None
     judge_llm_base_url: str | None = None
-
-
 
 
 class BenchmarkAdapter(Protocol):

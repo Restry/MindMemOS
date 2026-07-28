@@ -40,14 +40,16 @@ from ...memory_modeling.vanilla import (
     build_relates_to_edge,
 )
 from ...text import TextPreprocessor
-from ...text.vectorizer import MemoryVectorizer
+from ...text.vectorizer import MEMORY_EMBED_BATCH_SIZE, MemoryVectorizer
 from ._dedup import CandidateDeduplicator
 from ._entity import (
+    build_entity_write,
     deduplicate_entities,
     entity_names,
     resolve_candidate_entities,
 )
 from ._safety_gate import AddSafetyGate, PlannedAddAction
+from ._source import build_source_write
 from ._update_commands import (
     build_merge_archive_commands,
     build_reinforcement_command,
@@ -353,11 +355,13 @@ class AddCoreBuilder:
         self,
         items: list[tuple[str, PreprocessedText, str]],
         consistency: str = "fast",
+        *,
+        batch_size: int = MEMORY_EMBED_BATCH_SIZE,
     ) -> tuple[list[VectorWrite], list[bool]]:
         """Generate sparse + dense vectors for multiple new memories."""
         vectorize_many = getattr(self._vectorizer, "vectorize_many", None)
         if vectorize_many is not None:
-            return await vectorize_many(items, consistency)
+            return await vectorize_many(items, consistency, batch_size=batch_size)
 
         vectors: list[VectorWrite] = []
         pending: list[bool] = []
@@ -389,6 +393,8 @@ class AddCoreBuilder:
         entities: list[EntityWrite],
         memories: list[MemoryWrite],
         consistency: str,
+        *,
+        batch_size: int = MEMORY_EMBED_BATCH_SIZE,
     ) -> tuple[list[EntityVectorWrite], bool]:
         memories_by_entity: dict[str, list[MemoryWrite]] = {}
         for memory in memories:
@@ -398,6 +404,7 @@ class AddCoreBuilder:
             entities,
             memories_by_entity=memories_by_entity,
             consistency=consistency,
+            batch_size=batch_size,
         )
 
     async def build(
@@ -415,8 +422,6 @@ class AddCoreBuilder:
         3. Batch-wide dedup across all chunks
         4. Phase 5-6: plan + vectorize per candidate (unchanged logic)
         """
-        from ....pipeline.utils import build_entity_write, build_source_write
-
         cfg = config or VanillaAddConfig()
         enable_entities = bool(cfg.enable_entities)
         now = datetime.now(UTC)
@@ -997,8 +1002,21 @@ class AddCoreBuilder:
         memory_vector_pending: list[bool] = []
         entity_vector_pending = False
         if memory_vector_items and entity_values:
-            memory_task = asyncio.create_task(self.vectorize_many(memory_vector_items, consistency))
-            entity_task = asyncio.create_task(self._vectorize_entities(entity_values, memories, consistency))
+            memory_task = asyncio.create_task(
+                self.vectorize_many(
+                    memory_vector_items,
+                    consistency,
+                    batch_size=cfg.embedding_batch_size,
+                )
+            )
+            entity_task = asyncio.create_task(
+                self._vectorize_entities(
+                    entity_values,
+                    memories,
+                    consistency,
+                    batch_size=cfg.embedding_batch_size,
+                )
+            )
             try:
                 (memory_vectors, memory_vector_pending), (entity_vectors, entity_vector_pending) = await asyncio.gather(
                     memory_task,
@@ -1011,12 +1029,17 @@ class AddCoreBuilder:
                 await asyncio.gather(memory_task, entity_task, return_exceptions=True)
                 raise
         elif memory_vector_items:
-            memory_vectors, memory_vector_pending = await self.vectorize_many(memory_vector_items, consistency)
+            memory_vectors, memory_vector_pending = await self.vectorize_many(
+                memory_vector_items,
+                consistency,
+                batch_size=cfg.embedding_batch_size,
+            )
         elif entity_values:
             entity_vectors, entity_vector_pending = await self._vectorize_entities(
                 entity_values,
                 memories,
                 consistency,
+                batch_size=cfg.embedding_batch_size,
             )
 
         vectors.extend(memory_vectors)

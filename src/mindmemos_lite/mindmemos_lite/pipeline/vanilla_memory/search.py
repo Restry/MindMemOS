@@ -16,6 +16,7 @@ from ...config.vanilla import (
     VANILLA_HYBRID_PREFETCH_MAX,
     VANILLA_RECALL_SIZE_MAX,
 )
+from ...infra.vector_store import GraphStep
 from ...llm import EmbedClient, get_embed_client
 from ...logging import get_logger, traced
 from ...mappers import parse_search_dsl
@@ -363,35 +364,46 @@ class VanillaSearchEngine(MemoryPersistencePipelineMixin):
         scfg = self._get_vanilla_search_config()
         if not scfg.shared_entity_graph_enabled or max_candidates <= 0:
             return {}
-        scopes = await self.persistence.list_memories_by_shared_entities(
+        related = await self.persistence.get_related_memory_ids(
             context,
             seed_ids,
-            include_seed=False,
+            steps=(
+                GraphStep(relations=("MENTIONS",), direction="out", target_kinds=("Entity",)),
+                GraphStep(relations=("MENTIONS",), direction="in", target_kinds=("Memory",)),
+            ),
+            result_uniqueness="path",
             active_only=True,
-            limit_per_entity=max(0, scfg.shared_entity_graph_limit_per_entity),
+            limit_per_memory=None,
+            max_candidates=max_candidates,
         )
 
         candidates: dict[str, _GraphCandidate] = {}
-        for scope in scopes:
-            seed_memory_id = str(scope.seed_memory_id or "")
-            for memory_id in _dedupe_ids(scope.memory_ids):
-                if memory_id in existing_ids or memory_id in candidates:
-                    continue
-                candidates[memory_id] = _GraphCandidate(
-                    memory_id=memory_id,
-                    seed_memory_id=seed_memory_id,
-                    source="neo4j_shared_entity",
-                    debug={
-                        "graph_source": "shared_entity",
-                        "seed_memory_id": seed_memory_id,
-                        "seed_memory_ids": seed_ids,
-                        "entity_id": scope.entity_id,
-                        "entity_name": scope.entity_name,
-                        "entity_type": scope.entity_type,
-                    },
-                )
-                if max_candidates and len(candidates) >= max_candidates:
-                    return candidates
+        entity_counts: dict[tuple[str, str], int] = {}
+        for item in related:
+            memory_id = str(item.get("memory_id") or "")
+            seed_memory_id = str(item.get("seed_memory_id") or "")
+            entity_id = str(item.get("entity_id") or "")
+            if not memory_id or memory_id == seed_memory_id or memory_id in existing_ids or memory_id in candidates:
+                continue
+            entity_key = (seed_memory_id, entity_id)
+            if entity_counts.get(entity_key, 0) >= max(0, scfg.shared_entity_graph_limit_per_entity):
+                continue
+            entity_counts[entity_key] = entity_counts.get(entity_key, 0) + 1
+            candidates[memory_id] = _GraphCandidate(
+                memory_id=memory_id,
+                seed_memory_id=seed_memory_id,
+                source="neo4j_shared_entity",
+                debug={
+                    "graph_source": "shared_entity",
+                    "seed_memory_id": seed_memory_id,
+                    "seed_memory_ids": seed_ids,
+                    "entity_id": entity_id,
+                    "entity_name": item.get("entity_name"),
+                    "entity_type": item.get("entity_type"),
+                },
+            )
+            if max_candidates and len(candidates) >= max_candidates:
+                return candidates
         return candidates
 
 

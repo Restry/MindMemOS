@@ -29,8 +29,8 @@ benchmarks:
     dataset: datasets/locomo/locomo10.json
     default_algorithm: schema
   personamem:
-    dataset: resources/memory/dataset/questions_32k.csv
-    context_dataset: resources/memory/dataset/shared_contexts_32k.jsonl
+    dataset: datasets/personamem/questions_32k.csv
+    context_dataset: datasets/personamem/shared_contexts_32k.jsonl
     default_algorithm: schema
 
 execution_params:

@@ -68,7 +68,7 @@ class ConfigManager:
         config.metadata.updated_at = now
 
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(config.model_dump(exclude_none=True), indent=2, ensure_ascii=False)
+        payload = json.dumps(config.model_dump(mode="json", exclude_none=True), indent=2, ensure_ascii=False)
 
         fd, tmp_path = tempfile.mkstemp(dir=self.config_dir, prefix=".settings-", suffix=".tmp")
         try:

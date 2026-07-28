@@ -161,17 +161,17 @@ class _CapturingVectorService:
 async def test_persistence_stamps_and_filters_memory_mode_from_context() -> None:
     service = _CapturingVectorService()
     persistence = MemoryPersistence(service)
+    context = _context(mode="experience")
     memory = MemoryWrite(
         memory_id=str(uuid4()),
-        account_id="account",
-        project_id="project",
-        api_key_uuid=str(uuid4()),
+        account_id=context.account_id,
+        project_id=context.project_id,
+        api_key_uuid=context.api_key_uuid,
         content="worked around a deployment issue",
         mem_extract_version="test",
         created_at=datetime.now(UTC),
     )
     plan = MemoryDbMutationPlan.from_write_plan(MemoryDbWritePlan(memories=[memory]))
-    context = _context(mode="experience")
 
     await persistence.apply_mutation_plan(context, plan)
     await persistence.list_memories(context)

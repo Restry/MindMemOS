@@ -95,7 +95,7 @@ PROFILE_SECONDS ?= 60
 PROFILE_RATE ?= 100
 PROFILE_PID ?= $(PID)
 
-.PHONY: dev dev-lite dev-lite-api api-lite dev-setup hooks-install format lint dev-core api profile-api db db-observability db-clean dev-down
+.PHONY: dev dev-lite dev-lite-api api-lite dev-setup hooks-install format lint dev-core api profile-api db db-observability db-clean db-clean-lite dev-down
 
 dev-setup:
 	$(UV) sync
@@ -164,6 +164,9 @@ db-observability:
 
 db-clean:
 	$(COMPOSE) down -v
+
+db-clean-lite:
+	$(LITE_COMPOSE) --profile pgvector down -v
 
 dev-down:
 	$(COMPOSE) down

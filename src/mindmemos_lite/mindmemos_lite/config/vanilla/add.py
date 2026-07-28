@@ -63,3 +63,6 @@ class VanillaAddConfig:
 
     safety_gate: VanillaAddSafetyGateConfig = field(default_factory=VanillaAddSafetyGateConfig)
     """Confidence floors and content checks applied to extractor action hints."""
+
+    embedding_batch_size: int = field(default=32)
+    """Maximum number of texts sent in one native embedding batch request."""

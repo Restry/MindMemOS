@@ -84,7 +84,7 @@ def load_builtin_pipelines() -> None:
         return
 
     _BUILTIN_MODULES: tuple[str, ...] = (
-        ".dreaming.default",
+        ".dreaming.consolidation",
         ".feedback.default",
         ".mixed_memory.add",
         ".mixed_memory.search",

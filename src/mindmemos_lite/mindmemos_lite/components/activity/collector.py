@@ -358,15 +358,21 @@ def _add_record_order_key(item: tuple[str, ActivityRecordSnapshot]) -> tuple[str
 
 def _record_context(payload: dict[str, Any]) -> ActivityRecordContext:
     return ActivityRecordContext(
-        project_id=payload.get("project_id") or "",
-        request_id=payload.get("request_id"),
-        account_id=payload.get("account_id"),
-        api_key_uuid=payload.get("api_key_uuid"),
-        user_id=payload.get("user_id"),
-        session_id=payload.get("session_id"),
-        agent_id=payload.get("agent_id"),
-        app_id=payload.get("app_id"),
+        project_id=_context_string(payload.get("project_id")) or "",
+        request_id=_context_string(payload.get("request_id")),
+        account_id=_context_string(payload.get("account_id")),
+        api_key_uuid=_context_string(payload.get("api_key_uuid")),
+        user_id=_context_string(payload.get("user_id")),
+        session_id=_context_string(payload.get("session_id")),
+        agent_id=_context_string(payload.get("agent_id")),
+        app_id=_context_string(payload.get("app_id")),
     )
+
+
+def _context_string(value: Any) -> str | None:
+    """Normalize persisted UUID-like identity values to the public string contract."""
+
+    return str(value) if value is not None else None
 
 
 def _parse_messages(messages: Any) -> list[ActivityMessage]:

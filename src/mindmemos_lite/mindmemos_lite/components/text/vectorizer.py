@@ -17,7 +17,7 @@ from .sparse import SparseVectorEncoder
 
 logger = get_logger(__name__)
 
-MEMORY_EMBED_BATCH_SIZE = 10
+MEMORY_EMBED_BATCH_SIZE = 32
 
 
 class EmbedClient(Protocol):
@@ -88,6 +88,8 @@ class MemoryVectorizer:
         self,
         items: list[tuple[str, PreprocessedText, str]],
         consistency: str = "fast",
+        *,
+        batch_size: int = MEMORY_EMBED_BATCH_SIZE,
     ) -> tuple[list[VectorWrite], list[bool]]:
         """Generate sparse vectors and batched dense vectors for memory contents."""
         vectors = await asyncio.to_thread(self._sparse_memory_vectors, items)
@@ -96,9 +98,10 @@ class MemoryVectorizer:
         if self._embed_client is None or not items:
             return vectors, vector_pending
 
-        for start in range(0, len(items), MEMORY_EMBED_BATCH_SIZE):
-            batch_items = items[start : start + MEMORY_EMBED_BATCH_SIZE]
-            batch_vectors = vectors[start : start + MEMORY_EMBED_BATCH_SIZE]
+        resolved_batch_size = _positive_batch_size(batch_size)
+        for start in range(0, len(items), resolved_batch_size):
+            batch_items = items[start : start + resolved_batch_size]
+            batch_vectors = vectors[start : start + resolved_batch_size]
             try:
                 resp = await self._embed_client.embed(
                     task="memory.add.embed",
@@ -179,8 +182,9 @@ class MemoryVectorizer:
         *,
         memories_by_entity: dict[str, list[MemoryWrite]] | None = None,
         consistency: str = "fast",
+        batch_size: int = MEMORY_EMBED_BATCH_SIZE,
     ) -> tuple[list[EntityVectorWrite], bool]:
-        """Generate vectors for entities and their search fields in one embedding batch."""
+        """Generate vectors for entities and their search fields in bounded embedding batches."""
 
         text_items: list[tuple[str, str]] = []
         memories_by_entity = memories_by_entity or {}
@@ -195,24 +199,33 @@ class MemoryVectorizer:
         vector_pending = False
         semantic_vectors: list[list[float] | None] = [None] * len(text_items)
         if self._embed_client is not None and text_items:
-            try:
-                resp = await self._embed_client.embed(
-                    task="memory_vectorizer.add.entity",
-                    text=[text for _, text in text_items],
-                )
-                semantic_vectors = list(resp.embeddings)
-                if len(semantic_vectors) < len(text_items):
-                    vector_pending = True
-                    semantic_vectors.extend([None] * (len(text_items) - len(semantic_vectors)))
-                elif len(semantic_vectors) > len(text_items):
-                    semantic_vectors = semantic_vectors[: len(text_items)]
-            except EmbeddingDimensionError:
-                raise
-            except Exception:
-                logger.warning("entity_embed_failed", entity_count=len(entities), consistency=consistency)
-                if consistency == "strong":
+            resolved_batch_size = _positive_batch_size(batch_size)
+            for start in range(0, len(text_items), resolved_batch_size):
+                batch = text_items[start : start + resolved_batch_size]
+                try:
+                    resp = await self._embed_client.embed(
+                        task="memory_vectorizer.add.entity",
+                        text=[text for _, text in batch],
+                    )
+                    embeddings = list(resp.embeddings)
+                except EmbeddingDimensionError:
                     raise
-                vector_pending = True
+                except Exception:
+                    logger.warning(
+                        "entity_embed_batch_failed",
+                        batch_size=len(batch),
+                        entity_count=len(entities),
+                        consistency=consistency,
+                    )
+                    if consistency == "strong":
+                        raise
+                    vector_pending = True
+                    continue
+
+                if len(embeddings) < len(batch):
+                    vector_pending = True
+                usable = min(len(embeddings), len(batch))
+                semantic_vectors[start : start + usable] = embeddings[:usable]
 
         writes = await asyncio.to_thread(self._entity_vector_writes, text_items, semantic_vectors)
         return writes, vector_pending
@@ -260,3 +273,10 @@ def _entity_embedding_text(entity: EntityWrite, memories: list[MemoryWrite] | No
         ]
         if part
     )
+
+
+def _positive_batch_size(batch_size: int) -> int:
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        msg = "embedding batch size must be a positive integer"
+        raise ValueError(msg)
+    return batch_size

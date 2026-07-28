@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -45,8 +46,11 @@ from mindmemos_lite.service.schema import (
 )
 from mindmemos_lite.typing import (
     MemoryDbMemoryUpdateCommand,
+    MemoryDbMemoryWriteCommand,
+    MemoryDbMutationPlan,
     MemoryDbSearchQuery,
     MemoryRequestContext,
+    MemoryWrite,
     SearchPipelineInput,
 )
 
@@ -296,6 +300,174 @@ async def test_memory_persistence_reads_by_original_project_scope_not_actor_scop
     assert memory is not None
     assert memory.memory_id == memory_id
     assert memory.user_id == "writer"
+
+
+@pytest.mark.asyncio
+async def test_memory_persistence_bind_is_immutable_and_forces_read_and_write_scope() -> None:
+    backend = _MemoryVectorStore()
+    persistence = MemoryPersistence(VectorDBService(backend))
+    context = MemoryRequestContext(
+        request_id=str(uuid4()),
+        account_id="account",
+        project_id="project",
+        api_key_uuid=str(uuid4()),
+    )
+    for user_id in ("user-a", "user-b"):
+        memory_id = str(uuid4())
+        await backend.upsert_records(
+            "memory_item_v2",
+            [
+                Record(
+                    table="memory_item_v2",
+                    record_id=memory_id,
+                    scope=DatabaseScope(project_id="project", user_id=user_id),
+                    payload={
+                        "memory_id": memory_id,
+                        "content": user_id,
+                        "mem_type": "fact",
+                        "mem_extract_type": "vanilla",
+                        "mem_extract_version": "v1",
+                        "metadata": {},
+                        "status": "active",
+                        "created_at": "2026-07-24T00:00:00+00:00",
+                    },
+                )
+            ],
+        )
+
+    bound = persistence.bind(user_id="user-a")
+    bound_memories, _ = await bound.list_memories(context)
+    base_memories, _ = await persistence.list_memories(context)
+
+    assert bound is not persistence
+    assert bound.bound_scope == DatabaseScope(user_id="user-a")
+    assert persistence.bound_scope == DatabaseScope()
+    assert [memory.user_id for memory in bound_memories] == ["user-a"]
+    assert {memory.user_id for memory in base_memories} == {"user-a", "user-b"}
+
+    new_memory_id = str(uuid4())
+    await bound.apply_mutation_plan(
+        context,
+        MemoryDbMutationPlan(
+            memory_writes=[
+                MemoryDbMemoryWriteCommand(
+                    memory=MemoryWrite(
+                        memory_id=new_memory_id,
+                        account_id="account",
+                        project_id="project",
+                        api_key_uuid=context.api_key_uuid,
+                        content="bound write",
+                        mem_extract_version="v1",
+                        created_at=datetime.now(UTC),
+                    )
+                )
+            ]
+        ),
+        consistency="strong",
+    )
+    written = next(record for record in backend.records.values() if record.record_id == new_memory_id)
+    assert written.scope == DatabaseScope(
+        account_id="account",
+        project_id="project",
+        api_key_uuid=context.api_key_uuid,
+        user_id="user-a",
+    )
+
+
+def test_memory_persistence_bind_rejects_trusted_scope_and_conflicting_rebinds() -> None:
+    persistence = MemoryPersistence(VectorDBService(_MemoryVectorStore()))
+
+    for field in ("account_id", "project_id", "api_key_uuid"):
+        with pytest.raises(ValueError, match=field):
+            persistence.bind(**{field: f"other-{field}"})
+        with pytest.raises(ValueError, match=field):
+            MemoryPersistence(
+                VectorDBService(_MemoryVectorStore()),
+                _bound_scope=DatabaseScope({field: f"other-{field}"}),
+            )
+    with pytest.raises(ValueError, match="conflicts"):
+        persistence.bind(user_id="user-a").bind(user_id="user-b")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field",
+    ("account_id", "project_id", "api_key_uuid", "user_id", "app_id", "session_id", "agent_id"),
+)
+async def test_memory_persistence_rejects_write_scope_conflicts_before_database_io(field: str) -> None:
+    backend = _MemoryVectorStore()
+    persistence = MemoryPersistence(VectorDBService(backend))
+    context = MemoryRequestContext(
+        request_id=str(uuid4()),
+        account_id="account",
+        project_id="project",
+        api_key_uuid="key",
+        user_id="user",
+        app_id="app",
+        session_id="session",
+        agent_id="agent",
+    )
+    memory = MemoryWrite(
+        memory_id=str(uuid4()),
+        account_id=context.account_id,
+        project_id=context.project_id,
+        api_key_uuid=context.api_key_uuid,
+        user_id=context.user_id,
+        app_id=context.app_id,
+        session_id=context.session_id,
+        agent_id=context.agent_id,
+        content="scope safety",
+        mem_extract_version="v1",
+        created_at=datetime.now(UTC),
+    ).model_copy(update={field: f"other-{field}"})
+
+    with pytest.raises(ValueError, match=field):
+        await persistence.apply_mutation_plan(
+            context,
+            MemoryDbMutationPlan(memory_writes=[MemoryDbMemoryWriteCommand(memory=memory)]),
+            consistency="fast",
+        )
+
+    assert backend.records == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ("account_id", "project_id", "api_key_uuid"))
+async def test_memory_persistence_rejects_blank_trusted_write_scope(field: str) -> None:
+    backend = _MemoryVectorStore()
+    persistence = MemoryPersistence(VectorDBService(backend))
+    context = MemoryRequestContext(
+        request_id=str(uuid4()),
+        account_id="account",
+        project_id="project",
+        api_key_uuid="key",
+    ).model_copy(update={field: ""})
+    memory = MemoryWrite(
+        memory_id=str(uuid4()),
+        account_id=context.account_id,
+        project_id=context.project_id,
+        api_key_uuid=context.api_key_uuid,
+        content="scope safety",
+        mem_extract_version="v1",
+        created_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match=field):
+        await persistence.apply_mutation_plan(
+            context,
+            MemoryDbMutationPlan(memory_writes=[MemoryDbMemoryWriteCommand(memory=memory)]),
+        )
+
+    assert backend.records == {}
+
+
+def test_memory_persistence_accepts_initial_bound_scope() -> None:
+    persistence = MemoryPersistence(
+        VectorDBService(_MemoryVectorStore()),
+        _bound_scope=DatabaseScope(user_id="user-a", app_id="app-a"),
+    )
+
+    assert persistence.bound_scope == DatabaseScope(user_id="user-a", app_id="app-a")
 
 
 @pytest.mark.asyncio
@@ -653,7 +825,7 @@ async def test_service_supports_bounded_variable_length_lineage() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_persistence_returns_transitive_lineage_and_shared_entity_metadata() -> None:
+async def test_memory_persistence_returns_transitive_lineage_and_relation_path_metadata() -> None:
     graph_scope = DatabaseScope(project_id="project")
     record_scope = DatabaseScope(
         account_id="account",
@@ -737,25 +909,28 @@ async def test_memory_persistence_returns_transitive_lineage_and_shared_entity_m
     )
 
     lineage = await persistence.get_memory_lineage(context, ["child"])
-    scopes = await persistence.list_memories_by_shared_entities(
+    related = await persistence.get_related_memory_ids(
         context,
         ["child"],
-        include_seed=False,
-    )
-    clusters = await persistence.list_entity_memory_clusters(
-        context,
-        ["child"],
-        limit_per_entity=3,
+        steps=(
+            GraphStep(relations=("MENTIONS",), direction="out", target_kinds=("Entity",)),
+            GraphStep(relations=("MENTIONS",), direction="in", target_kinds=("Memory",)),
+        ),
+        result_uniqueness="path",
     )
 
     assert lineage == {"child": ["parent", "ancestor"]}
-    assert len(scopes) == 1
-    assert scopes[0].entity_name == "Coffee"
-    assert scopes[0].entity_type == "preference"
-    assert scopes[0].memory_ids == ("peer",)
-    assert len(clusters) == 1
-    assert clusters[0].entity_id == "entity"
-    assert clusters[0].memory_ids == ("child", "peer")
+    assert len(related) == 1
+    assert related[0]["memory_id"] == "peer"
+    assert related[0]["seed_memory_id"] == "child"
+    assert related[0]["entity_id"] == "entity"
+    assert related[0]["entity_name"] == "Coffee"
+    assert related[0]["entity_type"] == "preference"
+    assert related[0]["path"] == (
+        {"kind": "Memory", "node_id": "child"},
+        {"kind": "Entity", "node_id": "entity"},
+        {"kind": "Memory", "node_id": "peer"},
+    )
 
 
 @pytest.mark.asyncio

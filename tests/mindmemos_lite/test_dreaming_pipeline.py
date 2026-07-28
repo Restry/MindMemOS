@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from mindmemos_lite.components.activity import RecentActivityCollector
 from mindmemos_lite.components.dreaming.action_planning import action_planning_parser
 from mindmemos_lite.config import DreamingConfig, TextProcessingConfig
 from mindmemos_lite.infra.tasking import InMemoryTaskBackend, TaskClient, TaskHandlerRegistry
-from mindmemos_lite.persistence.memory import EntityMemoryCluster
-from mindmemos_lite.pipeline.dreaming import MEMORY_DREAMING_TOPIC, DefaultDreamingPipeline
+from mindmemos_lite.pipeline.dreaming import MEMORY_DREAMING_TOPIC, MemoryConsolidationPipeline
 from mindmemos_lite.service.memory import VanillaMemoryService
 from mindmemos_lite.service.schema import DreamingMemoryRequest, RequestContext
 from mindmemos_lite.typing import (
@@ -33,17 +33,31 @@ class _FakePersistence:
         self.plans: list[object] = []
         self.deleted: list[tuple[str, str]] = []
         self.updated: list[object] = []
-        self.cluster_limits: list[int] = []
+        self.related_limits: list[int] = []
 
-    async def list_entity_memory_clusters(self, _ctx, _seed_ids, *, limit_per_entity: int):
-        self.cluster_limits.append(limit_per_entity)
+    async def get_related_memory_ids(
+        self,
+        _ctx,
+        seed_ids,
+        *,
+        steps,
+        result_uniqueness,
+        active_only,
+        limit_per_memory,
+        max_candidates,
+    ):
+        del steps, result_uniqueness, active_only, limit_per_memory
+        self.related_limits.append(max_candidates)
         return [
-            EntityMemoryCluster(
-                entity_id="entity-1",
-                entity_name="Alice",
-                entity_type="person",
-                memory_ids=tuple(memory.memory_id for memory in self.memories[:limit_per_entity]),
-            )
+            {
+                "seed_memory_id": seed_id,
+                "memory_id": memory.memory_id,
+                "entity_id": "entity-1",
+                "entity_name": "Alice",
+                "entity_type": "person",
+            }
+            for seed_id in seed_ids
+            for memory in self.memories
         ]
 
     async def get_memories(self, _ctx, memory_ids: list[str]) -> list[MemoryView]:
@@ -186,10 +200,10 @@ def _memory(
 def _pipeline(
     memories: list[MemoryView],
     action: ConsolidationAction,
-) -> tuple[DefaultDreamingPipeline, _FakePersistence, _FakeRecorder]:
+) -> tuple[MemoryConsolidationPipeline, _FakePersistence, _FakeRecorder]:
     persistence = _FakePersistence(memories)
     recorder = _FakeRecorder()
-    pipeline = DefaultDreamingPipeline(
+    pipeline = MemoryConsolidationPipeline(
         persistence=persistence,
         operation_recorder=recorder,
         dreaming_config=DreamingConfig(
@@ -239,7 +253,7 @@ async def test_dreaming_filters_done_add_records_and_uses_noise_probe_limit() ->
     scope, _ = clusters[0]
     assert scope.primary_memory_id == "m2"
     assert scope.add_record_ids == ("add-m2",)
-    assert persistence.cluster_limits == [pipeline._cfg.max_entity_memory_count + 1]
+    assert persistence.related_limits == [(pipeline._cfg.max_entity_memory_count + 1) * 8]
 
 
 @pytest.mark.asyncio
@@ -302,6 +316,7 @@ def test_action_planning_parser_preserves_link_compatibility() -> None:
 @pytest.mark.asyncio
 async def test_activity_collector_groups_backend_neutral_recorder_snapshots() -> None:
     now = datetime.now(UTC)
+    request_id = uuid4()
 
     class Store:
         async def list_activity_records(self, kind, scope, **_kwargs):
@@ -314,6 +329,7 @@ async def test_activity_collector_groups_backend_neutral_recorder_snapshots() ->
                     payload={
                         "add_record_id": "add-1",
                         "project_id": "proj",
+                        "request_id": request_id,
                         "session_id": "sess",
                         "user_id": "user",
                         "status": "ok",
@@ -330,6 +346,7 @@ async def test_activity_collector_groups_backend_neutral_recorder_snapshots() ->
     )
 
     assert bundle.conversations[0].session_id == "sess"
+    assert bundle.conversations[0].add_events[0].context.request_id == str(request_id)
     assert bundle.written_memories[0].memory_id == "m1"
     assert bundle.written_memories[0].add_record_ids == ["add-1"]
 
