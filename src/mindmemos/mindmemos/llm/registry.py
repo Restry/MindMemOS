@@ -57,19 +57,14 @@ def get_embed_client() -> EmbedClient:
     return EmbedClient(router, default_model=default_model)
 
 
-PROBE_TEXT = "ping"
-
-
 async def validate_embedding_dimension() -> None:
-    """Probe the embedding endpoint once and fail fast on dimension mismatch.
+    """Validate static embedding dimensions without calling the provider at startup.
 
     Skips silently when no embedding endpoint is configured. Raises
-    ``InvalidConfigError`` if any endpoint declares ``dimensions`` that differs
-    from ``database.qdrant.vector_size``, and ``EmbeddingDimensionError`` (via
-    ``EmbedClient.embed``) if the provider actually returns the wrong dimension
-    — the symptom of ``dimensions`` being silently dropped by litellm
-    ``drop_params=True`` or of switching to a model with a different native
-    dimension. Intended to run at startup, right after ``init_embed_client``.
+    ``InvalidConfigError`` if any static endpoint declares ``dimensions`` that
+    differs from ``database.qdrant.vector_size``. Request-time embedding checks
+    the returned vector length, which keeps dynamic provider bindings from
+    making service startup depend on a provider being reachable.
     """
 
     cfg = get_config()
@@ -84,9 +79,7 @@ async def validate_embedding_dimension() -> None:
                 support=f"equal to database.qdrant.vector_size={vector_size}",
             )
 
-    # embed() resolves expected_dim from config (vector_size) and raises
-    # EmbeddingDimensionError on mismatch, so the probe needs no extra checks.
-    # await get_embed_client().embed(task="startup.probe", text=PROBE_TEXT)
+    # EmbedClient.embed() validates the returned vector length at request time.
 
 
 def get_rerank_client() -> RerankClient:

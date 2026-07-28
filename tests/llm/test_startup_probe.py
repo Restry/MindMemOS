@@ -2,10 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 from mindmemos.config import get_config, init_config, reset_config
-from mindmemos.errors import EmbeddingDimensionError, InvalidConfigError
+from mindmemos.errors import InvalidConfigError
 from mindmemos.llm import registry
 from mindmemos.llm.embedding import EmbedClient
-from mindmemos.llm.registry import PROBE_TEXT, validate_embedding_dimension
+from mindmemos.llm.registry import validate_embedding_dimension
 
 
 class FixedDimEmbedRouter:
@@ -41,21 +41,17 @@ async def test_validate_raises_invalid_config_when_dimensions_differ_from_vector
 
 
 @pytest.mark.asyncio
-async def test_validate_probe_raises_when_provider_returns_wrong_dimension(monkeypatch) -> None:
-    # Bug scenario: dimensions silently dropped, provider returns native 2560 != vector_size 1024.
-    fake_client = EmbedClient(FixedDimEmbedRouter(dim=2560))
-    monkeypatch.setattr(registry, "get_embed_client", lambda: fake_client)
+async def test_validate_does_not_probe_provider_when_static_dimensions_match(monkeypatch) -> None:
+    def boom():
+        raise AssertionError("get_embed_client must not be called during startup validation")
+
+    monkeypatch.setattr(registry, "get_embed_client", boom)
 
     try:
         init_config(config_path="config/mindmemos/dev.example.yaml")
-        # dev.example.yaml: dimensions=1024 == vector_size=1024, so static precheck passes
-        # and the probe reaches embed(), which measures the actual (wrong) dimension.
-
-        with pytest.raises(EmbeddingDimensionError) as exc_info:
-            await validate_embedding_dimension()
-
-        assert exc_info.value.expected == 1024
-        assert exc_info.value.actual == 2560
+        # Dynamic provider bindings can be unavailable at startup. Matching static
+        # dimensions are sufficient here; request-time embedding validates output.
+        await validate_embedding_dimension()
     finally:
         reset_config()
 
@@ -90,7 +86,3 @@ async def test_validate_skips_probe_when_no_endpoints_configured(monkeypatch) ->
         await validate_embedding_dimension()  # no raise, no embed call
     finally:
         reset_config()
-
-
-def test_probe_text_is_short_constant() -> None:
-    assert PROBE_TEXT == "ping"
