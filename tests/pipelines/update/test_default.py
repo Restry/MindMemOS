@@ -1,10 +1,9 @@
 import pytest
 from mindmemos.errors import MemoryNotFoundError
-from mindmemos.typing.memory import MemoryRequestContext, MemoryView
-from mindmemos.typing.service import UpdatePipelineInput
-
 from mindmemos.pipelines.update import DefaultUpdatePipeline
 from mindmemos.typing import MemoryDbMutationResult, MemoryDbUpdateCommand, MemoryDbWriteResult
+from mindmemos.typing.memory import MemoryRequestContext, MemoryView
+from mindmemos.typing.service import UpdatePipelineInput
 
 
 def make_context() -> MemoryRequestContext:

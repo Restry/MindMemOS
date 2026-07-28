@@ -1,11 +1,10 @@
 import pytest
-from pydantic import ValidationError
 from mindmemos.errors import MemoryNotFoundError
-from mindmemos.typing.memory import MemoryRequestContext
-from mindmemos.typing.service import DeletePipelineInput
-
 from mindmemos.pipelines.delete import DefaultDeletePipeline
 from mindmemos.typing import MemoryDbDeleteCommand, MemoryDbMutationResult, MemoryDbWriteResult
+from mindmemos.typing.memory import MemoryRequestContext
+from mindmemos.typing.service import DeletePipelineInput
+from pydantic import ValidationError
 
 
 def make_context() -> MemoryRequestContext:

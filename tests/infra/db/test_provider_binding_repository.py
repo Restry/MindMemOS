@@ -3,7 +3,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-
 from mindmemos.infra.db.collections.provider_binding import ProviderBindingRepository
 from mindmemos.infra.db.models import ProviderBindingPoint
 

@@ -1,7 +1,4 @@
 import pytest
-from mindmemos.infra.db.filters import build_filter, match_value
-from qdrant_client import AsyncQdrantClient
-
 from mindmemos.config import QdrantConfig
 from mindmemos.infra.db import (
     AddRecordPoint,
@@ -11,6 +8,8 @@ from mindmemos.infra.db import (
     SearchRecordPoint,
     SparseVectorData,
 )
+from mindmemos.infra.db.filters import build_filter, match_value
+from qdrant_client import AsyncQdrantClient
 
 
 def _memory_point(project_id: str, memory_id: str, vector: list[float]) -> MemoryPoint:

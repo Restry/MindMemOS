@@ -165,7 +165,11 @@ class MemoryService:
             overrides.project_config if overrides is not None else None,
             dynamic_project_config,
         )
-        return bind_config_overrides(tenant_config=tenant_config, project_config=project_config)
+        return bind_config_overrides(
+            tenant_config=tenant_config,
+            project_config=project_config,
+            allow_project_embedding_dimensions=True,
+        )
 
     @traced("memory_service.add")
     async def add(

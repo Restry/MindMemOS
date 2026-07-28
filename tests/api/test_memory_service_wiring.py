@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 from mindmemos.api.schemas import AddRequest, AuthContext, MemoryPageRequest, MemoryScrollRequest
+from mindmemos.api.services import memory_service
+from mindmemos.config import get_config, init_config, reset_config
 from mindmemos.pipelines.delete.default import DefaultDeletePipeline
 from mindmemos.pipelines.feedback.default import DefaultFeedbackPipeline
 from mindmemos.pipelines.get.default import DefaultGetPipeline
@@ -18,9 +20,6 @@ from mindmemos.typing.service import (
     MemoryListPipelineResult,
     MemoryScrollPipelineResult,
 )
-
-from mindmemos.api.services import memory_service
-from mindmemos.config import init_config, reset_config
 
 
 @pytest.mark.asyncio
@@ -61,6 +60,49 @@ async def test_management_reads_do_not_depend_on_configured_get_pipeline() -> No
     assert catalog.scroll_calls[0][0].limit == 3
 
 
+@pytest.mark.asyncio
+async def test_dynamic_provider_binding_allows_project_embedding_dimension(tmp_path) -> None:
+    config_path = tmp_path / "project-namespaced.yaml"
+    config_path.write_text(
+        Path("config/mindmemos/dev.example.yaml")
+        .read_text(encoding="utf-8")
+        .replace("    vector_size: 2560", "    vector_size: 2560\n    project_collection_namespace_enabled: true"),
+        encoding="utf-8",
+    )
+
+    class Resolver:
+        async def resolve(self, _ctx):
+            return {
+                "embed_model_router": {
+                    "endpoints": [
+                        {
+                            "model": "openai/project-embed",
+                            "api_key": "sk-project",
+                            "api_base": "https://example.test/v1",
+                            "dimensions": 3,
+                        }
+                    ]
+                }
+            }
+
+    try:
+        init_config(config_path=config_path)
+        get_config().provider_binding.enabled = True
+        service = memory_service.MemoryService(provider_binding_resolver=Resolver())
+        auth = AuthContext(
+            request_id="req-1",
+            account_id="acc-1",
+            project_id="proj-1",
+            api_key_uuid="key-1",
+            memory_algorithm="vanilla",
+        )
+
+        with await service._provider_config_context(auth):
+            assert get_config().embed_model_router.endpoints[0].dimensions == 3
+    finally:
+        reset_config()
+
+
 def test_get_memory_service_wires_configured_non_algorithm_pipelines() -> None:
     try:
         init_config(config_path="config/mindmemos/dev.example.yaml")
@@ -85,9 +127,9 @@ def test_get_memory_service_wires_configured_non_algorithm_pipelines() -> None:
         reset_config()
 
 
-def test_checked_in_dev_config_loads_and_selects_default_search_pipelines() -> None:
+def test_checked_in_example_config_loads_and_selects_default_search_pipelines() -> None:
     try:
-        init_config(config_path="config/mindmemos/dev.yaml")
+        init_config(config_path="config/mindmemos/dev.example.yaml")
         memory_service._service = None
 
         service = memory_service.get_memory_service()

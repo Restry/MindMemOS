@@ -7,7 +7,6 @@ from contextlib import nullcontext
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from mindmemos.api.app import register_exception_handlers
 from mindmemos.api.deps import get_request_context
 from mindmemos.api.routes import router

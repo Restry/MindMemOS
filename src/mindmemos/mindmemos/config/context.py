@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 from ..errors import ConfigNotInitializedError
 from .app import MemoryConfig, build_config
 from .base import safe_dict
+from .validation import validate_config
 
 _global_config: MemoryConfig | None = None
 _current: ContextVar[MemoryConfig | None] = ContextVar("config_context", default=None)
@@ -80,10 +81,18 @@ def get_config_overrides() -> ConfigOverrides | None:
 def bind_config_overrides(
     tenant_config: dict[str, Any] | None = None,
     project_config: dict[str, Any] | None = None,
+    *,
+    allow_project_embedding_dimensions: bool = False,
 ) -> Iterator[None]:
     """Temporarily bind config overrides, then restore the previous context."""
 
-    cfg_token = _current.set(_build_scoped_config(tenant_config, project_config))
+    cfg_token = _current.set(
+        _build_scoped_config(
+            tenant_config,
+            project_config,
+            allow_project_embedding_dimensions=allow_project_embedding_dimensions,
+        )
+    )
     overrides = ConfigOverrides(tenant_config=tenant_config, project_config=project_config)
     overrides_token = _current_overrides.set(None if overrides.is_empty() else overrides)
     try:
@@ -96,14 +105,19 @@ def bind_config_overrides(
 def _build_scoped_config(
     tenant_config: dict[str, Any] | None = None,
     project_config: dict[str, Any] | None = None,
+    *,
+    allow_project_embedding_dimensions: bool = False,
 ) -> MemoryConfig:
     cfg = _global_config
     if cfg is None:
         raise ConfigNotInitializedError
+    if not tenant_config and not project_config:
+        return cfg
     if tenant_config:
         cfg = OmegaConf.merge(cfg, OmegaConf.create(tenant_config))
     if project_config:
         cfg = OmegaConf.merge(cfg, project_config)
+    validate_config(cfg, allow_project_embedding_dimensions=allow_project_embedding_dimensions)
     return cfg
 
 
