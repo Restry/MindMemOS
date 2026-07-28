@@ -231,13 +231,15 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         MATCH (seed:Memory)
         WHERE seed.project_id = $project_id
           AND seed.memory_id IN $seed_ids
+          AND coalesce(seed.user_id, $user_id) = $user_id
           AND coalesce(seed.status, 'active') = 'active'
         MATCH (seed)-[:MENTIONS]->(e:Entity {project_id: $project_id})
         WITH DISTINCT e
         CALL {
             WITH e
             MATCH (e)<-[:MENTIONS]-(neighbor:Memory {project_id: $project_id})
-            WHERE coalesce(neighbor.status, 'active') = 'active'
+            WHERE coalesce(neighbor.user_id, $user_id) = $user_id
+              AND coalesce(neighbor.status, 'active') = 'active'
             WITH DISTINCT neighbor
             ORDER BY coalesce(neighbor.update_at, neighbor.created_at) DESC,
                      neighbor.memory_id ASC
@@ -252,6 +254,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         rows = await self.db_reader._clients.neo4j.run_read(
             query,
             project_id=context.project_id,
+            user_id=context.user_id,
             seed_ids=list(seed_memory_ids),
             entity_probe_limit=self._cfg.max_entity_memory_count + 1,
         )

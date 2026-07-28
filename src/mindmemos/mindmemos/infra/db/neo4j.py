@@ -105,7 +105,13 @@ class Neo4jStore:
                     {
                         "project_id": node.project_id,
                         "memory_id": node.memory_id,
-                        "properties": _normalize_properties({"content": node.content, "status": "active"}),
+                        "properties": _normalize_properties(
+                            {
+                                "content": node.content,
+                                "status": "active",
+                                "user_id": node.user_id,
+                            }
+                        ),
                     }
                     for node in memories
                 ],

@@ -327,7 +327,12 @@ def to_memory_node(write: MemoryWrite, *, ctx: MemoryRequestContext | None = Non
 
     if ctx is not None:
         ensure_project(ctx, write.project_id)
-    return db.MemoryNode(project_id=write.project_id, memory_id=write.memory_id, content=write.content)
+    return db.MemoryNode(
+        project_id=write.project_id,
+        memory_id=write.memory_id,
+        content=write.content,
+        user_id=write.user_id,
+    )
 
 
 def to_entity_node(write: EntityWrite, *, ctx: MemoryRequestContext | None = None) -> db.EntityNode:

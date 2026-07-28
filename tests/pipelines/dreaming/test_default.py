@@ -272,6 +272,9 @@ async def test_dreaming_skips_done_add_records_when_clustering_hot_memories():
     assert scope.add_record_ids == ("add-m2",)
     query, params = reader.neo4j_read_calls[0]
     assert "ORDER BY coalesce(neighbor.update_at, neighbor.created_at) DESC" in query
+    assert "coalesce(seed.user_id, $user_id) = $user_id" in query
+    assert "coalesce(neighbor.user_id, $user_id) = $user_id" in query
+    assert params["user_id"] == "user"
     assert "LIMIT $entity_probe_limit" in query
     assert params["entity_probe_limit"] == pipe._cfg.max_entity_memory_count + 1
 

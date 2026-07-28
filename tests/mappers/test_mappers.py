@@ -10,6 +10,7 @@ from mindmemos.mappers import (
     search_filter_to_qdrant,
     to_add_record_point,
     to_db_write_primitives,
+    to_memory_node,
     to_memory_point,
     to_search_hit,
     to_search_record_point,
@@ -269,6 +270,12 @@ def test_memory_write_maps_to_qdrant_point_and_graph_relationships() -> None:
     assert memory_points[0].semantic_vector == [0.1, 0.2, 0.3]
     assert relationships[0].rel_type == "MENTIONS"
     assert relationships[0].key == {"project_id": "proj-1"}
+
+
+def test_memory_write_maps_user_scope_to_graph_node() -> None:
+    node = to_memory_node(make_memory_write(), ctx=make_context())
+
+    assert node.user_id == "user-1"
 
 
 def test_entity_write_maps_to_qdrant_point_with_vector() -> None:

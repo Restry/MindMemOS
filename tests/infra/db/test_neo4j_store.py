@@ -89,6 +89,19 @@ async def test_upsert_memory_node_writes_active_status():
 
 
 @pytest.mark.asyncio
+async def test_upsert_memory_node_writes_user_scope():
+    driver = FakeAsyncDriver()
+    store = Neo4jStore(Neo4jConfig(uri="bolt://unused"), driver=driver)
+
+    await store.upsert_memory_node(
+        MemoryNode(project_id="proj", memory_id="mem", content="User likes tea.", user_id="user-1")
+    )
+
+    _, params, _ = driver.calls[0]
+    assert params["rows"][0]["properties"]["user_id"] == "user-1"
+
+
+@pytest.mark.asyncio
 async def test_upsert_nodes_batches_by_label():
     driver = FakeAsyncDriver()
     store = Neo4jStore(Neo4jConfig(uri="bolt://unused"), driver=driver)

@@ -192,6 +192,7 @@ class MemoryNode:
     project_id: str
     memory_id: str
     content: str
+    user_id: str | None = None
 
     @property
     def ref(self) -> NodeRef:
