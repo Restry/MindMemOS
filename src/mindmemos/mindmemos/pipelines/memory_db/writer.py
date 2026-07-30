@@ -20,7 +20,7 @@ from ...infra.db import (
     SparseVectorData,
     resolve_database_clients,
 )
-from ...llm import EmbedClient, get_embed_client
+from ...llm import EmbedClient, get_embed_client, provider_binding_runtime_enabled, require_model_endpoint
 from ...logging import get_logger, traced, traced_awaitable
 from ...mappers import to_db_write_primitives, to_entity_node, to_memory_node, to_mutation_result, to_source_node
 from ...typing import (
@@ -72,7 +72,8 @@ class MemoryDbWriter:
 
     def _ensure_embed_client(self) -> EmbedClient:
         if self._embed_client is None:
-            if _provider_binding_runtime_enabled():
+            if provider_binding_runtime_enabled():
+                require_model_endpoint("embedding")
                 return get_embed_client()
             self._embed_client = get_embed_client()
         return self._embed_client
@@ -553,10 +554,3 @@ def _sparse_from_command(req: MemoryDbUpdateCommand) -> SparseVectorData | None:
     if indices is None or values is None:
         return None
     return SparseVectorData(indices=list(indices), values=list(values))
-
-
-def _provider_binding_runtime_enabled() -> bool:
-    try:
-        return bool(get_config().provider_binding.enabled)
-    except Exception:
-        return False

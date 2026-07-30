@@ -23,7 +23,12 @@ from ....config.algo.search.vanilla.vanilla import (
     VANILLA_HYBRID_PREFETCH_MAX,
     VANILLA_RECALL_SIZE_MAX,
 )
-from ....llm import EmbedClient, get_embed_client
+from ....llm import (
+    EmbedClient,
+    get_embed_client,
+    provider_binding_runtime_enabled,
+    require_model_endpoint,
+)
 from ....logging import get_logger, traced
 from ....mappers import parse_search_dsl
 from ....typing import (
@@ -81,8 +86,9 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         self._explicit_search_config: VanillaSearchConfig | None = search_config
         self._explicit_graph_provenance_limit = graph_provenance_limit
 
+        self._explicit_embed_client = embed_client
         self._embed_client: EmbedClient | None = embed_client
-        if self._embed_client is None:
+        if self._embed_client is None and not provider_binding_runtime_enabled():
             try:
                 self._embed_client = get_embed_client()
             except Exception:
@@ -200,12 +206,21 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
             candidate.rank = index
         return normalize_candidate_scores(candidates)
 
+    def _resolve_embed_client(self) -> EmbedClient | None:
+        if self._explicit_embed_client is not None:
+            return self._explicit_embed_client
+        if provider_binding_runtime_enabled():
+            require_model_endpoint("embedding")
+            return get_embed_client()
+        return self._embed_client
+
     async def _encode_dense(self, query: str) -> list[float] | None:
         """Generate a dense embedding; return None when unavailable."""
-        if self._embed_client is None:
+        embed_client = self._resolve_embed_client()
+        if embed_client is None:
             return None
         try:
-            resp = await self._embed_client.embed(task="search.query", text=query)
+            resp = await embed_client.embed(task="search.query", text=query)
             return resp.embeddings[0] if resp.embeddings else None
         except Exception:
             logger.warning("vanilla_search_dense_embed_failed", exc_info=True)

@@ -5,14 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import get_config
-from .errors import BadRequestError
+from .config import bind_config_overrides, get_config, get_config_overrides
+from .errors import BadRequestError, ConfigNotInitializedError
 from .infra.db import ProviderBindingPoint, QdrantRecord, resolve_database_clients
 from .logging import get_logger
 from .typing import MemoryRequestContext
@@ -71,6 +72,8 @@ class ProviderBindingStore(Protocol):
 
     async def list_project_bindings(self, project_id: str) -> list[ProviderBindingRecord]: ...
 
+    async def project_memory_vector_size(self, project_id: str) -> int | None: ...
+
 
 class QdrantProviderBindingStore:
     """Qdrant-backed dynamic provider binding store."""
@@ -113,6 +116,11 @@ class QdrantProviderBindingStore:
             records.extend(_record_from_qdrant(record) for record in page)
             if cursor is None:
                 return records
+
+    async def project_memory_vector_size(self, project_id: str) -> int | None:
+        """Return the project's existing memory-vector dimension, if it has one."""
+
+        return await self._clients.qdrant.project_memory_vector_size(project_id)
 
 
 class ProviderBindingService:
@@ -197,7 +205,52 @@ class ProviderBindingResolver:
         if not candidates:
             return None
         selected = max(candidates, key=lambda record: (record.scope.specificity(), record.binding_id))
-        return _hydrate_memory_gateway_routers(selected.routers, ctx)
+        resolved = _hydrate_memory_gateway_routers(selected.routers, ctx)
+        dimension_resolver = getattr(self._store, "project_memory_vector_size", None)
+        if callable(dimension_resolver):
+            existing_dimension = await dimension_resolver(ctx.project_id)
+            if existing_dimension is not None:
+                for endpoint in _router_endpoints(resolved, "embed_model_router"):
+                    dimensions = endpoint.get("dimensions")
+                    if not isinstance(dimensions, int) or dimensions <= 0:
+                        endpoint["dimensions"] = existing_dimension
+        return resolved
+
+
+async def provider_config_context(
+    ctx: MemoryRequestContext,
+    *,
+    resolver: ProviderBindingResolver | None = None,
+):
+    """Return a temporary config context for the binding selected for ``ctx``.
+
+    The helper deliberately returns a no-op context when provider binding is
+    disabled or no actor/project binding matches. This preserves standalone
+    upstream deployments and permits explicitly configured static model
+    routers to remain the fallback.
+    """
+
+    try:
+        if resolver is None and not get_config().provider_binding.enabled:
+            return nullcontext()
+        active_resolver = resolver or get_provider_binding_resolver()
+        dynamic_project_config = await active_resolver.resolve(ctx)
+    except ConfigNotInitializedError:
+        return nullcontext()
+    if not dynamic_project_config:
+        return nullcontext()
+
+    overrides = get_config_overrides()
+    tenant_config = overrides.tenant_config if overrides is not None else None
+    project_config = _deep_merge(
+        overrides.project_config if overrides is not None else {},
+        dynamic_project_config,
+    )
+    return bind_config_overrides(
+        tenant_config=tenant_config,
+        project_config=project_config,
+        allow_project_embedding_dimensions=True,
+    )
 
 
 def validate_provider_binding_patch(

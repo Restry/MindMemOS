@@ -22,7 +22,7 @@ from ....components.memory_modeling.schema import EntityManager, get_entity_mana
 from ....components.text import SparseVectorEncoder, detect_prompt_language, get_text_preprocessor
 from ....config import get_config
 from ....infra.kafka import get_producer
-from ....llm import EmbedClient, LLMClient, get_embed_client, get_llm_client
+from ....llm import EmbedClient, LLMClient, get_embed_client, get_llm_client, require_model_endpoint
 from ....logging import get_logger, traced, traced_awaitable
 from ....prompts import AddPromptSet, get_add_prompts
 from ....typing import (
@@ -225,6 +225,10 @@ class SchemaAddPipeline(MemoryDbPipelineMixin, AddPipeline):
         another project. Mirrors the entity_manager per-request resolution pattern.
         """
         schema_cfg = self._get_schema_add_config()
+        if self._explicit_llm is None:
+            require_model_endpoint("chat")
+        if self._explicit_embed is None:
+            require_model_endpoint("embedding")
         llm_client = self._explicit_llm or get_llm_client()
         embed_client = self._explicit_embed or get_embed_client()
         project_em = self._explicit_entity_manager or get_entity_manager(project_id=context.project_id)

@@ -2,12 +2,11 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import nullcontext
 from typing import Any, Literal
 from uuid import uuid4
 
-from ...config import bind_config_overrides, get_config, get_config_overrides
-from ...errors import ConfigNotInitializedError, MemoryNotFoundError, ResourceNotFoundError
+from ...config import get_config
+from ...errors import MemoryNotFoundError, ResourceNotFoundError
 from ...logging import get_logger, traced
 from ...pipelines import create_pipeline
 from ...pipelines.add import AddPipeline
@@ -19,7 +18,7 @@ from ...pipelines.memory_db import MemoryCatalog, MemoryOperationRecorder, suppr
 from ...pipelines.search import SearchPipeline
 from ...pipelines.skill import SkillVersionStore, get_skill_version_store
 from ...pipelines.update import DefaultUpdatePipeline, UpdatePipeline
-from ...provider_bindings import ProviderBindingResolver, get_provider_binding_resolver
+from ...provider_bindings import ProviderBindingResolver, provider_config_context
 from ...typing import (
     AddPipelineAsyncResult,
     AddPipelineSyncResult,
@@ -151,24 +150,9 @@ class MemoryService:
 
     async def _provider_config_context(self, ctx):
         """Return a temporary config binding that includes dynamic provider overrides."""
-
-        try:
-            resolver = self._provider_binding_resolver or get_provider_binding_resolver()
-            dynamic_project_config = await resolver.resolve(ctx)
-        except ConfigNotInitializedError:
-            return nullcontext()
-        if not dynamic_project_config:
-            return nullcontext()
-        overrides = get_config_overrides()
-        tenant_config = overrides.tenant_config if overrides is not None else None
-        project_config = _deep_merge_dicts(
-            overrides.project_config if overrides is not None else None,
-            dynamic_project_config,
-        )
-        return bind_config_overrides(
-            tenant_config=tenant_config,
-            project_config=project_config,
-            allow_project_embedding_dimensions=True,
+        return await provider_config_context(
+            ctx,
+            resolver=self._provider_binding_resolver,
         )
 
     @traced("memory_service.add")
@@ -654,14 +638,3 @@ def get_memory_service() -> MemoryService:
         )
         _service_key = service_key
     return _service
-
-
-def _deep_merge_dicts(base: dict[str, Any] | None, override: dict[str, Any]) -> dict[str, Any]:
-    result = dict(base or {})
-    for key, value in override.items():
-        current = result.get(key)
-        if isinstance(current, dict) and isinstance(value, dict):
-            result[key] = _deep_merge_dicts(current, value)
-        else:
-            result[key] = value
-    return result

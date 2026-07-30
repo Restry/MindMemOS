@@ -102,6 +102,17 @@ class QdrantEngine:
 
         return [item.name for item in (await self._client.get_collections()).collections]
 
+    async def dense_vector_size(self, collection: str, vector_name: str) -> int | None:
+        """Return one existing dense vector size without creating the collection."""
+
+        if not await self.collection_exists(collection):
+            return None
+        info = await self._client.get_collection(collection)
+        vectors = info.config.params.vectors
+        params = vectors.get(vector_name) if isinstance(vectors, dict) else vectors
+        size = getattr(params, "size", None)
+        return int(size) if isinstance(size, int) and size > 0 else None
+
     async def ensure_collection(self, spec: QdrantCollectionSpec) -> None:
         """Create one collection and its payload indexes (no ``auto_create`` gate).
 

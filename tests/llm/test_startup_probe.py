@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -68,6 +69,33 @@ async def test_embed_uses_dynamic_provider_binding_dimensions_when_enabled() -> 
         response = await EmbedClient(FixedDimEmbedRouter(dim=dynamic_dim)).embed(task="memory.add.entity", text="hello")
 
         assert len(response.embeddings[0]) == dynamic_dim
+    finally:
+        reset_config()
+
+
+@pytest.mark.asyncio
+async def test_embed_discovers_unpublished_builtin_dimension_for_project_collection(tmp_path) -> None:
+    try:
+        source = Path("config/mindmemos/dev.example.yaml")
+        config_path = tmp_path / "dynamic-project-dimension.yaml"
+        config_path.write_text(
+            source.read_text().replace(
+                "    vector_size: 2560",
+                "    vector_size: 2560\n    project_collection_namespace_enabled: true",
+            )
+        )
+        init_config(config_path=config_path)
+        cfg = get_config()
+        cfg.provider_binding.enabled = True
+        cfg.embed_model_router.endpoints[0].dimensions = None
+        actual_dim = 3072 if cfg.database.qdrant.vector_size != 3072 else 2048
+
+        response = await EmbedClient(FixedDimEmbedRouter(dim=actual_dim)).embed(
+            task="memory.add.entity",
+            text="hello",
+        )
+
+        assert len(response.embeddings[0]) == actual_dim
     finally:
         reset_config()
 

@@ -192,6 +192,14 @@ class QdrantStore:
             return
         await self._engine.ensure_collection(spec)
 
+    async def project_memory_vector_size(self, project_id: str) -> int | None:
+        """Return the immutable dense dimension of an existing project memory collection."""
+
+        return await self._engine.dense_vector_size(
+            self._memory.collection_for_project(project_id),
+            self._cfg.semantic_vector_name,
+        )
+
     async def upsert_memory(self, point: MemoryPoint) -> None:
         """Upsert one point into ``memory_item_v1``."""
 

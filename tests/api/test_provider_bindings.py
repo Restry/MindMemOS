@@ -68,11 +68,15 @@ def router_config(*, embed_model: str = "openai/text-embedding-3-large", dimensi
 @dataclass
 class FakeStore:
     records: list[ProviderBindingRecord]
+    project_vector_size: int | None = None
     calls: list[str] = field(default_factory=list)
 
     async def list_project_bindings(self, project_id: str) -> list[ProviderBindingRecord]:
         self.calls.append(project_id)
         return self.records
+
+    async def project_memory_vector_size(self, project_id: str) -> int | None:
+        return self.project_vector_size
 
 
 @pytest.mark.asyncio
@@ -156,6 +160,47 @@ async def test_provider_binding_resolver_hydrates_memory_gateway_at_request_time
         assert endpoint["api_key"] == "memory-service-token"
     assert record.routers["chat_model_router"]["endpoints"][0]["api_base"].endswith("/{userId}/v1")
     assert record.routers["chat_model_router"]["endpoints"][0]["api_key"] == "EMPTY"
+
+
+@pytest.mark.asyncio
+async def test_provider_binding_resolver_pins_dimensionless_endpoint_to_existing_project_collection() -> None:
+    routers = router_config()
+    routers["embed_model_router"]["endpoints"][0].pop("dimensions")
+    record = ProviderBindingRecord(
+        binding_id="memory-binding",
+        project_id="proj-1",
+        routers=routers,
+    )
+    resolver = ProviderBindingResolver(
+        store=FakeStore([record], project_vector_size=1024),
+        enabled=True,
+    )
+
+    result = await resolver.resolve(make_context())
+
+    assert result is not None
+    assert result["embed_model_router"]["endpoints"][0]["dimensions"] == 1024
+    assert "dimensions" not in record.routers["embed_model_router"]["endpoints"][0]
+
+
+@pytest.mark.asyncio
+async def test_provider_binding_resolver_leaves_new_project_dimension_discoverable() -> None:
+    routers = router_config()
+    routers["embed_model_router"]["endpoints"][0].pop("dimensions")
+    record = ProviderBindingRecord(
+        binding_id="memory-binding",
+        project_id="proj-1",
+        routers=routers,
+    )
+    resolver = ProviderBindingResolver(
+        store=FakeStore([record], project_vector_size=None),
+        enabled=True,
+    )
+
+    result = await resolver.resolve(make_context())
+
+    assert result is not None
+    assert "dimensions" not in result["embed_model_router"]["endpoints"][0]
 
 
 def test_provider_binding_patch_allows_runtime_config_changes() -> None:

@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from ....config import get_config
-from ....llm import EmbedClient, LLMClient, get_embed_client, get_llm_client
-
-
-def provider_binding_runtime_enabled() -> bool:
-    """Return whether request-scoped provider binding should resolve clients lazily."""
-
-    try:
-        return bool(get_config().provider_binding.enabled)
-    except Exception:
-        return False
+from ....llm import (
+    EmbedClient,
+    LLMClient,
+    get_embed_client,
+    get_llm_client,
+    provider_binding_runtime_enabled,
+    require_model_endpoint,
+)
 
 
 def initial_llm_client(explicit_client: LLMClient | None) -> LLMClient | None:
@@ -37,11 +34,13 @@ def initial_embed_client(explicit_client: EmbedClient | None) -> EmbedClient | N
 
 def resolve_llm_client(client: LLMClient | None) -> LLMClient:
     """Return an injected client or resolve one from the current request context."""
-
+    if client is None:
+        require_model_endpoint("chat")
     return client or get_llm_client()
 
 
 def resolve_embed_client(client: EmbedClient | None) -> EmbedClient:
     """Return an injected client or resolve one from the current request context."""
-
+    if client is None:
+        require_model_endpoint("embedding")
     return client or get_embed_client()

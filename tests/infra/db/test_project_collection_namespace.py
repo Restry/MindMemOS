@@ -73,6 +73,9 @@ async def test_project_collection_namespace_allows_per_project_vector_dimensions
         assert store.memory.collection_for_project("proj-a") in collections
         assert store.memory.collection_for_project("proj-b") in collections
         assert store.memory.collection_for_project("proj-a") != store.memory.collection_for_project("proj-b")
+        assert await store.project_memory_vector_size("proj-a") == 2
+        assert await store.project_memory_vector_size("proj-b") == 3
+        assert await store.project_memory_vector_size("proj-missing") is None
 
         a_hits = await store.search_memory_dense(
             "proj-a",
