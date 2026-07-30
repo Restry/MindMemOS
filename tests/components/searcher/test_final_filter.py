@@ -1,5 +1,6 @@
 import pytest
 from mindmemos.components.searcher.final_filter import SearchFinalFilter
+from mindmemos.components.searcher.scored_candidate import ScoredSearchCandidate
 from mindmemos.typing.llm import RerankHit, RerankResponse
 from mindmemos.typing.service import MemorySearchItem
 
@@ -129,7 +130,11 @@ async def test_score_threshold_filters_low_score_results() -> None:
     candidates = [item("a", "high"), item("b", "medium"), item("c", "low")]
 
     result = await final_filter.apply(
-        query="q", candidates=candidates, top_k=10, rerank=True, score_threshold=0.6,
+        query="q",
+        candidates=candidates,
+        top_k=10,
+        rerank=True,
+        score_threshold=0.6,
     )
 
     assert [entry.id for entry in result] == ["a"]
@@ -141,7 +146,11 @@ async def test_score_threshold_ignored_when_rerank_false() -> None:
     candidates = [item("a", "A"), item("b", "B"), item("c", "C")]
 
     result = await final_filter.apply(
-        query="q", candidates=candidates, top_k=10, rerank=False, score_threshold=0.99,
+        query="q",
+        candidates=candidates,
+        top_k=10,
+        rerank=False,
+        score_threshold=0.99,
     )
 
     assert [entry.id for entry in result] == ["a", "b", "c"]
@@ -154,8 +163,62 @@ async def test_score_threshold_none_uses_indices_only_rerank() -> None:
     candidates = [item("a", "A"), item("b", "B"), item("c", "C")]
 
     result = await final_filter.apply(
-        query="q", candidates=candidates, top_k=3, rerank=True, score_threshold=None,
+        query="q",
+        candidates=candidates,
+        top_k=3,
+        rerank=True,
+        score_threshold=None,
     )
 
     assert [entry.id for entry in result] == ["c", "a", "b"]
     assert reranker.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_final_filter_preserves_rerank_scores_for_scored_output() -> None:
+    async def fake_rerank_with_scores(client, query, docs, top_n):
+        return [(1, 0.9), (0, 0.2)]
+
+    final_filter = SearchFinalFilter(
+        rerank_client=FakeRerankClient(),
+        rerank_with_scores_fn=fake_rerank_with_scores,
+    )
+    candidates = [
+        ScoredSearchCandidate(item=item("a", "A"), original_rank=0, rank=0, relevance_score=1.0),
+        ScoredSearchCandidate(item=item("b", "B"), original_rank=1, rank=1, relevance_score=0.0),
+    ]
+
+    result = await final_filter.apply(
+        query="q",
+        candidates=candidates,
+        top_k=2,
+        rerank=True,
+        score_output=True,
+    )
+
+    assert [entry.id for entry in result] == ["b", "a"]
+    assert [entry.rerank_score for entry in result] == [0.9, 0.2]
+    assert [entry.normalized_rerank_score for entry in result] == [1.0, 0.0]
+    assert [entry.final_score_source for entry in result] == ["rerank", "rerank"]
+
+
+@pytest.mark.asyncio
+async def test_final_filter_drops_non_finite_scored_rerank_entries() -> None:
+    async def fake_rerank_with_scores(client, query, docs, top_n):
+        return [(0, float("nan")), (1, 0.7)]
+
+    final_filter = SearchFinalFilter(
+        rerank_client=FakeRerankClient(),
+        rerank_with_scores_fn=fake_rerank_with_scores,
+    )
+
+    result = await final_filter.apply(
+        query="q",
+        candidates=[item("a", "A"), item("b", "B")],
+        top_k=2,
+        rerank=True,
+        score_output=True,
+    )
+
+    assert [entry.id for entry in result] == ["b"]
+    assert result[0].rerank_score == 0.7

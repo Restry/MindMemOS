@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from ...components.searcher.scored_candidate import (
+    RetrievalEvidence,
+    ScoredSearchCandidate,
+    normalize_candidate_scores,
+)
 from ...components.text import SparseVectorEncoder, TextPreprocessor, get_text_preprocessor
 from ...config import TextProcessingConfig, get_config
 from ...mappers import parse_search_dsl
@@ -43,7 +48,7 @@ class DefaultSearchEngine(MemoryDbPipelineMixin):
         context: MemoryRequestContext,
         *,
         options: SearchEngineOptions | None = None,
-    ) -> list[MemorySearchItem]:
+    ) -> list[ScoredSearchCandidate]:
         """Search memories with the query sparse vector."""
 
         preprocessed = self._text_preprocessor.preprocess_query(inp.query, include_entities=False)
@@ -51,9 +56,10 @@ class DefaultSearchEngine(MemoryDbPipelineMixin):
             return []
 
         sparse = self._sparse_encoder.encode_query(preprocessed.tokens)
+        recall_top_k = options.recall_top_k if options and options.recall_top_k is not None else inp.top_k
         query = MemoryDbSearchQuery(
             query=inp.query,
-            top_k=inp.top_k or get_config().algo_config.search.default.top_k,
+            top_k=recall_top_k or get_config().algo_config.search.default.top_k,
             filters=_request_filter(inp, context),
             mode="bm25",
             ranking="score",
@@ -64,15 +70,33 @@ class DefaultSearchEngine(MemoryDbPipelineMixin):
             indices=list(sparse.indices),
             values=list(sparse.values),
         )
-        return [
-            MemorySearchItem(
-                id=hit.memory_id,
-                memory=hit.memory.content if hit.memory else "",
-                memory_type=hit.memory.mem_type if hit.memory else "fact",
-                last_update_at=_format_time((hit.memory.update_at or hit.memory.created_at) if hit.memory else None),
-            )
-            for hit in result.hits
-        ]
+        return normalize_candidate_scores(
+            [
+                ScoredSearchCandidate(
+                    item=MemorySearchItem(
+                        id=hit.memory_id,
+                        memory=hit.memory.content if hit.memory else "",
+                        memory_type=hit.memory.mem_type if hit.memory else "fact",
+                        last_update_at=_format_time(
+                            (hit.memory.update_at or hit.memory.created_at) if hit.memory else None
+                        ),
+                    ),
+                    original_rank=hit.rank if hit.rank is not None else index,
+                    rank=index,
+                    retrieval_score=hit.score,
+                    retrieval_score_type="bm25",
+                    evidence=[
+                        RetrievalEvidence(
+                            source="direct",
+                            score=hit.score,
+                            score_type="bm25",
+                            rank=hit.rank if hit.rank is not None else index,
+                        )
+                    ],
+                )
+                for index, hit in enumerate(result.hits)
+            ]
+        )
 
 
 def _request_filter(inp: SearchPipelineInput, ctx: MemoryRequestContext) -> SearchFilter:

@@ -446,6 +446,9 @@ async def test_vanilla_search_uses_rrf_and_preserves_event_time() -> None:
     assert result[0].source_timestamp == "2023-11-14 22:13:20"
     assert result[1].event_time == "2023-11-14 22:13:20"
     assert result[1].source_timestamp == "2023-11-14 22:13:20"
+    assert [item.retrieval_score for item in result] == [0.9, 0.6]
+    assert [item.retrieval_score_type for item in result] == ["rrf", "rrf"]
+    assert [item.relevance_score for item in result] == [1.0, 0.0]
 
     assert len(reader.calls) == 1
     call = reader.calls[0]
@@ -745,6 +748,14 @@ async def test_vanilla_search_appends_one_hop_related_memories_with_one_batch_re
     )
 
     assert [item.id for item in result] == ["seed", "graph-ok"]
+    assert result[0].retrieval_score_type == "rrf"
+    assert result[1].retrieval_score == 0.4
+    assert result[1].retrieval_score_type == "graph_propagation"
+    graph_evidence = [entry.graph for entry in result[1].evidence if entry.graph is not None]
+    assert len(graph_evidence) == 1
+    assert graph_evidence[0].seed_memory_id == "seed"
+    assert graph_evidence[0].relation == "relates_to"
+    assert graph_evidence[0].path_score == 0.4
     assert len(reader.related_calls) == 1
     assert reader.related_calls[0].memory_ids == ["seed"]
     assert reader.related_calls[0].limit_per_memory == 3
@@ -897,6 +908,78 @@ async def test_vanilla_search_ranks_graph_hits_by_seed_score_decay() -> None:
     result = await engine.search_candidates(SearchPipelineInput(query="Qdrant", top_k=2), make_context())
 
     assert [item.id for item in result] == ["seed-high", "graph-from-high", "base-low"]
+
+
+@pytest.mark.asyncio
+async def test_vanilla_search_merges_graph_provenance_into_an_existing_direct_hit() -> None:
+    reader = FakeReader(
+        [
+            MemoryDbSearchHit(
+                memory_id="seed",
+                score=0.9,
+                memory=memory("seed", "Strong seed."),
+                source="rrf",
+                rank=1,
+            ),
+            MemoryDbSearchHit(
+                memory_id="also-direct",
+                score=0.7,
+                memory=memory("also-direct", "Direct and graph-related."),
+                source="rrf",
+                rank=2,
+            ),
+        ],
+        related_ids=[{"memory_id": "also-direct", "seed_memory_id": "seed"}],
+    )
+    engine = make_graph_engine(reader)
+
+    result = await engine.search_candidates(SearchPipelineInput(query="Qdrant", top_k=2), make_context())
+
+    assert [item.id for item in result] == ["seed", "also-direct"]
+    assert result[1].retrieval_score == 0.7
+    assert result[1].retrieval_score_type == "rrf"
+    graph_evidence = [entry.graph for entry in result[1].evidence if entry.graph is not None]
+    assert len(graph_evidence) == 1
+    assert graph_evidence[0].seed_memory_id == "seed"
+    assert graph_evidence[0].path_score == 0.45
+    assert reader.get_memories_calls == []
+
+
+@pytest.mark.asyncio
+async def test_vanilla_search_merges_multiple_seed_paths_without_score_summing() -> None:
+    reader = FakeReader(
+        [
+            MemoryDbSearchHit(
+                memory_id="seed-high",
+                score=0.9,
+                memory=memory("seed-high", "Strong seed."),
+                source="rrf",
+                rank=1,
+            ),
+            MemoryDbSearchHit(
+                memory_id="seed-low",
+                score=0.4,
+                memory=memory("seed-low", "Weak seed."),
+                source="rrf",
+                rank=2,
+            ),
+        ],
+        related_ids=[
+            {"memory_id": "shared", "seed_memory_id": "seed-low"},
+            {"memory_id": "shared", "seed_memory_id": "seed-high"},
+        ],
+        graph_memories=[memory("shared", "Reached through both seeds.")],
+    )
+
+    result = await make_graph_engine(reader).search_candidates(
+        SearchPipelineInput(query="seed", top_k=3),
+        make_context(),
+    )
+
+    shared = next(candidate for candidate in result if candidate.id == "shared")
+    assert shared.retrieval_score == 0.45
+    paths = [entry.graph for entry in shared.evidence if entry.graph is not None]
+    assert [path.seed_memory_id for path in paths] == ["seed-high", "seed-low"]
 
 
 @pytest.mark.asyncio

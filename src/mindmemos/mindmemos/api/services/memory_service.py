@@ -380,13 +380,11 @@ class MemoryService:
                 yield item
         finally:
             if not task.done():
-                def _consume_task_result(done_task: asyncio.Task) -> None:
-                    try:
-                        done_task.exception()
-                    except asyncio.CancelledError:
-                        pass
-
-                task.add_done_callback(_consume_task_result)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def _add_with_context(
         self,

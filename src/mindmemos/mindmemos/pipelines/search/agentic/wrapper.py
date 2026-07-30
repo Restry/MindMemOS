@@ -10,6 +10,11 @@ from omegaconf import DictConfig, OmegaConf
 
 from ....components.memory_modeling.schema import TemporalEntity
 from ....components.searcher.schema import SchemaSearchRanker
+from ....components.searcher.scored_candidate import (
+    RetrievalEvidence,
+    ScoredSearchCandidate,
+    normalize_candidate_scores,
+)
 from ....components.text import detect_prompt_language
 from ....config import get_config
 from ....config.algo.search import AgenticConfig
@@ -46,7 +51,7 @@ class AgenticSearchWrapper:
         inp: SearchPipelineInput,
         context: MemoryRequestContext,
         engine: SearchEngine,
-    ) -> list[MemorySearchItem]:
+    ) -> list[ScoredSearchCandidate]:
         """Run the agentic loop and return merged candidates."""
 
         detected_lang = detect_prompt_language(
@@ -93,6 +98,7 @@ class AgenticSearchWrapper:
             planner=planner,
             sufficiency=sufficiency,
             ranker=self._ranker,
+            evidence_limit=get_config().algo_config.search.retention.graph_provenance_limit,
         )
         parsed_filters = parse_schema_search_filters(inp.filters, context)
         entities = await loop.run(
@@ -103,20 +109,12 @@ class AgenticSearchWrapper:
             entity_search_filter=parsed_filters.entity_filter,
             allow_time_extraction=False,
         )
-        return [
-            MemorySearchItem(
-                id=entity.entity_id,
-                memory=entity.description
-                or entity.format_entity_prompt(
-                    ignore_edge_num=agentic_config.output_max_edge_num,
-                    include_description=False,
-                    include_edges=agentic_config.include_edges,
-                ),
-                memory_type="fact",
-                last_update_at="",
-            )
-            for entity in entities
-        ]
+        return _entities_to_scored_candidates(
+            entities,
+            include_edges=agentic_config.include_edges,
+            output_max_edge_num=agentic_config.output_max_edge_num,
+            evidence_limit=get_config().algo_config.search.retention.graph_provenance_limit,
+        )
 
 
 class EngineSearchTool(SearchTool):
@@ -168,9 +166,23 @@ class EngineSearchTool(SearchTool):
             ),
         )
         entities: list[TemporalEntity] = []
-        for item in candidates:
+        for index, item in enumerate(candidates):
             entity = TemporalEntity(entity_id=item.id, name=item.id, entity_type="memory", description=item.memory)
             entity.modify_property("search_result", item.memory, item.last_update_at or "", uid=item.id)
+            native_score = item.retrieval_score if isinstance(item, ScoredSearchCandidate) else None
+            native_score_type = item.retrieval_score_type if isinstance(item, ScoredSearchCandidate) else None
+            native_rank = item.rank if isinstance(item, ScoredSearchCandidate) else index
+            entity._search_evidence = [
+                RetrievalEvidence(
+                    source="agentic",
+                    score=native_score,
+                    score_type=native_score_type,
+                    rank=native_rank,
+                    query=request.query,
+                    round_index=request.round_index,
+                    engine=self.name,
+                )
+            ]
             entities.append(entity)
         return SearchToolResult(entities=entities, debug={"tool": self.name})
 
@@ -214,3 +226,47 @@ def _agentic_config_with_max_rounds(config: Any, max_rounds: int) -> Any:
     cloned = copy(config)
     cloned.max_rounds = max_rounds
     return cloned
+
+
+def _entities_to_scored_candidates(
+    entities: list[TemporalEntity],
+    *,
+    include_edges: bool,
+    output_max_edge_num: int,
+    evidence_limit: int = 8,
+) -> list[ScoredSearchCandidate]:
+    """Project final agentic entities with an explicit ordinal fallback."""
+
+    return normalize_candidate_scores(
+        [
+            ScoredSearchCandidate(
+                item=MemorySearchItem(
+                    id=entity.entity_id,
+                    memory=entity.description
+                    or entity.format_entity_prompt(
+                        ignore_edge_num=output_max_edge_num,
+                        include_description=False,
+                        include_edges=include_edges,
+                    ),
+                    memory_type="fact",
+                    last_update_at="",
+                ),
+                original_rank=index,
+                rank=index,
+                evidence=_agentic_evidence(entity, final_rank=index, limit=evidence_limit),
+            )
+            for index, entity in enumerate(entities)
+        ]
+    )
+
+
+def _agentic_evidence(
+    entity: TemporalEntity,
+    *,
+    final_rank: int,
+    limit: int,
+) -> list[RetrievalEvidence]:
+    evidence = list(getattr(entity, "_search_evidence", []))
+    if not evidence:
+        evidence = [RetrievalEvidence(source="agentic", rank=final_rank)]
+    return evidence[: max(0, limit)]

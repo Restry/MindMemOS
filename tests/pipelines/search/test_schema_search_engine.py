@@ -9,6 +9,7 @@ import pytest
 from mindmemos.components.memory_modeling.schema import TemporalEntity
 from mindmemos.config import init_config, reset_config
 from mindmemos.config.algo.search import SearchConfig
+from mindmemos.pipelines.search.base import SearchEngineOptions
 from mindmemos.pipelines.search.schema import SchemaSearchEngine
 from mindmemos.typing.memory import MemoryRequestContext, MemoryView
 from mindmemos.typing.memory_db import MemoryDbSearchHit, MemoryDbSearchResult
@@ -133,12 +134,47 @@ async def test_schema_search_engine_uses_schema_search_config_not_agentic_round_
     )
 
     assert result[0].id == "ent-1"
+    assert result[0].retrieval_score is None
+    assert result[0].retrieval_score_type is None
+    assert result[0].relevance_score == 1.0
+    assert result[0].final_score_source == "rank_fallback"
     assert query_builder.current_time_mode == "system"
     call = expander.calls[0]
     assert call["num_hops"] == 4
     assert call["top_k"] is None
     assert call["top_n"] == 5
     assert call["use_reranker"] is None
+
+
+@pytest.mark.asyncio
+async def test_budgeted_schema_search_uses_bounded_candidate_pool_before_final_top_k(config_scope) -> None:
+    search_config = SearchConfig()
+    query_builder = FakeQueryBuilder(
+        current_time_mode=search_config.schema_search.current_time_mode,
+        min_time_window_days=search_config.schema_search.min_time_window_days,
+    )
+    expander = FakeExpander()
+    engine = SchemaSearchEngine(
+        search_config=search_config,
+        llm_client=SimpleNamespace(),
+        embed_client=SimpleNamespace(),
+        rerank_client=None,
+        entity_manager=FakeEntityManager(),
+        db_reader=SimpleNamespace(),
+        db_writer=SimpleNamespace(),
+    )
+    engine._query_builder = query_builder
+    engine._expander = expander
+
+    await engine.search_candidates(
+        SearchPipelineInput(query="Qdrant", search_pipeline="schema", top_k=1, token_budget=32),
+        make_context(),
+        options=SearchEngineOptions(recall_top_k=7, result_top_n=7),
+    )
+
+    call = expander.calls[0]
+    assert call["top_k"] == 7
+    assert call["top_n"] == 7
 
 
 @pytest.mark.asyncio
@@ -173,6 +209,10 @@ async def test_schema_search_engine_falls_back_to_direct_memory_when_schema_resu
     assert result[0].memory_type == "fact"
     assert result[0].last_update_at == "2026-01-02 03:04:05"
     assert result[0].event_time is None
+    assert result[0].retrieval_score == 0.91
+    assert result[0].retrieval_score_type == "bm25"
+    assert result[0].relevance_score == 1.0
+    assert result[0].final_score_source == "retrieval"
     assert len(expander.calls) == 1
     assert len(reader.calls) == 1
     fallback_call = reader.calls[0]

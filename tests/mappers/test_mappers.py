@@ -35,7 +35,7 @@ from mindmemos.typing.service import (
     DeletePipelineInput,
     GetPipelineInput,
     MemoryAddEventItem,
-    MemorySearchItem,
+    MemorySearchResultItem,
     SearchPipelineInput,
     SearchPipelineResult,
     UpdatePipelineInput,
@@ -402,6 +402,19 @@ def test_service_search_input_allows_positive_top_k_and_none() -> None:
     assert SearchPipelineInput(query="Qdrant", top_k=None).top_k is None
 
 
+def test_service_search_input_accepts_token_budget_and_score_output_controls() -> None:
+    search = SearchPipelineInput(query="Qdrant", token_budget=1200, include_scores=True)
+
+    assert search.token_budget == 1200
+    assert search.include_scores is True
+
+
+@pytest.mark.parametrize("token_budget", [0, -1])
+def test_service_search_input_rejects_non_positive_token_budget(token_budget: int) -> None:
+    with pytest.raises(ValueError):
+        SearchPipelineInput(query="Qdrant", token_budget=token_budget)
+
+
 def test_service_search_input_rejects_legacy_search_strategy_key() -> None:
     with pytest.raises(ValueError):
         SearchPipelineInput.model_validate({"query": "Qdrant", "search_strategy": "schema"})
@@ -497,16 +510,23 @@ def test_search_record_mapper_uses_protocol_fields_only() -> None:
             agentic=True,
             max_rounds=2,
             rerank=True,
+            include_scores=True,
+            token_budget=512,
         ),
         SearchPipelineResult(
             status="ok",
             memories=[
-                MemorySearchItem(
+                MemorySearchResultItem(
                     id="mem-1",
                     memory="Project uses Qdrant.",
                     last_update_at="2026-05-28 00:00:00",
                 )
             ],
+            metrics={
+                "scoring_version": "query-local-v1",
+                "candidate_count": 4,
+                "estimated_tokens_after": 120,
+            },
         ),
         ctx=ctx,
         request_submitted_at=submitted_at,
@@ -521,6 +541,13 @@ def test_search_record_mapper_uses_protocol_fields_only() -> None:
     assert point.payload["agentic"] is True
     assert point.payload["max_rounds"] == 2
     assert point.payload["rerank"] is True
+    assert point.payload["include_scores"] is True
+    assert point.payload["token_budget"] == 512
+    assert point.payload["search_metrics"] == {
+        "scoring_version": "query-local-v1",
+        "candidate_count": 4,
+        "estimated_tokens_after": 120,
+    }
     assert point.payload["memories"][0]["id"] == "mem-1"
     assert "semantic_hit_count" not in point.payload
     assert "returned_memory_ids" not in point.payload

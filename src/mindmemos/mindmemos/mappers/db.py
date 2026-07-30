@@ -263,11 +263,15 @@ def to_search_record_point(
             "agentic": inp.agentic,
             "max_rounds": inp.max_rounds,
             "rerank": inp.rerank,
+            "include_scores": inp.include_scores,
+            "token_budget": inp.token_budget,
         }
     )
     if result is not None:
         payload["status"] = result.status
         payload["memories"] = _model_list_dump(result.memories)
+        if result.metrics:
+            payload["search_metrics"] = dict(result.metrics)
     return db.SearchRecordPoint(search_record_id=search_record_id or str(uuid4()), payload=payload)
 
 

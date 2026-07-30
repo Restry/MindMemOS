@@ -32,6 +32,7 @@ from ..typing import (
     FileMessage,
     MemoryAddEventItem,
     MemorySearchItem,
+    MemorySearchResultItem,
     SkillContext,
     TextMessage,
     UrlMessage,
@@ -178,6 +179,12 @@ class SearchRequest(ActorIdentityRequest):
     max_rounds: int = Field(default=3, ge=1)
     """Maximum agentic rounds. Ignored when search_strategy is fast."""
 
+    include_scores: bool = False
+    """Include query-local score and sanitized retrieval provenance in each result."""
+
+    token_budget: int | None = Field(default=None, ge=1)
+    """Strict maximum estimated tokens for returned memory content."""
+
 
 class GetRequest(BaseModel):
     """HTTP body for ``POST /v1/memory/get``.
@@ -242,6 +249,7 @@ class DeleteRequest(BaseModel):
 
     id: NonEmptyStr = Field(alias="memory_id")
     """Memory ID"""
+
 
 class UpdateRequest(ActorIdentityRequest):
     """HTTP body for ``POST /v1/memory/update``.
@@ -325,6 +333,12 @@ class MemoryListData(BaseModel):
     """
 
     memories: list[MemorySearchItem] = Field(default_factory=list)
+
+
+class SearchData(BaseModel):
+    """Search-specific payload that can retain opt-in relevance details."""
+
+    memories: list[MemorySearchResultItem] = Field(default_factory=list)
 
 
 class MemoryPageData(MemoryListData):

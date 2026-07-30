@@ -1,0 +1,78 @@
+[
+  {
+    "name": "zh-short-current",
+    "query": "用户喜欢什么数据库",
+    "budget": 8,
+    "candidates": [
+      {"id": "zh-qdrant", "text": "用户喜欢 Qdrant 数据库", "rank": 0, "relevance": 0.95, "event_time": "2026-01-30 00:00:00", "relevant": true},
+      {"id": "zh-long", "text": "这是一条很长的无关会议记录 包含许多不相关的历史内容", "rank": 1, "relevance": 0.20, "event_time": "2025-01-01 00:00:00", "relevant": false}
+    ]
+  },
+  {
+    "name": "en-query-overlap",
+    "query": "preferred vector database",
+    "budget": 5,
+    "candidates": [
+      {"id": "en-qdrant", "text": "preferred vector database is Qdrant", "rank": 0, "relevance": 0.88, "event_time": "2026-01-29 00:00:00", "relevant": true},
+      {"id": "en-noise", "text": "unrelated travel planning notes from last year", "rank": 1, "relevance": 0.30, "event_time": "2025-01-01 00:00:00", "relevant": false}
+    ]
+  },
+  {
+    "name": "mixed-language",
+    "query": "Agent 使用哪个 database",
+    "budget": 5,
+    "candidates": [
+      {"id": "mixed-answer", "text": "Agent uses Qdrant database", "rank": 0, "relevance": 0.90, "event_time": "2026-01-28 00:00:00", "relevant": true},
+      {"id": "mixed-noise", "text": "Agent 的旧旅行偏好 已经过期", "rank": 1, "relevance": 0.25, "event_time": "2024-01-01 00:00:00", "relevant": false}
+    ]
+  },
+  {
+    "name": "graph-expanded",
+    "query": "Kai 使用什么数据库",
+    "budget": 5,
+    "tag": "graph",
+    "candidates": [
+      {"id": "graph-answer", "text": "Kai uses Qdrant database", "rank": 0, "relevance": 0.82, "event_time": "2026-01-25 00:00:00", "relevant": true},
+      {"id": "graph-noise", "text": "A distant graph neighbor without query evidence", "rank": 1, "relevance": 0.15, "event_time": "2026-01-30 00:00:00", "relevant": false}
+    ]
+  },
+  {
+    "name": "stale-versus-current",
+    "query": "current editor",
+    "budget": 5,
+    "candidates": [
+      {"id": "current-editor", "text": "current editor is Zed", "rank": 1, "relevance": 0.85, "event_time": "2026-01-30 00:00:00", "relevant": true},
+      {"id": "stale-editor", "text": "current editor was Vim", "rank": 0, "relevance": 0.86, "event_time": "2024-01-01 00:00:00", "relevant": false}
+    ]
+  },
+  {
+    "name": "schema-rank-fallback",
+    "query": "Alice employer",
+    "budget": 4,
+    "tag": "schema",
+    "candidates": [
+      {"id": "schema-answer", "text": "Alice employer is Acme", "rank": 0, "relevance": 1.0, "event_time": "2026-01-20 00:00:00", "relevant": true},
+      {"id": "schema-noise", "text": "Bob employer is Other", "rank": 1, "relevance": 0.0, "event_time": "2026-01-20 00:00:00", "relevant": false}
+    ]
+  },
+  {
+    "name": "agentic-rank-fallback",
+    "query": "project deployment region",
+    "budget": 5,
+    "tag": "agentic",
+    "candidates": [
+      {"id": "agentic-answer", "text": "project deployment region is Singapore", "rank": 0, "relevance": 1.0, "event_time": "2026-01-20 00:00:00", "relevant": true},
+      {"id": "agentic-noise", "text": "project color theme is blue", "rank": 1, "relevance": 0.0, "event_time": "2026-01-20 00:00:00", "relevant": false}
+    ]
+  },
+  {
+    "name": "reranked-long-short",
+    "query": "coffee preference",
+    "budget": 5,
+    "tag": "reranked",
+    "candidates": [
+      {"id": "coffee-answer", "text": "coffee preference is iced Americano", "rank": 0, "relevance": 1.0, "event_time": "2026-01-30 00:00:00", "relevant": true},
+      {"id": "coffee-long", "text": "coffee preference document with many unrelated verbose background details and obsolete notes", "rank": 1, "relevance": 0.3, "event_time": "2025-01-01 00:00:00", "relevant": false}
+    ]
+  }
+]

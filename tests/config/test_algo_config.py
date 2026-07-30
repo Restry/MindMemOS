@@ -6,6 +6,7 @@ import yaml
 from mindmemos.config import (
     EpisodesChunkerConfig,
     MemoryAlgoConfig,
+    MemoryRetentionConfig,
     SchemaAddConfig,
     SearchConfig,
     TextProcessingConfig,
@@ -35,6 +36,26 @@ def test_vanilla_search_defaults_bound_prefetch_and_dedup_work() -> None:
 
     assert vanilla.hybrid_prefetch_max == 300
     assert vanilla.dedup_max_candidates == 128
+
+
+def test_memory_retention_defaults_are_bounded_and_request_gated() -> None:
+    retention = SearchConfig().retention
+
+    assert retention.min_token_budget == 1
+    assert retention.max_token_budget == 128000
+    assert retention.max_candidates == 100
+    assert retention.selector_version == "mixed-v1"
+    assert retention.estimator_version == "heuristic-v1"
+    assert retention.relevance_weight >= 0
+    assert retention.query_overlap_weight >= 0
+    assert retention.recency_weight >= 0
+    assert retention.cost_weight >= 0
+
+
+def test_dev_example_declares_all_memory_retention_fields() -> None:
+    raw_algo_config = _load_dev_example_algo_config()
+
+    _assert_declares_fields(raw_algo_config["search"]["retention"], MemoryRetentionConfig)
 
 
 def test_dev_configs_keep_vanilla_settings_in_canonical_sections() -> None:

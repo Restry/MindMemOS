@@ -114,6 +114,38 @@ class MemorySearchHit(BaseModel):
     event_time: str | None = None
     source_timestamp: str | None = None
     lineage: MemoryLineage | None = None
+    relevance: "SearchRelevance | None" = None
+
+
+class SearchGraphProvenance(BaseModel):
+    """Sanitized one-hop graph evidence returned by scored search."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    seed_memory_id: str
+    relation: str
+    hops: int = 1
+    decay: float | None = None
+    path_score: float | None = None
+    used_fallback: bool = False
+    entity_id: str | None = None
+    entity_name: str | None = None
+    entity_type: str | None = None
+
+
+class SearchRelevance(BaseModel):
+    """Query-local score details returned only when requested."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    score: float
+    scope: Literal["query_local"] = "query_local"
+    source: Literal["retrieval", "rerank", "rank_fallback"]
+    rank: int
+    retrieval_score: float | None = None
+    retrieval_score_type: str | None = None
+    rerank_score: float | None = None
+    graph: list[SearchGraphProvenance] = Field(default_factory=list)
 
 
 class SearchResult(BaseModel):
@@ -202,6 +234,9 @@ def serialize_feedback_recalled_memories(
     result: list[dict[str, Any]] = []
     for memory in memories:
         item = memory.model_dump(mode="json") if isinstance(memory, BaseModel) else dict(memory)
+        # Search relevance is query-local response metadata and is not part of
+        # the feedback endpoint's recalled-memory input contract.
+        item.pop("relevance", None)
         if item.get("memory_type") is None:
             item["memory_type"] = "fact"
         if item.get("last_update_at") is None:
@@ -256,6 +291,8 @@ def build_search_body(
     search_strategy: SearchStrategy = "fast",
     rerank: bool = False,
     score_threshold: float | None = None,
+    include_scores: bool = False,
+    token_budget: int | None = None,
     filters: dict[str, Any] | None = None,
     app_id: str | None = None,
     agent_id: str | None = None,
@@ -264,6 +301,12 @@ def build_search_body(
     """Build a memory search request body without empty optional fields."""
     if not isinstance(rerank, bool):
         raise TypeError("rerank must be a bool")
+    if not isinstance(include_scores, bool):
+        raise TypeError("include_scores must be a bool")
+    if token_budget is not None and (
+        isinstance(token_budget, bool) or not isinstance(token_budget, int) or token_budget < 1
+    ):
+        raise ValueError("token_budget must be a positive integer")
     body: dict[str, Any] = {
         "user_id": user_id,
         "query": query,
@@ -272,6 +315,10 @@ def build_search_body(
     if top_k is not None:
         body["top_k"] = top_k
     body["rerank"] = rerank
+    if include_scores:
+        body["include_scores"] = True
+    if token_budget is not None:
+        body["token_budget"] = token_budget
     if score_threshold is not None:
         body["score_threshold"] = score_threshold
     if app_id:

@@ -218,6 +218,19 @@ algo_config:
     consolidation_model:
   search:
     request_top_k_max: 100
+    retention:
+      min_token_budget: 1
+      max_token_budget: 128000
+      max_candidates: 100
+      relevance_weight: 0.50
+      query_overlap_weight: 0.25
+      recency_weight: 0.15
+      cost_weight: 0.10
+      recency_half_life_days: 30.0
+      missing_recency_score: 0.5
+      graph_provenance_limit: 8
+      selector_version: mixed-v1
+      estimator_version: heuristic-v1
     default:
       top_k: 10
     vanilla:

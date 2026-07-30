@@ -241,9 +241,17 @@ curl -X POST https://mindmemos.cn/v1/memory/search \
     "user_id": "u_123",
     "query": "What coffee does the user prefer?",
     "top_k": 5,
-    "search_strategy": "fast"
+    "search_strategy": "fast",
+    "include_scores": true,
+    "token_budget": 1200
   }'
 ```
+
+`include_scores` is opt-in and returns query-local relevance plus sanitized,
+bounded graph provenance; those scores are not comparable across queries.
+`token_budget` is a strict estimated-token limit applied after optional reranking
+and raw-score thresholding but before final `top_k`. If no memory fits, Search
+returns an empty `memories` array instead of exceeding the requested budget.
 
 For local deployment, replace the base URL with `http://127.0.0.1:8000`.
 

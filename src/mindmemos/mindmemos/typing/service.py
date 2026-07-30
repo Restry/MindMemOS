@@ -140,6 +140,39 @@ class MemorySearchItem(BaseModel):
     """Schema property name for management views."""
 
 
+class SearchGraphProvenance(BaseModel):
+    """Sanitized graph path information optionally returned by search."""
+
+    seed_memory_id: str
+    relation: str
+    hops: int = 1
+    decay: float | None = None
+    path_score: float | None = None
+    used_fallback: bool = False
+    entity_id: str | None = None
+    entity_name: str | None = None
+    entity_type: str | None = None
+
+
+class SearchRelevance(BaseModel):
+    """Query-local relevance details for an opt-in search response."""
+
+    score: float
+    scope: Literal["query_local"] = "query_local"
+    source: Literal["retrieval", "rerank", "rank_fallback"]
+    rank: int
+    retrieval_score: float | None = None
+    retrieval_score_type: str | None = None
+    rerank_score: float | None = None
+    graph: list[SearchGraphProvenance] = Field(default_factory=list)
+
+
+class MemorySearchResultItem(MemorySearchItem):
+    """Search-only result projection with optional scoring information."""
+
+    relevance: SearchRelevance | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class AddPipelineInput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -234,13 +267,22 @@ class SearchPipelineInput(BaseModel):
     include_patches: bool = True
     """Deprecated compatibility flag; vanilla search owns archived-version lineage recall."""
 
+    include_scores: bool = False
+    """Whether to include query-local score and sanitized provenance in search results."""
+
+    token_budget: int | None = Field(default=None, ge=1)
+    """Strict maximum estimated tokens for returned memory content."""
+
 
 class SearchPipelineResult(BaseModel):
     status: ServiceResultStatus
     """Service completion status."""
 
-    memories: list[MemorySearchItem]
+    memories: list[MemorySearchResultItem | MemorySearchItem]
     """Returned memories."""
+
+    metrics: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    """Bounded aggregate search metrics for the existing operation record."""
 
 
 class GetPipelineInput(BaseModel):
@@ -338,6 +380,7 @@ class DeletePipelineInput(BaseModel):
 
     id: str = Field(alias="memory_id")
     """Memory ID."""
+
 
 class DeletePipelineResult(BaseModel):
     status: ServiceResultStatus

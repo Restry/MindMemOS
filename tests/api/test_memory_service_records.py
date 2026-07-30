@@ -179,6 +179,29 @@ class CancellingStreamingAddPipeline(FakeStreamingAddPipeline):
         raise AddStreamCancelled("memory_planning", "cancelled by user")
 
 
+class HangingStreamingAddPipeline(FakeStreamingAddPipeline):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def add_sync_stream(
+        self,
+        inp: AddPipelineInput,
+        context: MemoryRequestContext,
+        *,
+        add_record_id: str | None = None,
+        progress=None,
+        cancel_check=None,
+    ):
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+
 class FakeAsyncAddPipeline(FakeAddPipeline):
     def __init__(self) -> None:
         self.async_calls: list[dict] = []
@@ -478,6 +501,35 @@ async def test_memory_service_streams_schema_add_progress_and_completion() -> No
 
 
 @pytest.mark.asyncio
+async def test_memory_service_stream_rejects_async_mode_before_recording_or_running_pipeline() -> None:
+    recorder = FakeRecorder()
+    pipeline = FakeStreamingAddPipeline()
+    service = make_service(
+        add_pipeline=pipeline,
+        add_pipeline_name="schema_add",
+        operation_recorder=recorder,
+    )
+
+    events = [
+        event
+        async for event in service.add_stream(
+            make_context(),
+            add_request().model_copy(update={"mode": "async"}),
+        )
+    ]
+
+    assert events == [
+        {
+            "event": "error",
+            "stage": "accepted",
+            "message": "streaming add only supports sync mode",
+        }
+    ]
+    assert recorder.add_calls == []
+    assert pipeline.sync_calls == []
+
+
+@pytest.mark.asyncio
 async def test_memory_service_streams_heartbeat_while_schema_add_is_idle() -> None:
     recorder = FakeRecorder()
     pipeline = SlowStreamingAddPipeline()
@@ -515,6 +567,27 @@ async def test_memory_service_records_cancelled_add_for_streaming_schema_pipelin
     assert len(recorder.cancelled_calls) == 1
     assert recorder.cancelled_calls[0]["add_record_id"] == recorder.add_calls[0]["add_record_id"]
     assert recorder.cancelled_calls[0]["reason"] == "cancelled by user"
+
+
+@pytest.mark.asyncio
+async def test_memory_service_cancels_streaming_pipeline_when_consumer_disconnects() -> None:
+    recorder = FakeRecorder()
+    pipeline = HangingStreamingAddPipeline()
+    service = make_service(
+        add_pipeline=pipeline,
+        add_pipeline_name="schema_add",
+        operation_recorder=recorder,
+    )
+    service.stream_heartbeat_seconds = 0.01
+    events = service.add_stream(make_context(), add_request())
+
+    accepted = await anext(events)
+    heartbeat = await anext(events)
+    await events.aclose()
+
+    assert accepted["event"] == "progress"
+    assert heartbeat["event"] == "heartbeat"
+    await asyncio.wait_for(pipeline.cancelled.wait(), timeout=0.2)
 
 
 @pytest.mark.asyncio
