@@ -11,7 +11,7 @@ from opentelemetry import trace
 from ..errors import ApiError
 from ..logging import add_span_event, get_logger, traced
 from ..typing import ChatResponse, Usage
-from .router import dump_response, get_response_value, litellm_response_headers, usage_tokens
+from .router import dump_response, get_response_value, litellm_response_headers, provider_error_details, usage_tokens
 
 if TYPE_CHECKING:
     from litellm import Router
@@ -87,6 +87,11 @@ class LLMClient:
             try:
                 resp = await self._router.acompletion(model=target, messages=convo, **kwargs)
             except Exception as exc:
+                error_code, error_message = provider_error_details(
+                    exc,
+                    fallback_code="llm.provider_request_failed",
+                    fallback_message="LLM provider request failed",
+                )
                 logger.info(
                     "litellm_call",
                     kind="chat",
@@ -94,11 +99,12 @@ class LLMClient:
                     model=target,
                     status="error",
                     latency_ms=round((perf_counter() - start) * 1000, 2),
-                    error=str(exc),
+                    error_code=error_code,
+                    error_type=type(exc).__name__,
                 )
                 raise ApiError(
-                    f"LLM provider request failed: {_compact_error(exc)}",
-                    code="llm.provider_request_failed",
+                    error_message,
+                    code=error_code,
                     status_code=502,
                 ) from exc
             usage = usage_tokens(getattr(resp, "usage", None))
@@ -189,8 +195,3 @@ def _annotate_llm_usage_span(*, task: str, model: str, usage: Usage) -> None:
     span.set_attribute("llm.usage.prompt_tokens", int(usage.prompt_tokens or 0))
     span.set_attribute("llm.usage.completion_tokens", int(usage.completion_tokens or 0))
     span.set_attribute("llm.usage.total_tokens", int(usage.total_tokens or 0))
-
-
-def _compact_error(exc: Exception) -> str:
-    message = str(exc).replace("\n", " ").strip()
-    return message[:500] if message else exc.__class__.__name__

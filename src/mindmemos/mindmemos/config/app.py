@@ -226,6 +226,9 @@ class ModelRouterConfig:
 
     cool_down: int | float | None = None
 
+    retry_after: int | float = 0
+    """Minimum delay in seconds before LiteLLM retries a failed endpoint."""
+
     format_parser_max_attempts: int = 3
     """Maximum chat generations when format_parser rejects model output."""
 

@@ -12,7 +12,7 @@ from ..config import get_config
 from ..errors import ApiError, ConfigNotInitializedError, EmbeddingDimensionError
 from ..logging import add_span_event, get_logger, traced, traced_awaitable
 from ..typing import EmbeddingResponse
-from .router import dump_response, get_response_value, litellm_response_headers, usage_tokens
+from .router import dump_response, get_response_value, litellm_response_headers, provider_error_details, usage_tokens
 
 if TYPE_CHECKING:
     from litellm import Router
@@ -144,6 +144,11 @@ class EmbedClient:
                 tracer_name=__name__,
             )
         except Exception as exc:
+            error_code, error_message = provider_error_details(
+                exc,
+                fallback_code="embedding.provider_request_failed",
+                fallback_message="Embedding provider request failed",
+            )
             logger.info(
                 "litellm_call",
                 kind="embedding",
@@ -151,11 +156,12 @@ class EmbedClient:
                 model=target,
                 status="error",
                 latency_ms=round((perf_counter() - start) * 1000, 2),
-                error=str(exc),
+                error_code=error_code,
+                error_type=type(exc).__name__,
             )
             raise ApiError(
-                f"Embedding provider request failed: {_compact_error(exc)}",
-                code="embedding.provider_request_failed",
+                error_message,
+                code=error_code,
                 status_code=502,
             ) from exc
         embeddings: list[list[float]] = []
@@ -190,8 +196,3 @@ class EmbedClient:
             usage=usage,
             raw_response=dump_response(resp),
         )
-
-
-def _compact_error(exc: Exception) -> str:
-    message = str(exc).replace("\n", " ").strip()
-    return message[:500] if message else exc.__class__.__name__

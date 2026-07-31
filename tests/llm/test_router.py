@@ -54,6 +54,24 @@ def test_build_router_passes_endpoint_num_retries_to_litellm_params(monkeypatch)
     assert captured["model_list"][0]["litellm_params"]["num_retries"] == 7
 
 
+def test_build_router_passes_configured_minimum_retry_interval(monkeypatch) -> None:
+    captured = {}
+
+    class FakeRouter:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(router, "Router", FakeRouter)
+    cfg = ModelRouterConfig(
+        endpoints=[ModelEndpointConfig(model="gpt-test", api_key="sk", api_base="https://example.test/v1", num_retries=2)],
+        retry_after=1,
+    )
+
+    router.build_router(cfg, "chat")
+
+    assert captured["retry_after"] == 1
+
+
 def test_litellm_param_fields_do_not_allow_stream() -> None:
     assert "stream" not in router._LITELLM_PARAM_FIELDS
 
