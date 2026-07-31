@@ -392,7 +392,7 @@ class SchemaAddPipeline(MemoryDbPipelineMixin, AddPipeline):
             await _raise_if_cancelled(cancel_check, "buffering")
             events = await self._ensure_drain_and_wait(
                 context,
-                consistency=self._consistency,
+                consistency=self._get_consistency(),
                 force=True,
                 progress=progress,
                 cancel_check=cancel_check,

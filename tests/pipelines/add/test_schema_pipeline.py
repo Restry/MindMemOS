@@ -721,6 +721,41 @@ def test_schema_add_pipeline_resolves_clients_from_current_runtime_when_provider
 
 
 @pytest.mark.asyncio
+async def test_schema_add_sync_stream_resolves_explicit_consistency():
+    class FakeBuffer:
+        async def append(self, context, inp, *, force_generation, source_add_record_id):
+            return ["buffer-record-1"]
+
+    class FakeRecorder:
+        async def mark_add_completed(self, context, add_record_id, result):
+            return None
+
+    pipeline = SchemaAddPipeline.__new__(SchemaAddPipeline)
+    pipeline.add_buffer = FakeBuffer()
+    pipeline.recorder = FakeRecorder()
+    pipeline._explicit_consistency = "strong"
+    observed = {}
+
+    async def drain(context, *, consistency, force, progress, cancel_check):
+        observed["consistency"] = consistency
+        return []
+
+    pipeline._ensure_drain_and_wait = drain
+
+    result = await pipeline.add_sync_stream(
+        AddPipelineInput(
+            mode="sync",
+            timestamp=1770000000000,
+            messages=[{"role": "user", "content": "Remember this."}],
+        ),
+        make_context(),
+    )
+
+    assert result.status == "ok"
+    assert observed["consistency"] == "strong"
+
+
+@pytest.mark.asyncio
 async def test_schema_add_pipeline_writes_entity_and_property_vectors():
     writer = FakeWriter()
     qdrant = FakeQdrant()
