@@ -178,6 +178,9 @@ class ModelEndpointConfig:
     api_base: str
     """Model API base URL."""
 
+    transport: str = "litellm"
+    """Execution transport: upstream LiteLLM or the private Platform gateway."""
+
     rpm: int | None = None
     """Allowed requests per minute."""
 

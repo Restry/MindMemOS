@@ -142,6 +142,8 @@ async def test_provider_binding_resolver_hydrates_memory_gateway_at_request_time
         endpoint = routers[router_name]["endpoints"][0]
         endpoint["api_base"] = "http://gateway:9090/litellm_memory_proxy/team-1/{userId}/v1"
         endpoint["api_key"] = "EMPTY"
+        if router_name == "embed_model_router":
+            endpoint["transport"] = "platform_gateway"
     record = ProviderBindingRecord(
         binding_id="memory-binding",
         project_id="proj-1",
@@ -149,6 +151,7 @@ async def test_provider_binding_resolver_hydrates_memory_gateway_at_request_time
         routers=routers,
     )
     monkeypatch.setenv("MINDMEMOS_GATEWAY_SERVICE_TOKEN", "memory-service-token")
+    monkeypatch.setenv("MINDMEMOS_PLATFORM_GATEWAY_ORIGIN", "http://gateway:9090")
     resolver = ProviderBindingResolver(store=FakeStore([record]), enabled=True)
 
     result = await resolver.resolve(make_context(user_id="user-1"))
@@ -158,7 +161,35 @@ async def test_provider_binding_resolver_hydrates_memory_gateway_at_request_time
         endpoint = result[router_name]["endpoints"][0]
         assert endpoint["api_base"] == "http://gateway:9090/litellm_memory_proxy/team-1/user-1/v1"
         assert endpoint["api_key"] == "memory-service-token"
+        assert endpoint["transport"] == "platform_gateway"
     assert record.routers["chat_model_router"]["endpoints"][0]["api_base"].endswith("/{userId}/v1")
+    assert record.routers["chat_model_router"]["endpoints"][0]["api_key"] == "EMPTY"
+
+
+@pytest.mark.asyncio
+async def test_provider_binding_resolver_rejects_untrusted_gateway_origin_before_injecting_token(monkeypatch) -> None:
+    routers = router_config()
+    endpoint = routers["chat_model_router"]["endpoints"][0]
+    endpoint.update(
+        {
+            "api_base": "https://attacker.example/litellm_memory_proxy/{userId}/v1",
+            "api_key": "EMPTY",
+            "transport": "platform_gateway",
+        }
+    )
+    record = ProviderBindingRecord(
+        binding_id="untrusted-memory-binding",
+        project_id="proj-1",
+        scope=ProviderBindingScope(user_id="user-1"),
+        routers=routers,
+    )
+    monkeypatch.setenv("MINDMEMOS_GATEWAY_SERVICE_TOKEN", "memory-service-token")
+    monkeypatch.setenv("MINDMEMOS_PLATFORM_GATEWAY_ORIGIN", "http://gateway:9090")
+    resolver = ProviderBindingResolver(store=FakeStore([record]), enabled=True)
+
+    with pytest.raises(BadRequestError, match="trusted Platform gateway"):
+        await resolver.resolve(make_context(user_id="user-1"))
+
     assert record.routers["chat_model_router"]["endpoints"][0]["api_key"] == "EMPTY"
 
 

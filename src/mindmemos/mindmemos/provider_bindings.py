@@ -82,6 +82,11 @@ class QdrantProviderBindingStore:
         self._clients = resolve_database_clients(clients)
 
     async def upsert(self, record: ProviderBindingRecord) -> ProviderBindingRecord:
+        config_hash = _binding_content_hash(record)
+        existing = await self._clients.qdrant.get_provider_binding(record.project_id, record.binding_id)
+        if existing is not None and existing.payload.get("config_hash") == config_hash:
+            return record
+
         now = datetime.now(UTC)
         payload = {
             "binding_id": record.binding_id,
@@ -90,10 +95,9 @@ class QdrantProviderBindingStore:
             "scope": record.scope.compact_dict(),
             "routers": record.routers,
             "enabled": record.enabled,
-            "config_hash": _config_hash(record.routers),
+            "config_hash": config_hash,
             "updated_at": now,
         }
-        existing = await self._clients.qdrant.get_provider_binding(record.project_id, record.binding_id)
         payload["created_at"] = existing.payload.get("created_at") if existing is not None else now
         await self._clients.qdrant.upsert_provider_binding(
             ProviderBindingPoint(binding_id=record.binding_id, payload=payload)
@@ -310,7 +314,11 @@ def _hydrate_memory_gateway_routers(routers: dict[str, Any], ctx: MemoryRequestC
         endpoint
         for router_name in ("chat_model_router", "embed_model_router", "rerank_model_router")
         for endpoint in _router_endpoints(hydrated, router_name)
-        if MEMORY_GATEWAY_ROUTE_MARKER in str(endpoint.get("api_base") or "")
+        if endpoint.get("transport") == "platform_gateway"
+        or (
+            endpoint.get("transport") is None
+            and MEMORY_GATEWAY_ROUTE_MARKER in str(endpoint.get("api_base") or "")
+        )
     ]
     if not memory_endpoints:
         return hydrated
@@ -327,9 +335,21 @@ def _hydrate_memory_gateway_routers(routers: dict[str, Any], ctx: MemoryRequestC
             code="provider_binding.memory_gateway_token_missing",
         )
 
+    from .llm.gateway import is_trusted_platform_gateway_url
+
     for endpoint in memory_endpoints:
-        endpoint["api_base"] = str(endpoint["api_base"]).replace("{userId}", ctx.user_id)
+        api_base = str(endpoint.get("api_base") or "")
+        hydrated_base = api_base.replace("{userId}", ctx.user_id)
+        if "{userId}" not in api_base or not is_trusted_platform_gateway_url(hydrated_base):
+            raise BadRequestError(
+                "memory gateway route must use the configured trusted Platform gateway origin",
+                code="provider_binding.memory_gateway_route_untrusted",
+            )
+        endpoint["api_base"] = hydrated_base
         endpoint["api_key"] = service_token
+        # In-memory migration for bindings written before explicit transports
+        # were introduced. The stored binding remains unchanged.
+        endpoint["transport"] = "platform_gateway"
     return hydrated
 
 
@@ -369,6 +389,18 @@ def _record_from_qdrant(record: QdrantRecord) -> ProviderBindingRecord:
 
 def _config_hash(config: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _binding_content_hash(record: ProviderBindingRecord) -> str:
+    """Fingerprint all mutable persisted binding content, excluding timestamps."""
+
+    return _config_hash(
+        {
+            "scope": record.scope.compact_dict(),
+            "routers": record.routers,
+            "enabled": record.enabled,
+        }
+    )
 
 
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
