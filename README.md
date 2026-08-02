@@ -4,19 +4,19 @@
 
 <p align="center">
   <a href="https://mindmemos.cn">
-    <img src="https://img.shields.io/badge/Website-mindmemos.cn-0A66C2?labelColor=gray&style=for-the-badge&logo=googlechrome&logoColor=white" alt="MindMemOS Website">
+    <img src="https://img.shields.io/badge/Website-mindmemos.cn-0A66C2?labelColor=gray&logo=googlechrome&logoColor=white" alt="MindMemOS Website">
   </a>
   <a href="https://mindmemos.cn/api-docs">
-    <img src="https://img.shields.io/badge/FastAPI-Docs-009688?labelColor=gray&style=for-the-badge&logo=fastapi&logoColor=white" alt="MindMemOS FastAPI Docs">
+    <img src="https://img.shields.io/badge/FastAPI-Docs-009688?labelColor=gray&logo=fastapi&logoColor=white" alt="MindMemOS FastAPI Docs">
   </a>
   <a href="https://pypi.org/project/mindmemos-sdk/">
-    <img src="https://img.shields.io/pypi/v/mindmemos-sdk?color=%2334D058&label=pypi%20sdk&labelColor=gray&style=for-the-badge&logo=pypi&logoColor=white" alt="MindMemOS SDK PyPI version">
+    <img src="https://img.shields.io/pypi/v/mindmemos-sdk?color=%2334D058&label=pypi%20sdk&labelColor=gray&logo=pypi&logoColor=white" alt="MindMemOS SDK PyPI version">
   </a>
   <a href="https://www.npmjs.com/package/@mindmemos/openclaw-plugin">
-    <img src="https://img.shields.io/npm/v/%40mindmemos%2Fopenclaw-plugin?label=npm%20plugin&labelColor=gray&style=for-the-badge&logo=npm&logoColor=white" alt="MindMemOS OpenClaw Plugin npm version">
+    <img src="https://img.shields.io/npm/v/%40mindmemos%2Fopenclaw-plugin?label=npm%20plugin&labelColor=gray&logo=npm&logoColor=white" alt="MindMemOS OpenClaw Plugin npm version">
   </a>
   <a href="#license">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg?labelColor=gray&style=for-the-badge" alt="MIT License">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg?labelColor=gray" alt="MIT License">
   </a>
 </p>
 
@@ -49,6 +49,10 @@
 - **Self-evolving memory system**: Continuously improve memory quality through schema learning, dreaming, and feedback by automatically learning frequent memory patterns, consolidating memories offline, and using interaction corrections to optimize add/search workflows.
 - **Memory and Skills integration**: Experience memories can be distilled into skill candidates, while skill execution results, failure traces, and user feedback flow back into the memory system to drive continuous skill evolution.
 - **Plugin integrations**: Connect MindMemOS to different agents and workflows through plugins that retrieve and inject relevant memories before interactions and automatically write conversations back afterward. The [OpenClaw Plugin](https://www.npmjs.com/package/@mindmemos/openclaw-plugin) is currently available, with more integrations in progress.
+
+<p align="center">
+  <img src="./assets/mindmemos-benchmark-overview.png" alt="MindMemOS benchmark results overview">
+</p>
 
 ## 🚀 Quick Start
 

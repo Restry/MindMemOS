@@ -4,19 +4,19 @@
 
 <p align="center">
   <a href="https://mindmemos.cn">
-    <img src="https://img.shields.io/badge/Website-mindmemos.cn-0A66C2?labelColor=gray&style=for-the-badge&logo=googlechrome&logoColor=white" alt="MindMemOS 官网">
+    <img src="https://img.shields.io/badge/Website-mindmemos.cn-0A66C2?labelColor=gray&logo=googlechrome&logoColor=white" alt="MindMemOS 官网">
   </a>
   <a href="https://mindmemos.cn/api-docs">
-    <img src="https://img.shields.io/badge/FastAPI-Docs-009688?labelColor=gray&style=for-the-badge&logo=fastapi&logoColor=white" alt="MindMemOS FastAPI 手册">
+    <img src="https://img.shields.io/badge/FastAPI-Docs-009688?labelColor=gray&logo=fastapi&logoColor=white" alt="MindMemOS FastAPI 手册">
   </a>
   <a href="https://pypi.org/project/mindmemos-sdk/">
-    <img src="https://img.shields.io/pypi/v/mindmemos-sdk?color=%2334D058&label=pypi%20sdk&labelColor=gray&style=for-the-badge&logo=pypi&logoColor=white" alt="MindMemOS SDK PyPI 版本">
+    <img src="https://img.shields.io/pypi/v/mindmemos-sdk?color=%2334D058&label=pypi%20sdk&labelColor=gray&logo=pypi&logoColor=white" alt="MindMemOS SDK PyPI 版本">
   </a>
   <a href="https://www.npmjs.com/package/@mindmemos/openclaw-plugin">
-    <img src="https://img.shields.io/npm/v/%40mindmemos%2Fopenclaw-plugin?label=npm%20plugin&labelColor=gray&style=for-the-badge&logo=npm&logoColor=white" alt="MindMemOS OpenClaw 插件 npm 版本">
+    <img src="https://img.shields.io/npm/v/%40mindmemos%2Fopenclaw-plugin?label=npm%20plugin&labelColor=gray&logo=npm&logoColor=white" alt="MindMemOS OpenClaw 插件 npm 版本">
   </a>
   <a href="#license">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg?labelColor=gray&style=for-the-badge" alt="MIT License">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg?labelColor=gray" alt="MIT License">
   </a>
 </p>
 
