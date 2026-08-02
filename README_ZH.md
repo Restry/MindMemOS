@@ -27,7 +27,7 @@
   &nbsp;&nbsp;│&nbsp;&nbsp;
   <strong><a href="https://mindmemos.cn/api-docs">API 文档</a></strong>
   &nbsp;&nbsp;│&nbsp;&nbsp;
-  <strong><a href="https://pypi.org/project/mindmemos-sdk/">Pypi SDK</a></strong>
+  <strong><a href="https://pypi.org/project/mindmemos-sdk/">PYPI SDK</a></strong>
   &nbsp;&nbsp;│&nbsp;&nbsp;
   <strong><a href="docs/deploy/instruction_ZH.md">如何部署</a></strong>
 </p>
@@ -49,6 +49,10 @@
 - **记忆系统可自主演化**：通过 schema learning、dreaming、feedback 持续优化记忆质量，自动学习高频记忆点、离线巩固合并记忆，并从交互纠错中反向优化 add/search 流程。
 - **记忆与 Skills 联动**：经验记忆可以沉淀为 skill candidates；skills 的执行结果、失败轨迹和用户反馈也会回流到记忆系统，推动 skills 持续演进。
 - **插件集成能力**：支持通过插件将 MindMemOS 接入不同 Agent 与工作流，在交互前检索并注入相关记忆、回合结束后自动写回对话，当前已提供 [OpenClaw 插件](https://www.npmjs.com/package/@mindmemos/openclaw-plugin)，并持续扩展更多集成。
+
+<p align="center">
+  <img src="./assets/mindmemos-benchmark-overview.png" alt="MindMemOS 基准测试结果概览">
+</p>
 
 ## 🚀 快速开始
 ### 1. 本地部署
@@ -258,17 +262,6 @@ mindmemos skill unregister my-skill
 | EverOS                     | 96.67 | 91.84 | 89.72 | 76.04  | 93.05 |
 | **MindMemOS-Vanilla**      | 92.03 | 85.82 | 83.80 | 66.67  | 87.60 |
 | **MindMemOS-Modeling**     | **96.79** | **93.97** | **90.34** | **82.29** | **94.03** |
-
-### 📚 长期交互记忆：LongMemEval
-
-- **评测基准**：[LongMemEval](https://arxiv.org/abs/2410.10813) 面向聊天助手的长期交互记忆评测，覆盖信息抽取、多会话推理、知识更新、时序推理和拒答等核心能力。
-
-| Method | SS-User | SS-Ass | SS-Pref | Multi-S | Know. Upd | Temp. Reas | Overall |
-| :----- | :-----: | :----: | :-----: | :-----: | :--------: | :--------: | :-----: |
-| Mem0 | 82.86 | 26.78 | 90.00 | 63.15 | 66.67 | 72.18 | 66.40 |
-| MemOS | 95.71 | 67.86 | 96.67 | 70.67 | 74.26 | 77.44 | 77.80 |
-| EverOS | 97.14 | 85.71 | 93.33 | 73.68 | 89.74 | 77.44 | 83.00 |
-| **MindMemOS-Vanilla** | 60.00 | 76.79 | 50.00 | 48.87 | 82.05 | 54.14 | 60.20 |
 
 ### 👤 用户画像记忆：PersonaMem
 
