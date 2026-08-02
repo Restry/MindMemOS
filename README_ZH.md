@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/mindmemos-hero.png" alt="MindMemOS Memory For AI Agents">
+  <img src="./assets/mindmemos-readme-hero.png" alt="MindMemOS Memory For AI Agents">
 </p>
 
 <p align="center">
