@@ -260,8 +260,8 @@ mindmemos skill unregister my-skill
 | MemOS                      | 85.37 | 79.43 | 75.08 | 64.58  | 80.76 |
 | Zep                        | 90.84 | 81.91 | 77.26 | 75.00  | 85.22 |
 | EverOS                     | 96.67 | 91.84 | 89.72 | 76.04  | 93.05 |
-| **MindMemOS-Vanilla**      | 92.03 | 85.82 | 83.80 | 66.67  | 87.60 |
-| **MindMemOS-Modeling**     | **96.79** | **93.97** | **90.34** | **82.29** | **94.03** |
+| **MindMemOS-MindVanilla** | 92.03 | 85.82 | 83.80 | 66.67  | 87.60 |
+| **MindMemOS-MindSchema**  | **96.79** | **93.97** | **90.34** | **82.29** | **94.03** |
 
 ### 👤 用户画像记忆：PersonaMem
 
@@ -273,8 +273,8 @@ mindmemos skill unregister my-skill
 | MemU | 64.34 | 64.71 | 66.20 | 87.88 | 31.18 | 67.27 | 84.21 | 65.70 |
 | MemOS | 53.49 | 82.35 | 66.91 | 79.80 | 41.94 | 69.09 | 75.44 | 63.67 |
 | EverOS | 74.42 | 64.71 | 64.03 | 85.86 | 35.48 | 65.45 | 84.21 | 67.57 |
-| **MindMemOS-Vanilla** | 76.74 | 88.24 | 65.47 | 87.88 | 17.20 | 80.00 | 82.46 | 67.74 |
-| **MindMemOS-Modeling** | 81.40 | 64.71 | 64.75 | 82.83 | 47.31 | 76.36 | 73.68 | 70.63 |
+| **MindMemOS-MindVanilla** | 76.74 | 88.24 | 65.47 | 87.88 | 17.20 | 80.00 | 82.46 | 67.74 |
+| **MindMemOS-MindSchema** | 81.40 | 64.71 | 64.75 | 82.83 | 47.31 | 76.36 | 73.68 | 70.63 |
 
 ### 🌙 记忆巩固：MemoryAgentBench（FactConsolidation）
 
@@ -286,12 +286,12 @@ mindmemos skill unregister my-skill
 | Mem0                               | 0.180 | — | 0.020 | — |
 | MemoRAG                            | 0.270 | — | 0.070 | — |
 | HippoRAG-v2                        | 0.540 | — | 0.050 | — |
-| MindMemOS (Vanilla)                | 0.635 | — | 0.118 | — |
-| **MindMemOS (Vanilla + Dreaming)** | 0.738 | 21.4% | 0.180 | 19.4% |
+| MindMemOS-MindVanilla              | 0.635 | — | 0.118 | — |
+| **MindMemOS-MindVanilla + Dreaming** | 0.738 | 21.4% | 0.180 | 19.4% |
 | **GPT-5-mini**                     |  |  |  |  |
 | Infini Memory                      | 0.800 | — | 0.220 | — |
-| MindMemOS (Vanilla)                | 0.900 | — | 0.190 | — |
-| **MindMemOS (Vanilla + Dreaming)**     | 0.920 | 23.5% | 0.250 | 21.5% |
+| MindMemOS-MindVanilla              | 0.900 | — | 0.190 | — |
+| **MindMemOS-MindVanilla + Dreaming** | 0.920 | 23.5% | 0.250 | 21.5% |
 
 ### 🧠 Skill 自演进：SpreadsheetBench-Verified
 
@@ -301,8 +301,8 @@ mindmemos skill unregister my-skill
 | :----- | :----------: | :-------------: | :----------: | :-----------: |
 | No-skill | 51.3% ± 0.8% | 11.227 | 10.4M | - |
 | Init-skill | 48.0% ± 1.4% | 15.350 | 16.9M | - |
-| **MindMemOS-Unsup.** | **55.3% ± 0.9%** | 15.470 | 27.3M | 5.8M |
-| **MindMemOS-Sup.** | **57.2% ± 2.4%** | 15.631 | 25.2M | 5.5M |
+| **MindMemOS-MindEvolve-Unsup.** | **55.3% ± 0.9%** | 15.470 | 27.3M | 5.8M |
+| **MindMemOS-MindEvolve-Sup.** | **57.2% ± 2.4%** | 15.631 | 25.2M | 5.5M |
 
 ## 🗺️ Coming Features
 
