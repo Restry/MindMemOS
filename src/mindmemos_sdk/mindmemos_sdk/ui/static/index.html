@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MindMemOS · SDK Console</title>
-    <link rel="stylesheet" href="/app.css?v=console-13" />
+    <link rel="stylesheet" href="/app.css?v=console-19" />
   </head>
   <body>
     <div class="app-shell">
@@ -19,6 +19,7 @@
         <nav class="tabs" aria-label="Primary navigation">
           <button class="tab active" type="button" data-tab="overview">Overview</button>
           <button class="tab" type="button" data-tab="memory">Memory</button>
+          <button class="tab" type="button" data-tab="lite">Lite Logs</button>
           <button class="tab" type="button" data-tab="skills">Skills</button>
           <button class="tab" type="button" data-tab="settings">Settings</button>
         </nav>
@@ -145,6 +146,103 @@
           <section id="memory-list" class="memory-list" aria-live="polite">
             <div class="memory-empty-state"><div class="empty-icon small">◌</div><strong>Memory is not loaded</strong><span>Configure a User ID and API key, then refresh.</span></div>
           </section>
+        </div>
+
+        <div id="lite-page" class="page-panel hidden" data-page="lite">
+          <section id="lite-traces-view">
+            <div id="lite-notice" class="settings-notice">
+              <span class="notice-icon">i</span>
+              <span>View logs produced by the local Lite runtime. SQLite observability files are opened read-only by the local SDK service.</span>
+            </div>
+
+            <article class="panel-card lite-trace-toolbar">
+              <div class="panel-heading">
+                <div>
+                  <p class="section-kicker">LOCAL LITE LOGS</p>
+                  <h2>Lite log explorer</h2>
+                  <p class="card-description">Inspect trace logs generated in local Lite mode. Load span records from SQLite, filter by span name, then resolve any span back to its root trace.</p>
+                </div>
+                <span id="lite-database-badge" class="muted-badge">NOT LOADED</span>
+              </div>
+              <div class="lite-path-controls">
+                <label class="field lite-path-field">
+                  <span>Trace directory or SQLite file</span>
+                  <input id="lite-trace-directory" value=".mindmemos/observability" placeholder="/absolute/path/to/observability" spellcheck="false" />
+                </label>
+                <label class="field lite-limit-field">
+                  <span>Page size</span>
+                  <input id="lite-trace-limit" type="number" min="1" max="500" value="25" />
+                </label>
+                <button id="lite-load-traces" class="primary-button" type="button">Load spans</button>
+                <button id="lite-refresh-traces" class="outline-button enabled" type="button">Refresh</button>
+              </div>
+            </article>
+
+            <div class="lite-trace-summary-line">
+              <span id="lite-trace-directory-label">No directory selected</span>
+              <span id="lite-trace-count">0 spans</span>
+            </div>
+
+            <section class="lite-trace-workspace">
+              <aside class="panel-card lite-trace-list-card">
+                <div class="panel-heading">
+                  <div>
+                    <p class="section-kicker">SPANS</p>
+                    <h2>Span records</h2>
+                  </div>
+                </div>
+                <div class="lite-filter-controls">
+                  <label class="field lite-filter-field">
+                    <span>Filter by span name</span>
+                    <input id="lite-span-name-filter" type="search" placeholder="e.g. llm.chat" spellcheck="false" />
+                  </label>
+                  <div class="lite-filter-actions">
+                    <button id="lite-apply-filter" class="outline-button enabled" type="button">Filter</button>
+                    <button id="lite-clear-filter" class="text-button" type="button">Clear</button>
+                  </div>
+                </div>
+                <div id="lite-trace-list" class="lite-trace-list" aria-live="polite">
+                  <div class="lite-empty-state">
+                    <div class="empty-icon small">⌁</div>
+                    <strong>No spans loaded</strong>
+                    <span>Enter the directory that contains Lite SQLite logs.</span>
+                  </div>
+                </div>
+                <nav class="lite-span-pagination" aria-label="Span pagination">
+                  <button id="lite-previous-page" class="outline-button enabled" type="button" disabled>← Previous</button>
+                  <span id="lite-page-status">Page 1 of 1</span>
+                  <button id="lite-next-page" class="outline-button enabled" type="button" disabled>Next →</button>
+                </nav>
+              </aside>
+
+              <article class="panel-card lite-flame-card">
+                <div id="lite-trace-heading" class="panel-heading">
+                  <div>
+                    <p class="section-kicker">FLAME CHART</p>
+                    <h2>Select a trace</h2>
+                    <p class="card-description">Each span occupies one timeline row. Click a row to expand or collapse its direct sub-spans.</p>
+                  </div>
+                  <span id="lite-trace-status" class="muted-badge">EMPTY</span>
+                </div>
+                <div id="lite-root-context" class="lite-root-context hidden" aria-live="polite"></div>
+                <div id="lite-flame-chart" class="lite-flame-chart">
+                  <div class="lite-empty-state">
+                    <div class="empty-icon">◇</div>
+                    <strong>No trace selected</strong>
+                    <span>Choose any span to inspect its trace and available span hierarchy.</span>
+                  </div>
+                </div>
+
+                <section id="lite-span-detail" class="lite-span-detail" aria-live="polite">
+                  <div class="lite-empty-state compact">
+                    <strong>Span details</strong>
+                    <span>Click any flame block to inspect timing, attributes, events, input, and output.</span>
+                  </div>
+                </section>
+              </article>
+            </section>
+          </section>
+
         </div>
 
         <div id="skills-page" class="page-panel hidden" data-page="skills">
@@ -352,6 +450,6 @@
         <span>Local SDK console</span>
       </footer>
     </div>
-    <script src="/app.js?v=console-14" defer></script>
+    <script src="/app.js?v=console-20" defer></script>
   </body>
 </html>

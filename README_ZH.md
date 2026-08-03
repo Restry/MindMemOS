@@ -68,8 +68,12 @@ uv run python -m mindmemos_eval.cli memory \
   --benchmark-list locomo \
   --algorithm schema \
   --manifest-output output/locomo_manifest.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml
+  --auth-config-output config/mindmemos/eval_api_keys.yaml
 ```
+
+`--auth-config-output` 写入完整的 MindMemOS HTTP benchmark 身份配置；它与
+`runner.*llm.api_key` 中配置的模型供应商 API Key 不同。`--api-key-output`
+是旧版兼容别名，后续将弃用。
 
 ### Evaluation of Persona Memory
 
@@ -97,7 +101,7 @@ uv run python -m mindmemos_eval.cli memory \
   --benchmark-list personamem \
   --algorithm schema \
   --manifest-output output/personamem_manifest.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml
+  --auth-config-output config/mindmemos/eval_api_keys.yaml
 ```
 
 

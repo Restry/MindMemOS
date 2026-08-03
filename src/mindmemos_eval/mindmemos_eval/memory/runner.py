@@ -10,13 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from mindmemos_sdk.memory import AsyncMemoryClient
-from mindmemos_sdk.transport import AsyncHttpTransport
 
 from mindmemos_eval.memory.envs.locomo import LocomoAdapter
 from mindmemos_eval.memory.envs.longmemeval.adapter import LongMemEvalAdapter
 from mindmemos_eval.memory.envs.memoryagentbench.adapter import MemoryAgentBenchAdapter
 from mindmemos_eval.memory.envs.personamem import PersonaMemAdapter
 
+from ..backend import MindMemOSBackend, adapt_project_override_config_for_lite, build_mindmemos_backend
 from ..llm import LLMClient, LLMConfig
 from .base import BenchmarkAdapter, BenchmarkSpec, RunContext, RunnerConfig
 from .config import _merged_runner_config, _option, load_benchmark_specs, validate_memory_algorithm
@@ -79,11 +79,14 @@ def add_memory_args(parser: argparse.ArgumentParser) -> None:
         help="Path to the JSONL manifest written for this run; parent directories are created if needed.",
     )
     parser.add_argument(
+        "--auth-config-output",
         "--api-key-output",
+        dest="auth_config_output",
         required=False,
         metavar="PATH",
-        help="Path to the generated api_keys YAML consumed by the FastAPI server; it should match the server "
-        "auth.api_key_file. Required for fresh runs; optional (unused) when --reuse-api-key is set.",
+        help="Path to the complete benchmark auth config YAML generated for the MindMemOS HTTP server; "
+        "required for fresh HTTP runs, not needed for in-memory runs or with --reuse-api-key, and the target "
+        "file is completely overwritten. --api-key-output is a deprecated compatibility alias.",
     )
     parser.add_argument(
         "--algorithm",
@@ -98,15 +101,44 @@ def add_memory_args(parser: argparse.ArgumentParser) -> None:
         help="Legacy override for only the memory_algorithm binding; currently validated to vanilla or schema.",
     )
     parser.add_argument(
+        "--memory-connection-mode",
+        choices=("http", "in_memory"),
+        default="http",
+        help="Use the public HTTP API or an embedded MindMemOS Lite runtime for memory operations.",
+    )
+    parser.add_argument(
         "--base-url",
         metavar="URL",
-        help="Base URL of the running MindMemOS FastAPI service used for add/search requests.",
+        help="Base URL of a MindMemOS main or Lite FastAPI service; used only in HTTP mode.",
     )
     parser.add_argument(
         "--timeout-seconds",
         type=float,
         metavar="SECONDS",
         help="HTTP timeout for memory API calls in seconds; must be parseable as a float.",
+    )
+    parser.add_argument(
+        "--lite-config-path",
+        metavar="PATH",
+        help="Lite YAML config path used only in in-memory mode.",
+    )
+    parser.add_argument(
+        "--lite-config-name",
+        default="dev",
+        metavar="NAME",
+        help="Bundled Lite config name used in in-memory mode when no config path is set.",
+    )
+    parser.add_argument(
+        "--lite-load-config-from-env",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Build the embedded Lite runtime from environment variables.",
+    )
+    parser.add_argument(
+        "--lite-start-workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Start Lite's in-process workers, required for asynchronous memory operations.",
     )
     parser.add_argument(
         "--limit",
@@ -174,6 +206,15 @@ def add_memory_args(parser: argparse.ArgumentParser) -> None:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Whether to execute the memory ingestion stage before answering; use --add or --no-add.",
+    )
+    parser.add_argument(
+        "--dreaming-after-add",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "For MemoryAgentBench, answer once after all adds as the baseline, run synchronous Dreaming, "
+            "then answer the same benchmark again."
+        ),
     )
     parser.add_argument(
         "--score",
@@ -345,6 +386,12 @@ class RequestIdMemoryClient:
         self._ctx.record_request_id("search", getattr(result, "request_id", None))
         return result
 
+    async def dreaming(self, *args: Any, **kwargs: Any) -> Any:
+        """Call ``dreaming`` and record the request id returned by the server."""
+        result = await self._inner.dreaming(*args, **kwargs)
+        self._ctx.record_request_id("dreaming", getattr(result, "request_id", None))
+        return result
+
 
 class NotImplementedAdapter:
     """Placeholder adapter for planned benchmark datasets."""
@@ -383,11 +430,43 @@ def _parse_benchmark_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _auth_config_output(args: argparse.Namespace) -> str | Path | None:
+    """Resolve the auth config output, including legacy Namespace compatibility."""
+    return _option(args, "auth_config_output") or _option(args, "api_key_output")
+
+
 def _build_memory_client(
-    base_url: str, api_key: str, timeout_seconds: float
-) -> tuple[AsyncMemoryClient, AsyncHttpTransport]:
-    transport = AsyncHttpTransport(base_url=base_url, api_key=api_key, timeout_seconds=timeout_seconds)
-    return AsyncMemoryClient(transport), transport
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+    *,
+    connection_mode: str = "http",
+    project_id: str,
+    lite_config_path: str | None = None,
+    lite_config_name: str = "dev",
+    lite_load_config_from_env: bool = False,
+    lite_start_workers: bool = True,
+    project_override_config: dict[str, Any] | None = None,
+    memory_algorithm: str = "vanilla",
+) -> MindMemOSBackend:
+    if connection_mode == "in_memory":
+        project_override_config = adapt_project_override_config_for_lite(
+            project_override_config,
+            memory_algorithm=memory_algorithm,
+        )
+    return build_mindmemos_backend(
+        connection_mode=connection_mode,
+        base_url=base_url,
+        api_key=api_key,
+        project_id=project_id,
+        timeout_seconds=timeout_seconds,
+        lite_config_path=lite_config_path,
+        lite_config_name=lite_config_name,
+        lite_load_config_from_env=lite_load_config_from_env,
+        lite_start_workers=lite_start_workers,
+        project_override_config=project_override_config,
+        app_id="mindmemos-eval",
+    )
 
 
 def _build_llm_client(config: RunnerConfig, *, prefix: str) -> LLMClient:
@@ -424,11 +503,11 @@ async def run_benchmark_matrix(
     args: argparse.Namespace,
     *,
     adapters: dict[str, BenchmarkAdapter] | None = None,
-    memory_client_factory: Callable[[RunIdentity], Awaitable[tuple[Any, Any]]] | None = None,
+    memory_client_factory: Callable[[RunIdentity], Awaitable[MindMemOSBackend]] | None = None,
     answer_llm_factory: Callable[[], LLMClient] | None = None,
     judge_llm_factory: Callable[[], LLMClient] | None = None,
 ) -> list[BenchmarkRunManifest]:
-    """Run configured benchmarks and write api-key and manifest outputs."""
+    """Run configured benchmarks and write auth-config and manifest outputs."""
     specs = load_benchmark_specs(
         args.benchmark_config,
         algorithm_override=_option(args, "algorithm"),
@@ -436,6 +515,8 @@ async def run_benchmark_matrix(
     )
     runner = _merged_runner_config(args)
     setattr(args, "runner_config", runner)
+    connection_mode = _option(args, "memory_connection_mode", "http")
+    auth_config_output = _auth_config_output(args)
     benchmark_names = _parse_benchmark_list(args.benchmark_list)
     registry = adapters or default_adapters()
 
@@ -459,8 +540,11 @@ async def run_benchmark_matrix(
             existing.api_key[:40],
         )
     else:
-        if not _option(args, "api_key_output"):
-            raise ValueError("--api-key-output is required for fresh runs (omit it only with --reuse-api-key)")
+        if connection_mode == "http" and not auth_config_output:
+            raise ValueError(
+                "--auth-config-output is required for fresh HTTP runs "
+                "(omit it for in-memory runs or when --reuse-api-key is set)"
+            )
         identities = [
             new_identity(
                 name,
@@ -470,7 +554,8 @@ async def run_benchmark_matrix(
             )
             for name in benchmark_names
         ]
-        write_api_keys(args.api_key_output, identities)
+        if auth_config_output:
+            write_api_keys(auth_config_output, identities)
 
     reset_cfg = _build_reset_config(args)
     skip_clean = bool(_option(args, "skip_clean"))
@@ -481,18 +566,30 @@ async def run_benchmark_matrix(
         adapter = registry[identity.benchmark]
         ctx = RunContext(identity=identity)
         started_at = datetime.now(UTC)
-        transport: Any | None = None
 
         if memory_client_factory is None:
-            memory, transport = _build_memory_client(runner.base_url, identity.api_key, runner.timeout_seconds)
+            backend = _build_memory_client(
+                runner.base_url,
+                identity.api_key,
+                runner.timeout_seconds,
+                connection_mode=connection_mode,
+                project_id=identity.project_id,
+                lite_config_path=_option(args, "lite_config_path"),
+                lite_config_name=_option(args, "lite_config_name", "dev"),
+                lite_load_config_from_env=bool(_option(args, "lite_load_config_from_env", False)),
+                lite_start_workers=bool(_option(args, "lite_start_workers", True)),
+                project_override_config=identity.project_override_config,
+                memory_algorithm=identity.memory_algorithm,
+            )
         else:
-            memory, transport = await memory_client_factory(identity)
+            backend = await memory_client_factory(identity)
 
         try:
-            wrapped_memory = RequestIdMemoryClient(memory, ctx)
+            await backend.start()
+            wrapped_memory = RequestIdMemoryClient(backend.memory, ctx)
             answer_llm = answer_llm_factory() if answer_llm_factory else _build_llm_client(runner, prefix="answer")
             judge_llm = judge_llm_factory() if judge_llm_factory else _build_llm_client(runner, prefix="judge")
-            if runner.add and not skip_clean:
+            if runner.add and not skip_clean and connection_mode == "http":
                 logger.info(
                     "project_reset_started benchmark=%s project_id=%s",
                     identity.benchmark,
@@ -527,8 +624,7 @@ async def run_benchmark_matrix(
                 args=args,
             )
         finally:
-            if transport is not None and hasattr(transport, "aclose"):
-                await transport.aclose()
+            await backend.aclose()
 
         finished_at = datetime.now(UTC)
         manifest = BenchmarkRunManifest(
@@ -537,7 +633,7 @@ async def run_benchmark_matrix(
             key_id=identity.key_id,
             project_id=identity.project_id,
             memory_algorithm=identity.memory_algorithm,
-            api_key_file=str(getattr(args, "_reused_key_file", args.api_key_output)),
+            api_key_file=str(getattr(args, "_reused_key_file", auth_config_output or "")),
             request_ids=ctx.request_ids,
             request_metadata=ctx.request_metadata,
             eval_result=eval_result,

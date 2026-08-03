@@ -8,7 +8,8 @@ schema migration here.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,7 +24,7 @@ class AuthConfig(BaseModel):
 
 
 class DefaultsConfig(BaseModel):
-    """Default user identity injected into requests."""
+    """SDK-wide actor identity defaults injected into resource requests."""
 
     user_id: str | None = None
     app_id: str | None = None
@@ -62,6 +63,50 @@ class NetworkConfig(BaseModel):
     max_retries: int = 2
 
 
+class HttpConnectionConfig(BaseModel):
+    """One shared asynchronous HTTP connection."""
+
+    type: Literal["http"] = "http"
+    base_url: str
+    api_key: str | None = None
+    timeout_seconds: float = 30.0
+    max_retries: int = 2
+
+
+class InMemoryConnectionConfig(BaseModel):
+    """One shared in-process runtime connection."""
+
+    type: Literal["in_memory"] = "in_memory"
+    runtime: Literal["mindmemos_lite"] = "mindmemos_lite"
+    project_id: str
+    config_path: Path | None = None
+    config_name: str = "dev"
+    load_config_from_env: bool = False
+    start_workers: bool = True
+    account_id: str = "local"
+    api_key_uuid: str = "local-sdk"
+    project_override_config: dict[str, Any] | None = None
+
+
+ConnectionConfig = Annotated[
+    HttpConnectionConfig | InMemoryConnectionConfig,
+    Field(discriminator="type"),
+]
+
+
+class ClientConnectionConfig(BaseModel):
+    """Route one SDK resource client to a named connection."""
+
+    connection: str = "default"
+
+
+class ClientsConfig(BaseModel):
+    """Per-resource connection routing."""
+
+    memory: ClientConnectionConfig = Field(default_factory=ClientConnectionConfig)
+    skills: ClientConnectionConfig = Field(default_factory=ClientConnectionConfig)
+
+
 class ConfigMetadata(BaseModel):
     """Bookkeeping timestamps for the config file."""
 
@@ -80,4 +125,20 @@ class SDKConfig(BaseModel):
     skills: list[dict[str, Any]] = Field(default_factory=list)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     memory: MemoryDefaultsConfig = Field(default_factory=MemoryDefaultsConfig)
+    connections: dict[str, ConnectionConfig] = Field(default_factory=dict)
+    clients: ClientsConfig = Field(default_factory=ClientsConfig)
     metadata: ConfigMetadata = Field(default_factory=ConfigMetadata)
+
+    def resolved_connections(self) -> dict[str, ConnectionConfig]:
+        """Return configured connections with a legacy-compatible default."""
+
+        if self.connections:
+            return dict(self.connections)
+        return {
+            "default": HttpConnectionConfig(
+                base_url=self.base_url,
+                api_key=self.auth.api_key,
+                timeout_seconds=self.network.timeout_seconds,
+                max_retries=self.network.max_retries,
+            )
+        }

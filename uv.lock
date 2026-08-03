@@ -19,7 +19,6 @@ members = [
     "mindmemos-dev",
     "mindmemos-eval",
     "mindmemos-sdk",
-    "mindmemos-skill",
 ]
 
 [[package]]
@@ -1335,7 +1334,6 @@ dependencies = [
     { name = "mindmemos" },
     { name = "mindmemos-eval" },
     { name = "mindmemos-sdk" },
-    { name = "mindmemos-skill" },
 ]
 
 [package.dev-dependencies]
@@ -1355,7 +1353,6 @@ requires-dist = [
     { name = "mindmemos", editable = "src/mindmemos" },
     { name = "mindmemos-eval", editable = "src/mindmemos_eval" },
     { name = "mindmemos-sdk", editable = "src/mindmemos_sdk" },
-    { name = "mindmemos-skill", editable = "src/mindmemos_skill" },
 ]
 
 [package.metadata.requires-dev]
@@ -1423,17 +1420,6 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-
-[[package]]
-name = "mindmemos-skill"
-version = "0.1.0"
-source = { editable = "src/mindmemos_skill" }
-dependencies = [
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.0" }]
 
 [[package]]
 name = "multidict"

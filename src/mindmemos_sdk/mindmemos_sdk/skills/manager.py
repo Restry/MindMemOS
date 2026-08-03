@@ -99,7 +99,7 @@ class SkillManager:
         registry: SkillRegistry,
         history: SkillHistoryStore,
         pending: SkillPendingUploadStore,
-        cloud: SkillCloudClient,
+        cloud: SkillCloudClient | None,
         installer: SkillInstaller,
         local_repository: LocalSkillRepository | None = None,
     ) -> None:
@@ -111,8 +111,16 @@ class SkillManager:
         self._local_repository = local_repository
 
     @classmethod
-    def from_config_manager(cls, config_manager: ConfigManager, cloud: SkillCloudClient) -> SkillManager:
-        """Create a manager using the standard SDK local stores."""
+    def from_config_manager(
+        cls,
+        config_manager: ConfigManager,
+        cloud: SkillCloudClient | None = None,
+    ) -> SkillManager:
+        """Create a manager using SDK local stores and an optional API backend.
+
+        A missing cloud backend disables only remote operations. Centralized
+        local version management remains fully available, including in Lite mode.
+        """
 
         local_repository = LocalSkillRepository(config_manager)
         local_repository.recover_outbox()
@@ -124,6 +132,13 @@ class SkillManager:
             installer=SkillInstaller(config_manager.load_or_default().storage.skill_backup_dir),
             local_repository=local_repository,
         )
+
+    def _cloud_client(self) -> SkillCloudClient:
+        if self._cloud is None:
+            raise SkillRegistryError(
+                "this SkillManager has no MindMemOS API backend; local version operations remain available"
+            )
+        return self._cloud
 
     @property
     def local_repository(self) -> LocalSkillRepository:
@@ -243,7 +258,7 @@ class SkillManager:
             created_at=metadata.created_at,
         )
         try:
-            result = self._cloud.push_version(request)
+            result = self._cloud_client().push_version(request)
         except Exception as exc:
             self.local_repository.mark_outbox_failed(
                 operation.operation_id,
@@ -285,7 +300,7 @@ class SkillManager:
             self._pull_version_summaries(manifest.cloud_skill_id),
         )
         for summary in summaries:
-            content = self._cloud.pull_content(manifest.cloud_skill_id, summary.version_id)
+            content = self._cloud_client().pull_content(manifest.cloud_skill_id, summary.version_id)
             if content.version != summary:
                 raise SkillRegistryError(
                     f"cloud version metadata changed while pulling: {summary.version_id}"
@@ -314,7 +329,7 @@ class SkillManager:
         manifest = self.show_local(manifest.skill_id)
         if manifest.cloud_skill_id is None:
             raise SkillRegistryError(f"cloud mapping was not established for {manifest.skill_id}")
-        result = self._cloud.sync_cloud(
+        result = self._cloud_client().sync_cloud(
             SyncCloudRequest(
                 items=[
                     SyncCloudItem(
@@ -333,7 +348,7 @@ class SkillManager:
         if item is None:
             raise SkillRegistryError(f"cloud Sync omitted Skill family: {manifest.cloud_skill_id}")
         for summary in self._order_pull_summaries(manifest, item.versions):
-            content = self._cloud.pull_content(manifest.cloud_skill_id, summary.version_id)
+            content = self._cloud_client().pull_content(manifest.cloud_skill_id, summary.version_id)
             if content.version != summary:
                 raise SkillRegistryError(
                     f"cloud version metadata changed while syncing: {summary.version_id}"
@@ -429,7 +444,7 @@ class SkillManager:
         )
         self.local_repository.mark_outbox_running(operation.operation_id)
         try:
-            result = self._cloud.promote(
+            result = self._cloud_client().promote(
                 manifest.cloud_skill_id,
                 PromoteCloudRequest(
                     operation_id=operation.operation_id,
@@ -482,7 +497,7 @@ class SkillManager:
             raise SkillRegistryError(f"local Skill has no cloud mapping: {manifest.skill_id}")
         resolved_base = base_version_id or manifest.active_version_id
         self.local_repository.get_version(manifest.skill_id, resolved_base)
-        return self._cloud.evolve_cloud(
+        return self._cloud_client().evolve_cloud(
             EvolveCloudRequest(
                 operation_id=operation_id or str(uuid.uuid4()),
                 cloud_skill_id=manifest.cloud_skill_id,
@@ -497,7 +512,7 @@ class SkillManager:
         cursor: str | None = None
         seen_cursors: set[str] = set()
         while True:
-            page = self._cloud.pull_versions(cloud_skill_id, cursor=cursor)
+            page = self._cloud_client().pull_versions(cloud_skill_id, cursor=cursor)
             summaries.extend(page.versions)
             if page.next_cursor is None:
                 return summaries
@@ -593,7 +608,7 @@ class SkillManager:
 
         files = read_local_bundle(plan.path)
         content = serialize_bundle(files)
-        response = self._cloud.register(
+        response = self._cloud_client().register(
             name=plan.skill_name,
             content=content,
             version_label=plan.version_label,
@@ -739,7 +754,7 @@ class SkillManager:
             )
 
         try:
-            response = self._cloud.register(
+            response = self._cloud_client().register(
                 name=upload.skill_name,
                 content=content,
                 version_label=upload.version_label,
@@ -851,7 +866,10 @@ class SkillManager:
         if not record.cloud_skill_id:
             raise SkillRegistryError(f"skill has no cloud_skill_id yet: {skill_id}")
         entry = self._history.get(record.cloud_skill_id)
-        versions = self._cloud.versions_since(record.cloud_skill_id, since=entry.last_pulled_at if entry else None)
+        versions = self._cloud_client().versions_since(
+            record.cloud_skill_id,
+            since=entry.last_pulled_at if entry else None,
+        )
         local_versions = [LocalSkillVersion.from_cloud(version) for version in versions]
         self._history.upsert_versions(
             record.cloud_skill_id,
@@ -867,7 +885,7 @@ class SkillManager:
         records = [record for record in self.list() if record.cloud_skill_id and record.base_version_id]
         if not records:
             return []
-        data = self._cloud.sync(
+        data = self._cloud_client().sync(
             [
                 SkillSyncRequestItem(
                     cloud_skill_id=record.cloud_skill_id or "",
@@ -1056,7 +1074,7 @@ class SkillManager:
 
         record = self.show(skill_id)
         if record.cloud_skill_id:
-            self._cloud.delete_skill(record.cloud_skill_id)
+            self._cloud_client().delete_skill(record.cloud_skill_id)
             self._history.remove(record.cloud_skill_id)
         removed = self._registry.remove(skill_id=record.skill_id)
         if removed is None:
@@ -1077,7 +1095,7 @@ class SkillManager:
         if content is not None and compute_content_hash(bundle_files_from_content(content)) == version.content_hash:
             return content
 
-        downloaded = self._cloud.get_content(record.cloud_skill_id, version.version_id)
+        downloaded = self._cloud_client().get_content(record.cloud_skill_id, version.version_id)
         downloaded_hash = compute_content_hash(bundle_files_from_content(downloaded.content))
         if downloaded_hash != downloaded.version.content_hash or downloaded_hash != version.content_hash:
             raise SkillRegistryError(
@@ -1101,7 +1119,7 @@ class SkillManager:
     def _published_head_for_record(self, record: SkillRecord) -> LocalSkillVersion | None:
         if record.cloud_skill_id is None:
             raise SkillRegistryError(f"skill has no cloud_skill_id yet: {record.skill_id}")
-        summary = self._cloud.get_skill(record.cloud_skill_id)
+        summary = self._cloud_client().get_skill(record.cloud_skill_id)
         head = summary.published_head or summary.latest_version
         if head is None:
             return None

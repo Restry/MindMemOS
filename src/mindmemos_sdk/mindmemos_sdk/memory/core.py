@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from ..errors import InvalidRequestError, MindMemOSSDKError
 from ..transport import Envelope
@@ -28,6 +28,15 @@ from .models import (
 )
 
 T = TypeVar("T")
+MemoryOperation = Literal[
+    "add",
+    "search",
+    "get",
+    "update",
+    "delete",
+    "feedback",
+    "dreaming",
+]
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,7 @@ class MemoryDefaults:
 
 @dataclass(frozen=True)
 class MemoryRequest(Generic[T]):
+    operation: MemoryOperation
     path: str
     body: dict[str, Any]
     parse: Callable[[Envelope], T]
@@ -88,6 +98,7 @@ class MemoryCore:
         if not messages:
             raise InvalidRequestError("`messages` must be a non-empty list.")
         return MemoryRequest(
+            operation="add",
             path="/v1/memory/add",
             body=build_add_body(
                 user_id=self._resolve_user_id(user_id),
@@ -119,6 +130,7 @@ class MemoryCore:
         session_id: str | None = None,
     ) -> MemoryRequest[SearchResult]:
         return MemoryRequest(
+            operation="search",
             path="/v1/memory/search",
             body=build_search_body(
                 user_id=self._resolve_user_id(user_id),
@@ -142,6 +154,7 @@ class MemoryCore:
         top_k: int | None = None,
     ) -> MemoryRequest[GetResult]:
         return MemoryRequest(
+            operation="get",
             path="/v1/memory/get",
             body=build_get_body(filters=filters, top_k=top_k),
             parse=parse_get_result,
@@ -149,6 +162,7 @@ class MemoryCore:
 
     def update(self, memory_id: str, content: str) -> MemoryRequest[StatusResult]:
         return MemoryRequest(
+            operation="update",
             path="/v1/memory/update",
             body=build_update_body(memory_id=memory_id, content=content),
             parse=parse_status_result,
@@ -156,6 +170,7 @@ class MemoryCore:
 
     def delete(self, memory_id: str) -> MemoryRequest[StatusResult]:
         return MemoryRequest(
+            operation="delete",
             path="/v1/memory/delete",
             body=build_delete_body(memory_id=memory_id),
             parse=parse_status_result,
@@ -177,6 +192,7 @@ class MemoryCore:
             raise InvalidRequestError("explicit feedback requires non-empty messages context.")
 
         return MemoryRequest(
+            operation="feedback",
             path="/v1/memory/feedback",
             body=build_feedback_body(
                 feedback=feedback,
@@ -201,6 +217,7 @@ class MemoryCore:
         session_id: str | None = None,
     ) -> MemoryRequest[StatusResult]:
         return MemoryRequest(
+            operation="dreaming",
             path="/v1/memory/dreaming",
             body=build_dreaming_body(
                 mode=mode,

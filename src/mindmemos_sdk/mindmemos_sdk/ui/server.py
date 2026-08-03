@@ -25,6 +25,7 @@ from ..skills import (
     SkillManager,
 )
 from ..transport import HttpTransport
+from .lite_trace_service import LiteTraceService
 from .skill_service import LocalSkillUIService
 
 
@@ -113,6 +114,14 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
             if path in {"/api/v1/memories", "/api/v1/memories/search"}:
                 self._handle_memory_get(path)
                 return
+            if path == "/api/v1/lite/spans" or path == "/api/v1/lite/traces" or path.startswith("/api/v1/lite/traces/"):
+                if not self._validate_local_request():
+                    return
+                if path == "/api/v1/lite/spans":
+                    self._handle_lite_span_get()
+                else:
+                    self._handle_lite_trace_get(path)
+                return
             if path.startswith("/api/v1/skills/"):
                 self._handle_skill_get(path)
                 return
@@ -155,6 +164,45 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
         finally:
             transport.close()
 
+    def _handle_lite_trace_get(self, path: str) -> None:
+        query = parse_qs(urlsplit(self.path).query)
+        directory = (query.get("directory") or [""])[0]
+        service = LiteTraceService()
+        if path == "/api/v1/lite/traces":
+            self._send_json(
+                service.list_traces(
+                    directory,
+                    limit=_query_bounded_int(query, "limit", default=100, minimum=1, maximum=500),
+                    offset=_query_bounded_int(query, "offset", default=0, minimum=0, maximum=1_000_000),
+                )
+            )
+            return
+
+        trace_id = unquote(path.removeprefix("/api/v1/lite/traces/")).strip()
+        if not trace_id or "/" in trace_id:
+            raise ValueError("A valid trace ID is required.")
+        source = (query.get("source") or [""])[0]
+        self._send_json(
+            service.trace_detail(
+                directory,
+                source=source,
+                trace_id=trace_id,
+                selected_span_id=(query.get("span_id") or [None])[0],
+            )
+        )
+
+    def _handle_lite_span_get(self) -> None:
+        query = parse_qs(urlsplit(self.path).query)
+        directory = (query.get("directory") or [""])[0]
+        self._send_json(
+            LiteTraceService().list_spans(
+                directory,
+                span_name=(query.get("span_name") or [""])[0],
+                limit=_query_bounded_int(query, "limit", default=25, minimum=1, maximum=500),
+                offset=_query_bounded_int(query, "offset", default=0, minimum=0, maximum=1_000_000),
+            )
+        )
+
     def _handle_skill_get(self, path: str) -> None:
         suffix = path.removeprefix("/api/v1/skills/")
         parts = [unquote(part) for part in suffix.split("/") if part]
@@ -179,9 +227,7 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
                 to_version_id = (query.get("to") or [None])[0]
                 if not from_version_id or not to_version_id:
                     raise ValueError("compare requires from and to version IDs")
-                self._send_json(
-                    service.compare(skill_ref, from_version_id, to_version_id).model_dump(mode="json")
-                )
+                self._send_json(service.compare(skill_ref, from_version_id, to_version_id).model_dump(mode="json"))
                 return
             self._send_json({"error": "not_found", "message": "Unknown Skill route."}, status=404)
         finally:
@@ -318,9 +364,7 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
             if version_id is None:
                 raise ValueError("version_id must be a non-empty string")
             revision = payload.get("expected_cloud_revision")
-            if revision is not None and (
-                not isinstance(revision, int) or isinstance(revision, bool)
-            ):
+            if revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)):
                 raise ValueError("expected_cloud_revision must be an integer")
             result = LocalSkillUIService(manager).promote(
                 skill_ref,
@@ -368,6 +412,9 @@ class _LocalUIHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _validate_mutation_request(self) -> bool:
+        return self._validate_local_request()
+
+    def _validate_local_request(self) -> bool:
         supplied_token = self.headers.get("X-MindMemOS-UI-Token")
         if supplied_token is None or not secrets.compare_digest(supplied_token, self._launch_token):
             self._send_json({"error": "forbidden", "message": "Invalid local UI launch token."}, status=403)
@@ -499,6 +546,23 @@ def _query_top_k(query: dict[str, list[str]]) -> int | None:
     if top_k < 1:
         raise ValueError("top_k must be at least 1.")
     return top_k
+
+
+def _query_bounded_int(
+    query: dict[str, list[str]],
+    key: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = (query.get(key) or [""])[0].strip()
+    if not raw:
+        return default
+    value = int(raw)
+    if value < minimum or value > maximum:
+        raise ValueError(f"{key} must be between {minimum} and {maximum}.")
+    return value
 
 
 def _owned_memory_filters(filters: dict[str, object] | None, user_id: str) -> dict[str, object]:

@@ -2,17 +2,18 @@
 
 Holds default actor identity (``user_id`` / ``app_id`` / ``agent_id`` /
 ``session_id``) so callers don't repeat it on every call; any field can be
-overridden per request. All HTTP I/O goes through :class:`HttpTransport`.
+overridden per request. The compatibility sync client executes requests directly
+through its HTTP transport.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, TypeVar
 
 from ..skills import SkillManager, detect_skill_context
 from ..transport import HttpTransport
-from .core import MemoryCore, MemoryDefaults
+from .core import MemoryCore, MemoryDefaults, MemoryRequest
 from .models import (
     AddMode,
     AddResult,
@@ -26,6 +27,7 @@ from .models import (
 )
 
 _UNSET = object()
+T = TypeVar("T")
 
 
 class MemoryClient:
@@ -42,6 +44,8 @@ class MemoryClient:
         skill_manager: SkillManager | None = None,
         memory_defaults: MemoryDefaults | None = None,
     ) -> None:
+        if not isinstance(transport, HttpTransport):
+            raise TypeError("transport must be an HttpTransport")
         self._transport = transport
         self._skill_manager = skill_manager
         base_defaults = memory_defaults or MemoryDefaults()
@@ -88,8 +92,7 @@ class MemoryClient:
             score=score,
             task_id=task_id,
         )
-        envelope = self._transport.post_envelope(request.path, json=request.body)
-        return request.parse(envelope)
+        return self._execute(request)
 
     def _apply_default_role(self, messages: list[Message | dict[str, Any]]) -> list[Message | dict[str, Any]]:
         """Fill the configured role only for raw dialogue-shaped dictionaries."""
@@ -176,8 +179,7 @@ class MemoryClient:
             agent_id=agent_id,
             session_id=session_id,
         )
-        envelope = self._transport.post_envelope(request.path, json=request.body)
-        return request.parse(envelope)
+        return self._execute(request)
 
     def get(
         self,
@@ -190,8 +192,7 @@ class MemoryClient:
             filters=self._defaults.get_filters if filters is _UNSET else filters,
             top_k=self._defaults.get_top_k if top_k is _UNSET else top_k,
         )
-        envelope = self._transport.post_envelope(request.path, json=request.body)
-        return request.parse(envelope)
+        return self._execute(request)
 
     def update(
         self,
@@ -200,8 +201,7 @@ class MemoryClient:
     ) -> StatusResult:
         """Update one memory by id."""
         request = self._core.update(memory_id, content)
-        envelope = self._transport.post_envelope(request.path, json=request.body)
-        return request.parse(envelope)
+        return self._execute(request)
 
     def delete(
         self,
@@ -209,8 +209,7 @@ class MemoryClient:
     ) -> StatusResult:
         """Delete one memory by id."""
         request = self._core.delete(memory_id)
-        envelope = self._transport.post_envelope(request.path, json=request.body)
-        return request.parse(envelope)
+        return self._execute(request)
 
     def feedback(
         self,
@@ -239,8 +238,7 @@ class MemoryClient:
             agent_id=agent_id,
             session_id=session_id,
         )
-        envelope = self._transport.post_envelope(request.path, json=request.body)
-        return request.parse(envelope)
+        return self._execute(request)
 
     def dreaming(
         self,
@@ -259,5 +257,8 @@ class MemoryClient:
             agent_id=agent_id,
             session_id=session_id,
         )
+        return self._execute(request)
+
+    def _execute(self, request: MemoryRequest[T]) -> T:
         envelope = self._transport.post_envelope(request.path, json=request.body)
         return request.parse(envelope)

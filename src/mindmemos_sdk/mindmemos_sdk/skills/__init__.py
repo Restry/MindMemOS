@@ -1,6 +1,8 @@
 """SDK-side skill management primitives."""
 
 from ..errors import SkillBundleError
+from .async_client import AsyncSkillClient
+from .backends import AsyncSkillBackend, HttpSkillBackend, InMemorySkillBackend
 from .bundle import (
     CONTENT_HASH_ALGORITHM,
     SKILL_WHITELIST,
@@ -89,6 +91,10 @@ __all__ = [
     "SKILL_WHITELIST",
     "CloudSkillSummary",
     "CloudSkillsPage",
+    "AsyncSkillClient",
+    "AsyncSkillBackend",
+    "HttpSkillBackend",
+    "InMemorySkillBackend",
     "DuplicateSkillAction",
     "DuplicateSkillMatch",
     "EvolveCloudRequest",

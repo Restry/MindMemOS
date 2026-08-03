@@ -3,7 +3,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from mindmemos_eval.memory.runner import run_benchmark_matrix
+from mindmemos_eval.memory.base import RunContext
+from mindmemos_eval.memory.config import load_runner_config
+from mindmemos_eval.memory.identity import RunIdentity
+from mindmemos_eval.memory.runner import (
+    RequestIdMemoryClient,
+    _auth_config_output,
+    add_memory_args,
+    run_benchmark_matrix,
+)
 
 
 class _NoopAdapter:
@@ -11,6 +19,21 @@ class _NoopAdapter:
 
     async def run(self, **_kwargs):
         return {"ok": True}
+
+
+class _MemoryBackend:
+    def __init__(self, memory, *, closeable=None):
+        self.memory = memory
+        self._closeable = closeable
+        self.started = False
+
+    async def start(self):
+        self.started = True
+        return self
+
+    async def aclose(self):
+        if self._closeable is not None:
+            await self._closeable.aclose()
 
 
 def _write_config(path):
@@ -37,6 +60,106 @@ api_keys:
 """.lstrip(),
         encoding="utf-8",
     )
+
+
+def test_auth_config_output_cli_and_deprecated_alias_share_dest():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    add_memory_args(parser)
+    required = [
+        "--benchmark-config",
+        "matrix.yaml",
+        "--benchmark-list",
+        "locomo",
+        "--manifest-output",
+        "manifest.jsonl",
+    ]
+
+    current = parser.parse_args([*required, "--auth-config-output", "auth.yaml"])
+    legacy = parser.parse_args([*required, "--api-key-output", "legacy.yaml"])
+
+    assert current.auth_config_output == "auth.yaml"
+    assert legacy.auth_config_output == "legacy.yaml"
+    assert not hasattr(current, "api_key_output")
+
+
+def test_auth_config_output_falls_back_to_legacy_namespace_field():
+    assert _auth_config_output(SimpleNamespace(api_key_output="legacy.yaml")) == "legacy.yaml"
+    assert _auth_config_output(SimpleNamespace(auth_config_output="", api_key_output="legacy.yaml")) == "legacy.yaml"
+    assert (
+        _auth_config_output(SimpleNamespace(auth_config_output="current.yaml", api_key_output="legacy.yaml"))
+        == "current.yaml"
+    )
+
+
+def test_auth_config_output_help_describes_lifecycle(capsys):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    add_memory_args(parser)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--help"])
+
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "--auth-config-output PATH" in help_text
+    assert "--api-key-output PATH" in help_text
+    assert "complete benchmark auth config YAML" in help_text
+    assert "required for fresh HTTP runs" in help_text
+    assert "not needed for in-memory runs or with --reuse-api-key" in help_text
+    assert "completely overwritten" in help_text
+    assert "deprecated compatibility alias" in help_text
+
+
+def test_dreaming_after_add_can_be_enabled_by_cli_or_runner_yaml(tmp_path):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    add_memory_args(parser)
+    required = [
+        "--benchmark-config",
+        "matrix.yaml",
+        "--benchmark-list",
+        "memoryagentbench",
+        "--manifest-output",
+        "manifest.jsonl",
+    ]
+    cli_args = parser.parse_args([*required, "--dreaming-after-add"])
+    assert cli_args.dreaming_after_add is True
+
+    config_path = tmp_path / "matrix.yaml"
+    config_path.write_text(
+        """
+runner:
+  dreaming_after_add: true
+benchmarks: {}
+""".lstrip(),
+        encoding="utf-8",
+    )
+    assert load_runner_config(config_path).dreaming_after_add is True
+
+
+@pytest.mark.asyncio
+async def test_request_id_memory_client_records_dreaming_stage():
+    class _Memory:
+        async def dreaming(self, **_kwargs):
+            return SimpleNamespace(request_id="dreaming-request")
+
+    identity = RunIdentity(
+        benchmark="memoryagentbench",
+        run_id="run",
+        key_id="key",
+        api_key="secret",
+        project_id="project",
+        memory_algorithm="vanilla",
+    )
+    ctx = RunContext(identity=identity)
+
+    await RequestIdMemoryClient(_Memory(), ctx).dreaming(mode="sync")
+
+    assert ctx.request_ids["dreaming"] == ["dreaming-request"]
+    assert ctx.request_metadata["dreaming-request"]["stage"] == "dreaming"
 
 
 @pytest.mark.asyncio
@@ -105,7 +228,7 @@ async def test_reuse_api_key_logs_with_standard_logger_kwargs(tmp_path, monkeypa
     monkeypatch.setattr(runner, "reset_project", _noop_reset)
 
     async def memory_client_factory(_identity):
-        return object(), None
+        return _MemoryBackend(object())
 
     manifests = await run_benchmark_matrix(
         args,
@@ -156,9 +279,7 @@ class _ScopeAdapter:
         uid = env._conv_user_id(0)
         runner_cfg = getattr(args, "runner_config", None)
         if runner_cfg is not None and runner_cfg.add:
-            await memory.add(
-                [{"role": "user", "content": "hi"}], user_id=uid, mode="sync", session_id=uid
-            )
+            await memory.add([{"role": "user", "content": "hi"}], user_id=uid, mode="sync", session_id=uid)
             self.added.append(uid)
         await memory.search("hi", user_id=uid)
         self.searched.append(uid)
@@ -168,7 +289,7 @@ class _ScopeAdapter:
 @pytest.mark.asyncio
 async def test_ingest_then_reuse_no_add_reads_same_scope(tmp_path, monkeypatch):
     """End-to-end: a fresh ingest run and a reuse+no-add run share the same user_id,
-    no-add skips both add and the pre-add reset, and reuse needs no --api-key-output."""
+    no-add skips both add and the pre-add reset, and reuse needs no --auth-config-output."""
     from mindmemos_eval.memory import runner as runner_mod
 
     reset_calls: list[str] = []
@@ -188,18 +309,18 @@ async def test_ingest_then_reuse_no_add_reads_same_scope(tmp_path, monkeypatch):
     mem1 = _RecordingMemory()
 
     async def mem_factory1(_identity):
-        return mem1, None
+        return _MemoryBackend(mem1)
 
     args1 = SimpleNamespace(
         benchmark_config=str(config_path),
         benchmark_list="locomo",
         manifest_output=str(tmp_path / "m1.jsonl"),
-        api_key_output=str(api_keys_path),
+        auth_config_output=str(api_keys_path),
         reuse_api_key=None,
         add=True,
         skip_clean=False,
     )
-    await run_benchmark_matrix(
+    manifests1 = await run_benchmark_matrix(
         args1,
         adapters={"locomo": adapter1},
         memory_client_factory=mem_factory1,
@@ -210,19 +331,20 @@ async def test_ingest_then_reuse_no_add_reads_same_scope(tmp_path, monkeypatch):
     assert adapter1.searched == ["conv_0"]
     assert len(reset_calls) == 1  # add stage cleared the project first
     assert api_keys_path.exists()
+    assert manifests1[0].api_key_file == str(api_keys_path)
 
-    # Run 2: reuse + no-add, no --api-key-output -> same user_id, no add, no reset.
+    # Run 2: reuse + no-add, no --auth-config-output -> same user_id, no add, no reset.
     adapter2 = _ScopeAdapter()
     mem2 = _RecordingMemory()
 
     async def mem_factory2(_identity):
-        return mem2, None
+        return _MemoryBackend(mem2)
 
     args2 = SimpleNamespace(
         benchmark_config=str(config_path),
         benchmark_list="locomo",
         manifest_output=str(tmp_path / "m2.jsonl"),
-        api_key_output=None,
+        auth_config_output=None,
         reuse_api_key=str(api_keys_path),
         add=False,
         skip_clean=False,
@@ -240,7 +362,7 @@ async def test_ingest_then_reuse_no_add_reads_same_scope(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fresh_run_requires_api_key_output(tmp_path, monkeypatch):
+async def test_fresh_http_run_requires_auth_config_output(tmp_path, monkeypatch):
     from mindmemos_eval.memory import runner as runner_mod
 
     async def _noop_reset(cfg, project_id):
@@ -254,23 +376,27 @@ async def test_fresh_run_requires_api_key_output(tmp_path, monkeypatch):
         benchmark_config=str(config_path),
         benchmark_list="locomo",
         manifest_output=str(tmp_path / "m.jsonl"),
-        api_key_output=None,
+        auth_config_output=None,
         reuse_api_key=None,
         add=True,
         skip_clean=False,
     )
-    with pytest.raises(ValueError, match="--api-key-output is required"):
+
+    async def memory_client_factory(_identity):
+        return _MemoryBackend(object())
+
+    with pytest.raises(ValueError, match="--auth-config-output is required for fresh HTTP runs"):
         await run_benchmark_matrix(
             args,
             adapters={"locomo": _NoopAdapter()},
-            memory_client_factory=lambda _i: (object(), None),
+            memory_client_factory=memory_client_factory,
             answer_llm_factory=lambda: object(),
             judge_llm_factory=lambda: object(),
         )
 
 
 @pytest.mark.asyncio
-async def test_reset_failure_aborts_benchmark_and_closes_transport(tmp_path, monkeypatch, caplog):
+async def test_reset_failure_aborts_benchmark_and_closes_backend(tmp_path, monkeypatch, caplog):
     from mindmemos_eval.memory import runner as runner_mod
     from mindmemos_eval.memory.db_reset import ProjectResetError
 
@@ -286,16 +412,16 @@ async def test_reset_failure_aborts_benchmark_and_closes_transport(tmp_path, mon
             adapter_calls.append("run")
             return {"ok": True}
 
-    class _Transport:
+    class _CloseTracker:
         closed = False
 
         async def aclose(self):
             self.closed = True
 
-    transport = _Transport()
+    close_tracker = _CloseTracker()
 
     async def memory_client_factory(_identity):
-        return object(), transport
+        return _MemoryBackend(object(), closeable=close_tracker)
 
     async def fail_reset(_cfg, project_id):
         raise ProjectResetError(
@@ -307,11 +433,12 @@ async def test_reset_failure_aborts_benchmark_and_closes_transport(tmp_path, mon
         )
 
     monkeypatch.setattr(runner_mod, "reset_project", fail_reset)
+    legacy_output_path = tmp_path / "api_keys.yaml"
     args = SimpleNamespace(
         benchmark_config=str(config_path),
         benchmark_list="locomo",
         manifest_output=str(manifest_path),
-        api_key_output=str(tmp_path / "api_keys.yaml"),
+        api_key_output=str(legacy_output_path),
         reuse_api_key=None,
         add=True,
         skip_clean=False,
@@ -330,7 +457,8 @@ async def test_reset_failure_aborts_benchmark_and_closes_transport(tmp_path, mon
         )
 
     assert adapter_calls == []
-    assert transport.closed is True
+    assert close_tracker.closed is True
+    assert legacy_output_path.exists()
     assert not manifest_path.exists()
     assert any(
         "benchmark_aborted_database_reset_failed" in record.message
@@ -511,7 +639,6 @@ def test_memory_cli_returns_one_when_database_reset_fails(monkeypatch):
     monkeypatch.setattr(cli, "run_benchmark_matrix", fail_run)
 
     assert cli.main([]) == 1
-
 
 
 # ---------- resolve_collections (dynamic Qdrant collection names) ----------

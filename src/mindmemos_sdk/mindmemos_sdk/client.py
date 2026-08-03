@@ -47,12 +47,16 @@ class MindMemOSClient:
         self._agent_id = agent_id or config.defaults.agent_id
         self._session_id = session_id or config.defaults.session_id
 
-        self._transport = transport or HttpTransport(
-            base_url=self._base_url,
-            api_key=self._api_key,
-            timeout_seconds=config.network.timeout_seconds,
-            max_retries=config.network.max_retries,
-        )
+        self._owns_transport = transport is None
+        resolved_transport = transport
+        if resolved_transport is None:
+            resolved_transport = HttpTransport(
+                base_url=self._base_url,
+                api_key=self._api_key,
+                timeout_seconds=config.network.timeout_seconds,
+                max_retries=config.network.max_retries,
+            )
+        self._transport = resolved_transport
 
         self.skills = SkillManager.from_config_manager(manager, SkillCloudClient(self._transport))
         self.memory = MemoryClient(
@@ -89,8 +93,9 @@ class MindMemOSClient:
         return self._api_key
 
     def close(self) -> None:
-        """Release underlying transport resources."""
-        self._transport.close()
+        """Release resources created by this root client."""
+        if self._owns_transport:
+            self._transport.close()
 
     def __enter__(self) -> MindMemOSClient:
         return self
