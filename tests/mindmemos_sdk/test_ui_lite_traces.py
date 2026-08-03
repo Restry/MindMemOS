@@ -209,6 +209,7 @@ def test_lite_trace_service_lists_root_spans_and_builds_full_detail(tmp_path: Pa
         {
             "trace_id": _TRACE_ID,
             "root_span_id": _ROOT_SPAN_ID,
+            "root_span_status": "resolved",
             "root_span_name": "memory.add",
             "service_name": "mindmemos-lite",
             "start_time": "2024-07-03T09:46:40Z",
@@ -233,6 +234,8 @@ def test_lite_trace_service_lists_root_spans_and_builds_full_detail(tmp_path: Pa
     )
 
     assert detail["trace"]["root_span_id"] == _ROOT_SPAN_ID
+    assert detail["trace"]["root_span_status"] == "resolved"
+    assert detail["trace"]["time_range_kind"] == "root"
     assert detail["trace"]["span_count"] == 2
     assert [span["depth"] for span in detail["spans"]] == [0, 1]
     assert detail["spans"][0]["io"]["input"]["arg.messages"][0]["content"] == "hello"
@@ -243,6 +246,96 @@ def test_lite_trace_service_lists_root_spans_and_builds_full_detail(tmp_path: Pa
     connection = sqlite3.connect(database)
     assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
     connection.close()
+
+
+def test_lite_trace_service_filters_paginates_and_resolves_selected_span_root(tmp_path: Path) -> None:
+    database = tmp_path / "run-1" / "traces.db"
+    _write_trace_database(database)
+    service = LiteTraceService()
+
+    first_page = service.list_spans(tmp_path, limit=1)
+    assert first_page["total"] == 2
+    assert first_page["page"] == 1
+    assert first_page["total_pages"] == 2
+    assert first_page["has_previous"] is False
+    assert first_page["has_next"] is True
+    assert first_page["spans"][0]["name"] == "llm.chat.provider"
+    assert first_page["spans"][0]["root_span_name"] == "memory.add"
+    assert first_page["spans"][0]["root_span_status"] == "resolved"
+    assert first_page["spans"][0]["is_root"] is False
+    assert first_page["spans"][0]["start_time"] == "2024-07-03T09:46:40.002000Z"
+
+    second_page = service.list_spans(tmp_path, limit=1, offset=1)
+    assert second_page["page"] == 2
+    assert second_page["has_previous"] is True
+    assert second_page["has_next"] is False
+    assert second_page["spans"][0]["name"] == "memory.add"
+    assert second_page["spans"][0]["is_root"] is True
+
+    filtered = service.list_spans(tmp_path, span_name="CHAT.PROV")
+    assert filtered["total"] == 1
+    assert [span["name"] for span in filtered["spans"]] == ["llm.chat.provider"]
+
+    detail = service.trace_detail(
+        tmp_path,
+        source="run-1/traces.db",
+        trace_id=_TRACE_ID,
+        selected_span_id=_CHILD_SPAN_ID,
+    )
+    assert detail["selected_span_id"] == _CHILD_SPAN_ID
+    assert detail["root_span"]["span_id"] == _ROOT_SPAN_ID
+    assert detail["selected_span"]["span_id"] == _CHILD_SPAN_ID
+    assert detail["spans"][1]["start_time"] == "2024-07-03T09:46:40.002000Z"
+    assert [span["name"] for span in detail["ancestry"]] == [
+        "memory.add",
+        "llm.chat.provider",
+    ]
+    assert detail["selected_connected_to_root"] is True
+
+
+def test_lite_trace_service_does_not_invent_root_for_in_progress_trace(tmp_path: Path) -> None:
+    database = tmp_path / "run-1" / "traces.db"
+    _write_trace_database(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "UPDATE traces SET root_span_id = NULL, start_time_ns = ?, end_time_ns = ? WHERE trace_id = ?",
+        (_START_NS + 2_000_000, _START_NS + 14_000_000, _TRACE_ID),
+    )
+    connection.execute(
+        "DELETE FROM spans WHERE trace_id = ? AND span_id = ?",
+        (_TRACE_ID, _ROOT_SPAN_ID),
+    )
+    connection.commit()
+    connection.close()
+
+    service = LiteTraceService()
+    trace_payload = service.list_traces(tmp_path)
+    assert trace_payload["traces"][0]["root_span_id"] is None
+    assert trace_payload["traces"][0]["root_span_status"] == "pending"
+    assert trace_payload["traces"][0]["root_span_name"] == "(root span pending)"
+    assert trace_payload["traces"][0]["duration_ms"] == 12.0
+
+    span_payload = service.list_spans(tmp_path)
+    child = span_payload["spans"][0]
+    assert child["span_id"] == _CHILD_SPAN_ID
+    assert child["root_span_id"] is None
+    assert child["root_span_status"] == "pending"
+    assert child["root_span_name"] == "(root span pending)"
+    assert child["is_root"] is False
+
+    detail = service.trace_detail(
+        tmp_path,
+        source="run-1/traces.db",
+        trace_id=_TRACE_ID,
+        selected_span_id=_CHILD_SPAN_ID,
+    )
+    assert detail["trace"]["root_span_id"] is None
+    assert detail["trace"]["root_span_status"] == "pending"
+    assert detail["trace"]["time_range_kind"] == "observed"
+    assert detail["root_span"] is None
+    assert detail["selected_span"]["span_id"] == _CHILD_SPAN_ID
+    assert detail["selected_connected_to_root"] is False
+    assert [span["depth"] for span in detail["spans"]] == [0]
 
 
 def test_lite_trace_service_rejects_database_outside_selected_directory(tmp_path: Path) -> None:
@@ -269,28 +362,41 @@ def test_lite_trace_http_routes_require_token_and_return_trace_tree(tmp_path: Pa
 
     with _running_ui(tmp_path / "config") as client:
         list_response = client.get(
-            "/api/v1/lite/traces",
-            params={"directory": str(tmp_path / "logs")},
+            "/api/v1/lite/spans",
+            params={
+                "directory": str(tmp_path / "logs"),
+                "span_name": "llm.chat",
+                "limit": 1,
+                "offset": 0,
+            },
         )
         assert list_response.status_code == 200
-        trace = list_response.json()["traces"][0]
-        assert trace["root_span_name"] == "memory.add"
+        list_payload = list_response.json()
+        assert list_payload["total"] == 1
+        assert list_payload["page"] == 1
+        span = list_payload["spans"][0]
+        assert span["name"] == "llm.chat.provider"
+        assert span["root_span_name"] == "memory.add"
 
         detail_response = client.get(
             f"/api/v1/lite/traces/{_TRACE_ID}",
             params={
                 "directory": str(tmp_path / "logs"),
-                "source": trace["source"],
+                "source": span["source"],
+                "span_id": span["span_id"],
             },
         )
         assert detail_response.status_code == 200
-        assert [span["name"] for span in detail_response.json()["spans"]] == [
+        detail_payload = detail_response.json()
+        assert [item["name"] for item in detail_payload["spans"]] == [
             "memory.add",
             "llm.chat.provider",
         ]
+        assert detail_payload["root_span"]["name"] == "memory.add"
+        assert detail_payload["selected_span"]["name"] == "llm.chat.provider"
 
         forbidden = client.get(
-            "/api/v1/lite/traces",
+            "/api/v1/lite/spans",
             headers={"X-MindMemOS-UI-Token": "wrong"},
             params={"directory": str(tmp_path / "logs")},
         )
@@ -305,11 +411,37 @@ def test_lite_trace_ui_exposes_navigation_flame_chart_and_span_details() -> None
     css = (static_dir / "app.css").read_text(encoding="utf-8")
 
     assert 'data-tab="lite"' in html
-    assert 'data-lite-view="traces"' in html
     assert 'id="lite-flame-chart"' in html
     assert 'id="lite-span-detail"' in html
+    assert 'id="lite-span-name-filter"' in html
+    assert 'id="lite-previous-page"' in html
+    assert 'id="lite-next-page"' in html
+    assert 'id="lite-root-context"' in html
     assert "traceId" in javascript
     assert "renderLiteFlameChart" in javascript
     assert "renderLiteSpanDetail" in javascript
+    assert "buildLiteSpanTree" in javascript
+    assert "toggleLiteSpanRow" in javascript
+    assert 'role="treeitem"' in javascript
+    assert 'aria-expanded="${expanded}"' in javascript
+    assert "Generated <time" in javascript
+    assert "<span>Generated at</span>" in javascript
+    assert "/api/v1/lite/spans" in javascript
+    assert "renderLiteRootContext" in javascript
+    assert "Root pending · trace in progress" in javascript
+    assert "ROOT SPAN PENDING" in javascript
+    assert "Observed window" in javascript
     assert ".lite-flame-block" in css
+    assert ".lite-flame-row" in css
+    assert ".lite-flame-row-label" in css
+    assert ".lite-flame-timeline" in css
     assert ".lite-span-section" in css
+    assert ".lite-trace-generated-time" in css
+    assert ".lite-span-metric-time" in css
+    assert ".lite-span-pagination" in css
+    assert ".lite-root-context" in css
+    assert ".lite-root-context.pending" in css
+    assert "lite-runtime-view" not in html
+    assert "data-lite-view" not in html
+    assert "setLiteView" not in javascript
+    assert ".lite-runtime-card" not in css

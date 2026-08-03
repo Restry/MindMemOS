@@ -81,19 +81,24 @@ uv run python -m mindmemos_eval.cli memory \
   --benchmark-config config/mindmemos_eval/memory_evaluation_locomo.yaml \
   --benchmark-list locomo,longmemeval,personamem \
   --manifest-output reports/smoke_vanilla.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml \
+  --auth-config-output config/mindmemos/eval_api_keys.yaml \
   --algorithm vanilla \
   --limit 2 \
   --session-limit 2 \
   --judge-runs 1
 ```
 
-> **Warning**: ``--api-key-output`` writes a **fresh** ``api_keys.yaml`` with only the generated
-> benchmark identities. Do NOT point it at the server's live key file
+> **Warning**: ``--auth-config-output`` completely overwrites its target with the full benchmark
+> auth config, including the generated api_key, key_id, project_id, memory_algorithm, scopes, and
+> project_override_config. Do NOT point it at the server's live key file
 > (``config/mindmemos/api_keys.yaml``) unless you are running in an isolated environment.
 > Use a separate path (e.g. ``config/mindmemos/eval_api_keys.yaml``) and point the server at
 > that file for the duration of the evaluation, or merge the generated keys into the server's
 > key file manually.
+>
+> This is the MindMemOS HTTP authentication identity config, not a model-provider API key.
+> Model-provider credentials are configured under ``runner.*llm.api_key``.
+> ``--api-key-output`` is a deprecated compatibility alias and will be removed in a future release.
 
 ---
 
@@ -108,7 +113,7 @@ caffeinate -si uv run python -m mindmemos_eval.cli memory \
   --benchmark-config config/mindmemos_eval/memory_evaluation_locomo.yaml \
   --benchmark-list locomo,longmemeval,personamem \
   --manifest-output reports/vanilla_run.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml \
+  --auth-config-output config/mindmemos/eval_api_keys.yaml \
   --algorithm vanilla \
   --judge-runs 1
 ```
@@ -139,7 +144,7 @@ caffeinate -si uv run python -m mindmemos_eval.cli memory \
   --judge-runs 1
 ```
 
-> ``--api-key-output`` is **not** needed with ``--reuse-api-key`` (no fresh identities are
+> ``--auth-config-output`` is **not** needed with ``--reuse-api-key`` (no fresh identities are
 > generated). To rerun a different benchmark's memories, point ``--reuse-api-key`` at the
 > file containing that benchmark's key and pass that benchmark alone.
 
@@ -177,7 +182,7 @@ caffeinate -si uv run python -m mindmemos_eval.cli memory \
 | `--no-add` | Skip memory ingestion **and** the pre-add cleanup; reuse memories already in Qdrant/Neo4j for this project |
 | `--no-score` | Skip judge/scoring stage |
 | `--manifest-output` | JSONL file where eval results are written; required for metrics collection |
-| `--api-key-output` | Path where **fresh** API keys are generated. Writes a complete file — do NOT point at the server's live key file. Required for fresh runs; optional (unused) with `--reuse-api-key` |
+| `--auth-config-output` | Path where the complete MindMemOS HTTP benchmark auth config is generated. The target is completely overwritten. Required for fresh HTTP runs; not needed for in-memory runs or with `--reuse-api-key` |
 | `--reuse-api-key` | Path to an existing API key file from a prior run. Reuses that run's api_key/project_id; use with `--no-add` to rerun against its memories. Only one benchmark per invocation |
 | `--skip-clean` | Skip clearing the run's `project_id` from Qdrant/Neo4j before add. `--no-add` never clears; this flag skips cleanup while still adding |
 

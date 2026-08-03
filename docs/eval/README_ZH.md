@@ -77,18 +77,22 @@ uv run python -m mindmemos_eval.cli memory \
   --benchmark-config config/mindmemos_eval/memory_evaluation_locomo.yaml \
   --benchmark-list locomo,longmemeval,personamem \
   --manifest-output reports/smoke_vanilla.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml \
+  --auth-config-output config/mindmemos/eval_api_keys.yaml \
   --algorithm vanilla \
   --limit 2 \
   --session-limit 2 \
   --judge-runs 1
 ```
 
-> **警告**：``--api-key-output`` 会**完整写入**一个新的 ``api_keys.yaml`` 文件，
-> 仅包含本次生成的 benchmark 身份。请勿直接指向服务端正在使用的
+> **警告**：``--auth-config-output`` 会用完整 benchmark auth config **完全覆盖**目标文件，
+> 内容包括 api_key、key_id、project_id、memory_algorithm、scopes 和
+> project_override_config。请勿直接指向服务端正在使用的
 > ``config/mindmemos/api_keys.yaml``（除非是隔离环境）。
 > 建议使用独立路径（如 ``config/mindmemos/eval_api_keys.yaml``），
 > 然后将服务端配置指向该文件，或手动将生成的 key 合并到服务端文件中。
+>
+> 这是 MindMemOS HTTP 认证身份配置，不是模型供应商 API Key；模型供应商凭证配置在
+> ``runner.*llm.api_key``。``--api-key-output`` 是旧版兼容别名，后续将弃用。
 
 ---
 
@@ -103,7 +107,7 @@ caffeinate -si uv run python -m mindmemos_eval.cli memory \
   --benchmark-config config/mindmemos_eval/memory_evaluation_locomo.yaml \
   --benchmark-list locomo,longmemeval,personamem \
   --manifest-output reports/vanilla_run.jsonl \
-  --api-key-output config/mindmemos/eval_api_keys.yaml \
+  --auth-config-output config/mindmemos/eval_api_keys.yaml \
   --algorithm vanilla \
   --judge-runs 1
 ```
@@ -139,7 +143,7 @@ caffeinate -si uv run python -m mindmemos_eval.cli memory \
   --judge-runs 1
 ```
 
-> 搭配 ``--reuse-api-key`` 时**不需要** ``--api-key-output``（不会生成新身份）。要复用另一个
+> 搭配 ``--reuse-api-key`` 时**不需要** ``--auth-config-output``（不会生成新身份）。要复用另一个
 > benchmark 的数据，把 ``--reuse-api-key`` 指向含该 benchmark key 的文件，并单独传该 benchmark。
 
 ### 跳过 judge 阶段（只要答案不打分）
@@ -170,7 +174,7 @@ caffeinate -si uv run python -m mindmemos_eval.cli memory \
 | `--no-add` | 跳过 add 阶段**以及** add 前的清库；复用该 project 已在 Qdrant/Neo4j 中的数据 |
 | `--no-score` | 跳过 judge 阶段 |
 | `--manifest-output` | 评测结果写入的 JSONL 文件，供后续 metrics 统计使用 |
-| `--api-key-output` | **全新写入** API key 文件，仅含本次生成的 key。勿直接覆盖服务端正在使用的文件。fresh run 必填；搭配 `--reuse-api-key` 时可选（不使用） |
+| `--auth-config-output` | 完整写入 MindMemOS HTTP benchmark auth config，并完全覆盖目标文件。fresh HTTP run 必填；in-memory 或搭配 `--reuse-api-key` 时不需要 |
 | `--reuse-api-key` | 复用已有 API key 文件（即上次的 api_key/project_id）；配合 `--no-add` 重新评测其数据。一次只能复用一个 benchmark |
 | `--skip-clean` | 跳过 add 前清空该 run 的 `project_id`（Qdrant/Neo4j）。`--no-add` 从不清库；本参数用于跳过清库但仍执行 add |
 

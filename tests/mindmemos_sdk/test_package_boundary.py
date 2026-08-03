@@ -35,6 +35,7 @@ _FORMER_EVAL_EXPORTS = [
 def test_sdk_imports_without_eval_package():
     """Importing the SDK must not pull in the eval package."""
     assert "mindmemos_eval" not in sys.modules
+    assert "mindmemos_lite" not in sys.modules
     assert mindmemos_sdk.__version__
 
 
