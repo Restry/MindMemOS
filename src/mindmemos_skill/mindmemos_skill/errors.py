@@ -85,10 +85,6 @@ class EmbeddingDimensionError(LLMError):
         super().__init__(message)
 
 
-class RerankError(LLMError, RuntimeError):
-    """Raised when a configured rerank operation cannot produce usable hits."""
-
-
 class SkillError(MindMemOSSkillError):
     """Base class for Skill algorithm and runtime errors."""
 
@@ -115,7 +111,6 @@ __all__ = [
     "LLMError",
     "ModelEndpointNotConfiguredError",
     "EmbeddingDimensionError",
-    "RerankError",
     "SkillError",
     "SkillConfigurationError",
     "SkillCapabilityUnavailableError",
