@@ -13,13 +13,13 @@ from __future__ import annotations
 import json
 import math
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from mindmemos.typing import SkillBinding
-from mindmemos_skill.typing import Skill
+from ..typing.agent import AgentType
+from ..typing.skill import SkillVersionOrigin, SkillVersionStatus
+from ..typing.trajectory import RolloutType, TrajectoryStatus
 
 
 def utcnow() -> datetime:
@@ -32,69 +32,6 @@ class PersistenceModel(BaseModel):
     """Strict base model shared by the three flat database-row records."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-
-class SkillVersionStatus(StrEnum):
-    DRAFT = "draft"
-    """Skill仍在草稿阶段，未正式发布"""
-
-    REJECTED = "rejected"
-    """Skill被算法门控拒绝"""
-
-    PUBLISHED = "published"
-    """Skill发布，可用状态"""
-
-    ARCHIVED = "archived"
-    """Skill已失效，归档状态"""
-
-
-class SkillVersionOrigin(StrEnum):
-    LOCAL = "local"
-    """由本地产生"""
-
-    CLOUD = "cloud"
-    """由云端同步"""
-
-    EVOLUTION = "evolution"
-    """由Skill演进算法发布"""
-
-    MANAGE = "manage"
-    """由Skill管理算法发布"""
-
-
-class TrajectoryStatus(StrEnum):
-    RUNNING = "running"
-    """轨迹执行中"""
-
-    SUCCEEDED = "succeeded"
-    """轨迹执行成功"""
-
-    FAILED = "failed"
-    """轨迹执行失败"""
-
-    CANCELLED = "cancelled"
-    """轨迹执行被人工取消"""
-
-
-class RolloutType(StrEnum):
-    """Business purpose of one rollout."""
-
-    TRAIN = "train"
-    EVALUATE = "evaluate"
-    TEST = "test"
-    INFERENCE = "inference"
-
-
-class AgentType(StrEnum):
-    """Business purpose of one agent type."""
-    CLAUDE = "claude"
-    CLAUDE_SDK = "clause_sdk"
-    CODEX = "codex"
-    OPENCLAW = "openclaw"
-    OPENCODE = "opencode"
-    GEMINI_CLI = "gemini_cli"
-    CUSTOM = "custom"
-    UNKNOWN = "unknown"
 
 
 class SkillRecord(PersistenceModel):
@@ -207,8 +144,8 @@ class TrajectoryRecord(PersistenceModel):
     env_metadata: dict[str, JsonValue] = Field(default_factory=dict)
     """执行该任务的env环境信息"""
 
-    injected_skills: list[Skill] = Field(default_factory=list)
-    """执行该任务注入的skill列表"""
+    injected_skills: list[dict[str, JsonValue]] = Field(default_factory=list)
+    """执行该任务注入的 Skill 快照 JSON 列。"""
 
     # ------------- Agent信息 -------------
     agent_type: AgentType = AgentType.UNKNOWN
@@ -221,7 +158,7 @@ class TrajectoryRecord(PersistenceModel):
     status: TrajectoryStatus = TrajectoryStatus.RUNNING
     """该 rollout attempt 的执行状态。"""
 
-    trajectory: list[SkillBinding] = Field(default_factory=list)
+    trajectory: list[dict[str, JsonValue]] = Field(default_factory=list)
     """按发生顺序保存的消息、工具和内部事件 JSON 列。"""
 
     skill_bindings: list[dict[str, JsonValue]] = Field(default_factory=list)
@@ -304,13 +241,14 @@ def _parse_serialized_files(value: str) -> dict[str, str]:
     except json.JSONDecodeError as exc:
         raise ValueError("serialized files must be valid JSON") from exc
     if not isinstance(parsed, dict) or any(
-            not isinstance(path, str) or not path or not isinstance(content, str) for path, content in parsed.items()
+        not isinstance(path, str) or not path or not isinstance(content, str) for path, content in parsed.items()
     ):
         raise ValueError("serialized files must be a JSON object mapping non-empty paths to text content")
     return parsed
 
 
 __all__ = [
+    "AgentType",
     "AlgorithmLogRecord",
     "PersistenceModel",
     "RolloutType",

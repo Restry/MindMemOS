@@ -1,23 +1,38 @@
 """Agent lookup helper wrapping the global component registry."""
 
+from collections.abc import Mapping
+from typing import Any, cast
+
 from ..registry import create, list_components
+from ..typing import AgentType
+from .base import Agent
+from .config import AgentConfig
 
 
-def get_agent(name: str = "claude", **kwargs):
-    """Create an agent instance by name.
+def get_agent(
+    *,
+    agent_type: AgentType | str,
+    config: AgentConfig | Mapping[str, Any],
+) -> Agent[Any]:
+    """Create a configured agent for ``agent_type``.
 
     Args:
-        name: Registered agent name (default ``"claude"``).
-        **kwargs: Forwarded to the agent constructor.
+        agent_type: Domain-level type of the requested agent implementation.
+        config: Common and implementation-specific construction settings.
 
     Returns:
-        An :class:`~.base.Agent`-compatible instance.
+        A validated, configured :class:`~.base.Agent` instance.
     """
-    return create(type="agent", name=name, **kwargs)
+    try:
+        normalized_type = AgentType(agent_type)
+    except ValueError as exc:
+        raise ValueError(f"Unknown agent type: {agent_type!r}") from exc
+
+    return cast(Agent[Any], create(type="agent", name=normalized_type.value, config=config))
 
 
 def list_agents() -> list[str]:
-    """List names of all registered agent implementations."""
+    """List registered agent type values."""
     return list_components(type="agent").get("agent", [])
 
 

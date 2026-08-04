@@ -1,14 +1,48 @@
-from typing import Any
+"""Environment and evaluation contracts for algorithm trajectories."""
 
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
+import math
+
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+
+
+class EnvConfig(BaseModel):
+    ...
+
+
+class Environment(BaseModel):
+    """Execution environment attached to one task rollout."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    running_dir: str | None = None
+    """Agent 执行任务时使用的工作目录。"""
+
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    """数据集环境、沙箱或工具运行时的可序列化信息。"""
 
 
 class Reward(BaseModel):
+    """Structured evaluation result for one trajectory."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     score: float
     """奖励分数"""
 
     detail: str | None = None
     """测评详情"""
 
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
     """测评metadata"""
+
+    @field_validator("score")
+    @classmethod
+    def validate_finite_score(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("score must be a finite number")
+        return value
+
+
+__all__ = ["Environment", "Reward"]

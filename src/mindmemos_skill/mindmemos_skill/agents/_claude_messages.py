@@ -1,4 +1,4 @@
-"""Shared helpers to convert Claude message blocks to OpenAI Chat Completions format.
+"""Convert Claude message blocks to the trajectory's OpenAI message format.
 
 Assistant message::
     ``role: "assistant"``
