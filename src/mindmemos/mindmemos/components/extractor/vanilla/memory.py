@@ -133,26 +133,46 @@ class VanillaMemoryExtractor:
         """
         if self._llm_client is None:
             return self._envelope_fallback(envelope, preprocessed_texts)
-        try:
-            response = await self._llm_client.chat(
-                task="memory.add.extract",
-                messages=_envelope_prompt_messages(
-                    envelope, preprocessed_texts, context, enable_entities=self._enable_entities
-                ),
-                format_parser=parse_memory_extraction_json,
-            )
-            result = MemoryExtractionResult.model_validate(_normalize_extraction_payload(response.parsed))
-            return _mark_extractor(result, "vanilla_llm_chunked")
-        except Exception:
-            logger.warning(
-                "llm_chunked_extraction_failed",
-                request_id=context.request_id,
-                chunk_index=envelope.chunk_index,
-                boundary=envelope.boundary,
-                exc_info=True,
-            )
-            result = self._envelope_fallback(envelope, preprocessed_texts)
-            return _mark_extractor(result, "fallback_chunked")
+        # 本地补丁：原实现一次失败就走 _envelope_fallback，把整段原文当记忆入库
+        # （实测 ~2% 概率触发，库里会出现「# 2026-07-27 复盘 ## 聊了什么…」这类
+        # 未抽取的大段原文，还会被检索命中）。改为先重试 2 次，全失败才兜底。
+        last_exc = None
+        for attempt in range(3):
+            try:
+                response = await self._llm_client.chat(
+                    task="memory.add.extract",
+                    messages=_envelope_prompt_messages(
+                        envelope, preprocessed_texts, context, enable_entities=self._enable_entities
+                    ),
+                    format_parser=parse_memory_extraction_json,
+                )
+                result = MemoryExtractionResult.model_validate(_normalize_extraction_payload(response.parsed))
+                if attempt:
+                    logger.info(
+                        "llm_chunked_extraction_recovered",
+                        request_id=context.request_id,
+                        chunk_index=envelope.chunk_index,
+                        attempt=attempt + 1,
+                    )
+                return _mark_extractor(result, "vanilla_llm_chunked")
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "llm_chunked_extraction_retry",
+                    request_id=context.request_id,
+                    chunk_index=envelope.chunk_index,
+                    attempt=attempt + 1,
+                    error=str(exc)[:300],
+                )
+        logger.warning(
+            "llm_chunked_extraction_failed",
+            request_id=context.request_id,
+            chunk_index=envelope.chunk_index,
+            boundary=envelope.boundary,
+            error=str(last_exc)[:300],
+        )
+        result = self._envelope_fallback(envelope, preprocessed_texts)
+        return _mark_extractor(result, "fallback_chunked")
 
     def _envelope_fallback(
         self,

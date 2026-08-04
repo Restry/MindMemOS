@@ -104,7 +104,16 @@ class VanillaAddPipeline(MemoryDbPipelineMixin):
         resolved_llm = _try_get_llm() if llm_client is _CLIENT_UNSET else llm_client
         resolved_embed = _try_get_embed() if embed_client is _CLIENT_UNSET else embed_client
 
-        self._memory_extractor = memory_extractor or VanillaMemoryExtractor(llm_client=resolved_llm)
+        # 本地补丁：上游漏把 vanilla.enable_entities 传给抽取器，导致配置里
+        # 开了也永远走不带 entities 的 prompt，实体全部退回 spaCy NER
+        # （产出 cardinal/term 这类噪音）。这里补上配置读取。
+        try:
+            _enable_entities = bool(get_config().algo_config.add.vanilla.enable_entities)
+        except Exception:
+            _enable_entities = False
+        self._memory_extractor = memory_extractor or VanillaMemoryExtractor(
+            llm_client=resolved_llm, enable_entities=_enable_entities
+        )
         self._candidate_deduplicator = candidate_deduplicator or CandidateDeduplicator()
         self._related_memory_recall = related_memory_recall or RelatedMemoryRecall(
             db_reader=self.db_reader,

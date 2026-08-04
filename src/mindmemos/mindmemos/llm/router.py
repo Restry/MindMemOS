@@ -15,6 +15,12 @@ from ..typing import Usage
 
 litellm.drop_params = True  # Let litellm drop optional params unsupported by a provider.
 litellm.suppress_debug_info = True
+# 本地补丁：litellm 默认用 aiohttp 传输，在本机连内网 Home AI Hub
+# （hub.studio.nexora.restry.cn -> 192.168.1.223，DNS 同时返回
+# ::ffff:192.168.1.223 这条 IPv4-mapped IPv6 记录）时会连接失败，
+# 每次请求要重试 3 次才偶然成功 —— 表现为 embedding 单次 14s（Hub 实测仅 0.3s）、
+# rerank 直接失败导致语义搜索返回 0 条。切回 httpx 传输后恢复正常。
+litellm.disable_aiohttp_transport = True
 # litellm.set_verbose = True  # Re-enable for per-attempt retry logs when debugging.
 litellm.turn_off_message_logging = True
 logging.getLogger("LiteLLM").setLevel(logging.INFO)  # Let verbose retry logs through.
