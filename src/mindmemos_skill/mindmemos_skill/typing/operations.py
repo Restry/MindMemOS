@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .skill import Skill
-from .task import Trajectory
+from .trajectory import Trajectory
 
 
 class SkillFinding(BaseModel):

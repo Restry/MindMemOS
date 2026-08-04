@@ -10,6 +10,10 @@ ComponentType = str
 _VALID_COMPONENT_TYPES = {"env", "dataset", "algo", "agent"}
 _COMPONENT_REGISTRY: dict[ComponentType, dict[str, type[Any]]] = {}
 _BUILTINS_LOADED = False
+_BUILTIN_MODULES = (
+    "..agents.claude",
+    "..agents.claude_sdk",
+)
 
 
 def register(*, type: ComponentType, name: str):
@@ -58,23 +62,9 @@ def load_builtin_components() -> None:
     if _BUILTINS_LOADED:
         return
 
-    _BUILTINS_LOADED = True
-
     # Import built-in components so their @register decorators fire.
-    # Each module is importable independently; lazy imports avoid circular deps.
-    try:
-        from ..agents import claude  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from ..agents import claude_sdk  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from ..components.envs import builtin  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from ..components.datasets import builtin  # noqa: F401
-    except ImportError:
-        pass
+    # Mark the registry loaded only after every import succeeds so a partial
+    # import cannot permanently hide missing components.
+    for module_name in _BUILTIN_MODULES:
+        import_module(module_name, package=__package__)
+    _BUILTINS_LOADED = True
