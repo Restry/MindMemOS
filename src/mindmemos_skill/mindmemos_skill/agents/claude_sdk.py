@@ -19,7 +19,11 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
-from ._compat import convert_assistant_blocks, convert_user_blocks
+from ._compat import (
+    convert_assistant_blocks,
+    convert_user_blocks,
+    extract_used_skill_names,
+)
 from .base import Agent
 from .typing import AgentExecutionRequest, AgentExecutionResult
 from ..registry import register
@@ -92,6 +96,7 @@ class ClaudeSDKAgent:
             permission_mode="bypassPermissions",
             cwd=request.workspace or None,
             max_turns=request.max_turns,
+            model=request.model,
         )
 
         # Track result metadata from the stream.
@@ -119,15 +124,6 @@ class ClaudeSDKAgent:
 
         ended_at = time.time()
 
-        skill_bindings = [
-            SkillBinding(
-                name=s.name,
-                content_hash=str(hash(s.content or "")),
-                usage=SkillUsageType.INJECTED,
-            )
-            for s in request.skills
-        ]
-
         # Ensure at least one assistant message if we have a result.
         if result_text and not any(
             m.get("role") == "assistant" for m in trajectory_messages
@@ -136,10 +132,26 @@ class ClaudeSDKAgent:
                 {"role": "assistant", "content": result_text}
             )
 
+        # Only skills actually invoked via the Skill tool count as used.
+        used_names = extract_used_skill_names(trajectory_messages)
+        used_skills = [s for s in request.skills if s.name in used_names]
+
+        # Record every injected skill, distinguishing used vs unused.
+        skill_bindings = [
+            SkillBinding(
+                name=s.name,
+                content_hash=str(hash(s.content or "")),
+                usage=SkillUsageType.INJECTED
+                if s.name in used_names
+                else SkillUsageType.UNUSED,
+            )
+            for s in request.skills
+        ]
+
         trajectory = Trajectory(
             messages=trajectory_messages,
             input_skills=request.skills,
-            used_skills=request.skills,
+            used_skills=used_skills,
             started_at=started_at,
             finished_at=ended_at,
             duration_s=ended_at - started_at,

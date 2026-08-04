@@ -17,6 +17,9 @@ class SkillUsageType(str, Enum):
     MODIFIED = "modified"
     """技能修改使用"""
 
+    UNUSED = "unused"
+    """技能注入但未使用"""
+
 
 class Skill(BaseModel):
     """Definition of one skill available to an agent.

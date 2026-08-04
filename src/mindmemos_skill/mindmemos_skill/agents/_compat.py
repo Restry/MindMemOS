@@ -77,3 +77,27 @@ def convert_user_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if text_parts:
         messages.insert(0, {"role": "user", "content": "\n".join(text_parts)})
     return messages
+
+
+def extract_used_skill_names(messages: list[dict[str, Any]]) -> list[str]:
+    """Return names of skills actually invoked via the ``Skill`` tool.
+
+    Scans OpenAI-format trajectory messages for assistant ``tool_calls`` whose
+    ``function.name`` is ``"Skill"`` and collects the ``skill`` field from the
+    arguments JSON.  A skill that was only injected but never invoked is not
+    reported.
+    """
+    used: list[str] = []
+    for msg in messages:
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+            if not isinstance(fn, dict) or fn.get("name") != "Skill":
+                continue
+            try:
+                args = json.loads(fn.get("arguments", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            name = args.get("skill")
+            if isinstance(name, str) and name and name not in used:
+                used.append(name)
+    return used

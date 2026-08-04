@@ -16,7 +16,7 @@ import time
 from uuid import uuid4
 from typing import Any
 
-from ._compat import convert_assistant_blocks, convert_user_blocks
+from ._compat import convert_assistant_blocks, convert_user_blocks, extract_used_skill_names
 from .base import Agent
 from .typing import AgentExecutionRequest, AgentExecutionResult
 from ..registry import register
@@ -180,6 +180,8 @@ class ClaudeAgent(Agent):
 
         # Build the claude -p command.
         cmd = [cli, "-p", request.task.instruction]
+        if request.model:
+            cmd += ["--model", request.model]
         if request.task.system_prompt:
             cmd += ["--system-prompt", request.task.system_prompt]
         if skill_workspace:
@@ -240,11 +242,18 @@ class ClaudeAgent(Agent):
         # Append all stream messages (assistant + user) for a faithful trace.
         trajectory_messages.extend(stream_messages)
 
+        # Only skills actually invoked via the Skill tool count as used.
+        used_names = extract_used_skill_names(trajectory_messages)
+        used_skills = [s for s in request.skills if s.name in used_names]
+
+        # Record every injected skill, distinguishing used vs unused.
         skill_bindings = [
             SkillBinding(
                 name=s.name,
                 content_hash=str(hash(s.content or "")),
-                usage=SkillUsageType.INJECTED,
+                usage=SkillUsageType.INJECTED
+                if s.name in used_names
+                else SkillUsageType.UNUSED,
             )
             for s in request.skills
         ]
@@ -252,7 +261,7 @@ class ClaudeAgent(Agent):
         trajectory = Trajectory(
             messages=trajectory_messages,
             input_skills=request.skills,
-            used_skills=request.skills,
+            used_skills=used_skills,
             started_at=started_at,
             finished_at=ended_at,
             duration_s=ended_at - started_at,

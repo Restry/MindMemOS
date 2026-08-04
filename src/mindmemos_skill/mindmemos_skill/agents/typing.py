@@ -14,6 +14,8 @@ class AgentExecutionRequest:
     metadata: dict[str, Any]
     max_turns: int | None = None
     """最大轮数限制"""
+    model: str | None = None
+    """Claude 模型名，如 claude-sonnet-4-5、claude-opus-4-5，默认使用 Claude Code 配置"""
 
 
 @dataclass
