@@ -19,6 +19,7 @@ from opentelemetry.util.types import AttributeValue
 
 if TYPE_CHECKING:
     from ..config import ObservabilityConfig
+    from ..infra.observability import ObservabilityBackend
 
 _TRACEPARENT = "traceparent"
 
@@ -27,14 +28,18 @@ T = TypeVar("T")
 _MAX_ATTRIBUTE_CHARS = 8192
 
 
-def configure_tracing(config: "ObservabilityConfig"):
-    """Install the global tracer provider during application startup."""
+def configure_tracing(
+    config: "ObservabilityConfig",
+    *,
+    backend: "ObservabilityBackend | None" = None,
+):
+    """Install tracing with the configured exporter or an injected backend."""
     if not config.enabled:
         return None
     # Import lazily to avoid a module-load cycle between logging and infra.
     from ..infra import setup_tracer_provider
 
-    return setup_tracer_provider(config)
+    return setup_tracer_provider(config, backend=backend)
 
 
 def get_tracer(name: str) -> Tracer:
