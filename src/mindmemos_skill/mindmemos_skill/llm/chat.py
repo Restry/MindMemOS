@@ -33,6 +33,36 @@ class ChatResponse:
     usage: Usage = field(default_factory=Usage)
     parsed: Any = None
     raw_response: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_assistant_message(self) -> dict[str, Any]:
+        """Return the OpenAI message shape consumed by tool-calling agents."""
+
+        message: dict[str, Any] = {"role": "assistant", "content": self.content}
+        if self.tool_calls:
+            message["tool_calls"] = self.tool_calls
+        return message
+
+
+def _normalize_tool_calls(message: Any) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for call in get_response_value(message, "tool_calls", ()) or ():
+        dumped = dump_response(call)
+        if dumped:
+            normalized.append(dumped)
+            continue
+        function = get_response_value(call, "function", {})
+        normalized.append(
+            {
+                "id": get_response_value(call, "id", "") or "",
+                "type": get_response_value(call, "type", "function") or "function",
+                "function": {
+                    "name": get_response_value(function, "name", "") or "",
+                    "arguments": get_response_value(function, "arguments", "{}") or "{}",
+                },
+            }
+        )
+    return normalized
 
 
 class LLMClient:
@@ -110,6 +140,7 @@ class LLMClient:
                 model=model_name,
                 usage=usage_tokens(getattr(response, "usage", None)),
                 parsed=parsed,
+                tool_calls=_normalize_tool_calls(choice.message),
                 raw_response=dump_response(response),
             )
 

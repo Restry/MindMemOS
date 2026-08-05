@@ -101,6 +101,26 @@ class SkillServiceClosedError(SkillError, RuntimeError):
     """Raised when an operation is attempted after the service is closed."""
 
 
+class SkillManagementError(SkillError):
+    """Base class for local Skill management failures."""
+
+
+class SkillNotFoundError(SkillManagementError, LookupError):
+    """Raised when a Skill family or immutable version cannot be resolved."""
+
+
+class SkillConflictError(SkillManagementError, ValueError):
+    """Raised when a local management invariant or CAS precondition fails."""
+
+
+class SkillSnapshotError(SkillManagementError, ValueError):
+    """Raised when an external Skill snapshot is unsafe or malformed."""
+
+
+class SkillExportError(SkillManagementError):
+    """Raised when a snapshot cannot be safely materialized or restored."""
+
+
 __all__ = [
     "MindMemOSSkillError",
     "MindMemosSkillError",
@@ -115,4 +135,9 @@ __all__ = [
     "SkillConfigurationError",
     "SkillCapabilityUnavailableError",
     "SkillServiceClosedError",
+    "SkillManagementError",
+    "SkillNotFoundError",
+    "SkillConflictError",
+    "SkillSnapshotError",
+    "SkillExportError",
 ]

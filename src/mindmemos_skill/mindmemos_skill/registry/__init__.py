@@ -3,7 +3,11 @@
 from ._registry import (
     ComponentType,
     create,
+    get_agent,
+    get_env,
+    list_agents,
     list_components,
+    list_envs,
     load_builtin_components,
     register,
 )
@@ -11,7 +15,11 @@ from ._registry import (
 __all__ = [
     "ComponentType",
     "create",
+    "get_agent",
+    "get_env",
+    "list_agents",
     "list_components",
+    "list_envs",
     "load_builtin_components",
     "register",
 ]

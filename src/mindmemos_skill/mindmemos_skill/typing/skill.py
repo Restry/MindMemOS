@@ -1,11 +1,18 @@
-"""Algorithm-facing Skill definition, version and binding aggregates."""
+"""Business Skill aggregates derived from the persistence contract."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ..persistence.enums import SkillInjectionMode, SkillVersionOrigin, SkillVersionStatus
+
+if TYPE_CHECKING:
+    from ..persistence.models import SkillRecord
 
 
 class SkillUsageType(StrEnum):
@@ -21,77 +28,13 @@ class SkillUsageType(StrEnum):
     """技能注入但未使用"""
 
 
-class SkillVersionStatus(StrEnum):
-    """Lifecycle state of one immutable Skill version."""
-
-    DRAFT = "draft"
-    REJECTED = "rejected"
-    PUBLISHED = "published"
-    ARCHIVED = "archived"
-
-
-class SkillVersionOrigin(StrEnum):
-    """Source that created one immutable Skill version."""
-
-    LOCAL = "local"
-    CLOUD = "cloud"
-    EVOLUTION = "evolution"
-    MANAGE = "manage"
-
-
 class Skill(BaseModel):
-    """Definition of one skill available to an agent.
+    """One versioned, executable Skill aggregate.
 
-    A skill contains the material the backend can inject or expose to the
-    agent.  Version and trace identity do not belong here; they are captured
-    by :class:`SkillBinding` when a trajectory uses this skill.
-    """
-
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    name: str = Field(min_length=1)
-    """技能名称"""
-
-    description: str | None = None
-    """技能描述"""
-
-    alias: str | None = None
-    """供 CLI 或算法检索使用的可选短名称。"""
-
-    content: str = Field(min_length=1)
-    """技能正文"""
-
-    linked_files: dict[str, str] = Field(default_factory=dict)
-    """技能相关的文件和内容，包含scripts, references等，key为文件相对路径，value为文件内容"""
-
-    resources: dict[str, str] = Field(default_factory=dict)
-    """不属于核心 Skill bundle、但算法执行时需要的辅助文本资源。"""
-
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
-    """skill完整meta信息"""
-
-    @model_validator(mode="after")
-    def validate_files(self) -> Skill:
-        invalid_paths = [path for path in (*self.linked_files, *self.resources) if not path]
-        if invalid_paths:
-            raise ValueError("Skill file paths must not be empty")
-        duplicate_paths = self.linked_files.keys() & self.resources.keys()
-        if duplicate_paths:
-            duplicates = ", ".join(sorted(duplicate_paths))
-            raise ValueError(f"Skill linked files and resources overlap: {duplicates}")
-        return self
-
-    def bundle_files(self) -> dict[str, str]:
-        """Return the core multi-file bundle stored by ``SkillRecord.blob``."""
-
-        return {"SKILL.md": self.content, **self.linked_files}
-
-
-class SkillVersion(BaseModel):
-    """One immutable Skill version with its executable definition nested.
-
-    ``SkillRecord`` persists this aggregate as a flat row. Algorithms receive
-    the nested form so content, lineage and lifecycle are not mixed together.
+    A ``Skill`` is always one concrete version: identity, lineage, lifecycle
+    and executable files travel together. ``SkillRecord`` persists the same
+    aggregate as a flat row; there is deliberately no separate
+    ``SkillVersion`` wrapper in the typing layer.
     """
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
@@ -104,18 +47,89 @@ class SkillVersion(BaseModel):
     content_hash: str = Field(min_length=1)
     status: SkillVersionStatus = SkillVersionStatus.DRAFT
     origin: SkillVersionOrigin = SkillVersionOrigin.LOCAL
-    skill: Skill
+
+    name: str = Field(min_length=1)
+    """技能名称"""
+
+    description: str | None = None
+    """技能描述"""
+
+    alias: str | None = None
+    """供 CLI 或算法检索使用的可选短名称。"""
+
+    blob: dict[str, str]
+    """核心 Skill bundle；key 为相对路径，value 为文本内容。"""
+
+    resources: dict[str, str] = Field(default_factory=dict)
+    """不属于核心 Skill bundle、但算法执行时需要的辅助文本资源。"""
+
     commit_message: str | None = None
     created_at: datetime
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def content(self) -> str:
+        """Return the canonical ``SKILL.md`` content from the bundle."""
+
+        return self.blob["SKILL.md"]
 
     @model_validator(mode="after")
-    def validate_parent_ids(self) -> SkillVersion:
+    def validate_aggregate(self) -> Skill:
+        invalid_paths = [path for path in (*self.blob, *self.resources) if not path]
+        if invalid_paths:
+            raise ValueError("Skill file paths must not be empty")
         if self.version_id in self.parent_version_ids:
-            raise ValueError("a Skill version cannot be its own parent")
+            raise ValueError("a Skill cannot be its own parent version")
         if len(self.parent_version_ids) != len(set(self.parent_version_ids)):
             raise ValueError("parent_version_ids may not contain duplicates")
         return self
+
+    def to_record(self) -> SkillRecord:
+        """Flatten the aggregate into the canonical persistence row."""
+
+        from ..persistence.models import SkillRecord
+
+        return SkillRecord(
+            skill_id=self.skill_id,
+            version_id=self.version_id,
+            cloud_skill_id=self.cloud_skill_id,
+            parent_version_ids=self.parent_version_ids,
+            name=self.name,
+            description=self.description,
+            alias=self.alias,
+            blob=_serialize_files(self.blob),
+            resources=_serialize_files(self.resources),
+            content_hash=self.content_hash,
+            status=self.status,
+            version_label=self.version_label,
+            commit_message=self.commit_message,
+            metadata=self.metadata,
+            created_at=self.created_at,
+            origin=self.origin,
+        )
+
+    @classmethod
+    def from_record(cls, record: SkillRecord) -> Skill:
+        """Rebuild the business aggregate from a validated persistence row."""
+
+        return cls(
+            skill_id=record.skill_id,
+            version_id=record.version_id,
+            cloud_skill_id=record.cloud_skill_id,
+            parent_version_ids=record.parent_version_ids,
+            version_label=record.version_label,
+            content_hash=record.content_hash,
+            status=record.status,
+            origin=record.origin,
+            name=record.name,
+            description=record.description,
+            alias=record.alias,
+            blob=json.loads(record.blob),
+            resources=json.loads(record.resources),
+            commit_message=record.commit_message,
+            created_at=record.created_at,
+            metadata=record.metadata,
+        )
 
 
 class SkillBinding(BaseModel):
@@ -149,12 +163,20 @@ class SkillBinding(BaseModel):
     usage: SkillUsageType | None = None
     """技能使用方式"""
 
+    injection_mode: SkillInjectionMode | None = None
+    """该 Skill 版本在本次轨迹中的注入机制。"""
+
+
+def _serialize_files(files: dict[str, str]) -> str:
+    """Serialize a file mapping deterministically for the JSON text column."""
+
+    return json.dumps(files, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
 
 __all__ = [
     "Skill",
     "SkillBinding",
     "SkillUsageType",
-    "SkillVersion",
     "SkillVersionOrigin",
     "SkillVersionStatus",
 ]

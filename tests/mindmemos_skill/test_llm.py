@@ -57,6 +57,45 @@ async def test_chat_client_returns_local_response_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_client_preserves_openai_tool_calls() -> None:
+    class ToolCallRouter:
+        async def acompletion(self, **kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="call-1",
+                                    type="function",
+                                    function=SimpleNamespace(name="lookup", arguments='{"query":"demo"}'),
+                                )
+                            ],
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+                model="chat-model",
+                usage=None,
+            )
+
+    response = await LLMClient(ToolCallRouter()).chat(task="test", messages=[])
+
+    assert response.to_assistant_message() == {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": '{"query":"demo"}'},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_embedding_client_validates_requested_dimension() -> None:
     client = EmbedClient(FakeRouter())
 

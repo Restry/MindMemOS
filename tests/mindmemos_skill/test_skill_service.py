@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -21,7 +22,16 @@ from mindmemos_skill.typing import Skill
 
 
 def make_skill(content: str = "Use the API carefully.") -> Skill:
-    return Skill(name="api-helper", description="Helps call an API", content=content)
+    return Skill(
+        skill_id="skill-1",
+        version_id="version-1",
+        version_label="1.0.0",
+        content_hash="sha256:api-helper",
+        name="api-helper",
+        description="Helps call an API",
+        blob={"SKILL.md": content},
+        created_at=datetime(2026, 8, 4, tzinfo=UTC),
+    )
 
 
 class FakeAnalyzer:
@@ -43,7 +53,12 @@ class FakeOptimizer:
     async def optimize(self, request: SkillOptimizationRequest) -> SkillOptimizationResult:
         self.requests.append(request)
         optimized = request.skill.model_copy(
-            update={"content": request.skill.content + "\nValidate the response schema."}
+            update={
+                "blob": {
+                    **request.skill.blob,
+                    "SKILL.md": request.skill.blob["SKILL.md"] + "\nValidate the response schema.",
+                }
+            }
         )
         return SkillOptimizationResult(skill=optimized, changed=True, analysis=request.analysis)
 
@@ -86,7 +101,7 @@ async def test_facade_delegates_analyze_and_optimize_and_starts_once() -> None:
     assert analyzer.requests[0].skill == skill
     assert optimizer.requests[0].analysis == analysis
     assert result.changed is True
-    assert "Validate the response schema." in result.skill.content
+    assert "Validate the response schema." in result.skill.blob["SKILL.md"]
     assert service.capabilities == frozenset({"analyze", "optimize"})
     assert service.algorithms.capabilities == service.capabilities
 

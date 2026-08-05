@@ -1,8 +1,8 @@
 """Minimal persistence contracts for local Skill algorithms.
 
-``SkillRecord``, ``TrajectoryRecord``, and ``AlgorithmLogRecord`` each describe
-one flat database row.  JSON columns use plain JSON-compatible dictionaries or
-lists rather than nested Pydantic models.
+The three fact records remain immutable historical rows. ``SkillFamilyStateRecord``
+is the separate mutable control-plane row for one Skill family. JSON columns use
+plain JSON-compatible dictionaries or lists rather than nested Pydantic models.
 
 This module contains data contracts only.  It does not open SQLite, select a
 vector backend, or depend on ``mindmemos_sdk``.
@@ -17,9 +17,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from ..typing.agent import AgentType
-from ..typing.skill import SkillVersionOrigin, SkillVersionStatus
-from ..typing.trajectory import RolloutType, TrajectoryStatus
+from .enums import (
+    AgentType,
+    RolloutType,
+    SkillInjectionMode,
+    SkillVersionOrigin,
+    SkillVersionStatus,
+    TrajectoryStatus,
+)
 
 
 def utcnow() -> datetime:
@@ -29,7 +34,7 @@ def utcnow() -> datetime:
 
 
 class PersistenceModel(BaseModel):
-    """Strict base model shared by the three flat database-row records."""
+    """Strict base model shared by flat database-row records."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
@@ -106,6 +111,41 @@ class SkillRecord(PersistenceModel):
         return self
 
 
+class SkillFamilyStateRecord(PersistenceModel):
+    """Mutable pointers and durable pending operations for one Skill family."""
+
+    skill_id: str = Field(min_length=1)
+    effective_version_id: str = Field(min_length=1)
+    published_head_id: str | None = None
+    cloud_revision: int | None = Field(default=None, ge=0)
+    last_sync_at: datetime | None = None
+    pending_operations: list[dict[str, JsonValue]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    @field_validator("pending_operations")
+    @classmethod
+    def validate_pending_operations(
+        cls,
+        operations: list[dict[str, JsonValue]],
+    ) -> list[dict[str, JsonValue]]:
+        operation_ids: list[str] = []
+        for operation in operations:
+            operation_id = operation.get("operation_id")
+            if not isinstance(operation_id, str) or not operation_id.strip():
+                raise ValueError("every pending operation requires a non-empty operation_id")
+            operation_ids.append(operation_id)
+        if len(operation_ids) != len(set(operation_ids)):
+            raise ValueError("pending operation_id values must be unique")
+        return operations
+
+    @model_validator(mode="after")
+    def validate_timestamps(self) -> SkillFamilyStateRecord:
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at must not be earlier than created_at")
+        return self
+
+
 class TrajectoryRecord(PersistenceModel):
     """One flat table row containing one physical Agent rollout attempt."""
 
@@ -152,7 +192,7 @@ class TrajectoryRecord(PersistenceModel):
     """执行任务的 Agent 实现类型。"""
 
     agent_profile: dict[str, Any] = Field(default_factory=dict)
-    """模型、提供商、温度和推理参数等非密钥配置快照。"""
+    """Agent 通用与扩展配置快照；API key 仅保存 AgentProfile 生成的 SHA-256 摘要。"""
 
     # ------------- 轨迹详情 -------------
     status: TrajectoryStatus = TrajectoryStatus.RUNNING
@@ -252,6 +292,8 @@ __all__ = [
     "AlgorithmLogRecord",
     "PersistenceModel",
     "RolloutType",
+    "SkillInjectionMode",
+    "SkillFamilyStateRecord",
     "SkillRecord",
     "SkillVersionOrigin",
     "SkillVersionStatus",

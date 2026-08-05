@@ -7,19 +7,15 @@ import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, TypeAlias
 
-import litellm
-from litellm import Router
+from ..errors import SkillCapabilityUnavailableError
+
+if TYPE_CHECKING:
+    from litellm import Router
 
 ConfigObject: TypeAlias = Mapping[str, Any] | object
-
-litellm.drop_params = True
-litellm.suppress_debug_info = True
-litellm.turn_off_message_logging = True
-logging.getLogger("LiteLLM").setLevel(logging.INFO)
-for _logger_name in ("LiteLLM Router", "LiteLLM Proxy"):
-    logging.getLogger(_logger_name).setLevel(logging.WARNING)
 
 _LITELLM_PARAM_FIELDS: tuple[str, ...] = (
     "model",
@@ -36,6 +32,28 @@ _LITELLM_PARAM_FIELDS: tuple[str, ...] = (
     "dimensions",
     "num_retries",
 )
+
+
+def _load_litellm() -> Any:
+    """Load and configure the optional LiteLLM dependency on first use."""
+
+    try:
+        litellm = import_module("litellm")
+    except ModuleNotFoundError as exc:
+        missing_module = exc.name or "litellm"
+        raise SkillCapabilityUnavailableError(
+            "LLM capability is unavailable because LiteLLM is not installed correctly "
+            f"(missing module: {missing_module!r}). "
+            "Install it with `pip install 'mindmemos-skill[llm]'`."
+        ) from exc
+
+    litellm.drop_params = True
+    litellm.suppress_debug_info = True
+    litellm.turn_off_message_logging = True
+    logging.getLogger("LiteLLM").setLevel(logging.INFO)
+    for logger_name in ("LiteLLM Router", "LiteLLM Proxy"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    return litellm
 
 
 @dataclass(slots=True)
@@ -78,6 +96,7 @@ def build_litellm_params(
 
 def build_router(router_config: ConfigObject, alias: str, *, num_retries: int | None = None) -> tuple[Router, int]:
     """Build a LiteLLM router from a mapping or attribute-based config object."""
+    litellm = _load_litellm()
     endpoints = list(_config_value(router_config, "endpoints", ()) or ())
     dimensions_supported_models = tuple(_config_value(router_config, "dimensions_supported_models", ()) or ())
     deployment_counts: dict[str, int] = {}
@@ -101,7 +120,7 @@ def build_router(router_config: ConfigObject, alias: str, *, num_retries: int | 
     max_retries = num_retries
     if max_retries is None:
         max_retries = max((int(_config_value(endpoint, "num_retries", 0) or 0) for endpoint in endpoints), default=0)
-    router = Router(
+    router = litellm.Router(
         model_list=model_list,
         routing_strategy=_config_value(router_config, "routing_strategy", "simple-shuffle"),
         num_retries=max_retries,
