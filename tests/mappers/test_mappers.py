@@ -402,17 +402,10 @@ def test_service_search_input_allows_positive_top_k_and_none() -> None:
     assert SearchPipelineInput(query="Qdrant", top_k=None).top_k is None
 
 
-def test_service_search_input_accepts_token_budget_and_score_output_controls() -> None:
-    search = SearchPipelineInput(query="Qdrant", token_budget=1200, include_scores=True)
+def test_service_search_input_accepts_score_output_control() -> None:
+    search = SearchPipelineInput(query="Qdrant", include_scores=True)
 
-    assert search.token_budget == 1200
     assert search.include_scores is True
-
-
-@pytest.mark.parametrize("token_budget", [0, -1])
-def test_service_search_input_rejects_non_positive_token_budget(token_budget: int) -> None:
-    with pytest.raises(ValueError):
-        SearchPipelineInput(query="Qdrant", token_budget=token_budget)
 
 
 def test_service_search_input_rejects_legacy_search_strategy_key() -> None:
@@ -511,7 +504,6 @@ def test_search_record_mapper_uses_protocol_fields_only() -> None:
             max_rounds=2,
             rerank=True,
             include_scores=True,
-            token_budget=512,
         ),
         SearchPipelineResult(
             status="ok",
@@ -525,7 +517,6 @@ def test_search_record_mapper_uses_protocol_fields_only() -> None:
             metrics={
                 "scoring_version": "query-local-v1",
                 "candidate_count": 4,
-                "estimated_tokens_after": 120,
             },
         ),
         ctx=ctx,
@@ -542,11 +533,9 @@ def test_search_record_mapper_uses_protocol_fields_only() -> None:
     assert point.payload["max_rounds"] == 2
     assert point.payload["rerank"] is True
     assert point.payload["include_scores"] is True
-    assert point.payload["token_budget"] == 512
     assert point.payload["search_metrics"] == {
         "scoring_version": "query-local-v1",
         "candidate_count": 4,
-        "estimated_tokens_after": 120,
     }
     assert point.payload["memories"][0]["id"] == "mem-1"
     assert "semantic_hit_count" not in point.payload

@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from .agentic import AgenticConfig
 from .default_search import DefaultSearchConfig
 from .rerank import RerankConfig
-from .retention import MemoryRetentionConfig
 from .schema import SchemaSearchConfig
 from .vanilla import VanillaSearchConfig
 
@@ -18,6 +17,9 @@ class SearchConfig:
 
     request_top_k_max: int = field(default=100)
     """Maximum ``top_k`` accepted from public search requests."""
+
+    score_provenance_limit: int = field(default=8)
+    """Maximum sanitized graph paths exposed for one scored search result."""
 
     include_patches: bool = field(default=True)
     """Deprecated compatibility field; public search no longer returns archived patch versions."""
@@ -36,6 +38,3 @@ class SearchConfig:
 
     rerank: RerankConfig = field(default_factory=RerankConfig)
     """Shared reranking configuration."""
-
-    retention: MemoryRetentionConfig = field(default_factory=MemoryRetentionConfig)
-    """Request-gated token-budget retention configuration."""

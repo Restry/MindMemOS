@@ -182,9 +182,6 @@ class SearchRequest(ActorIdentityRequest):
     include_scores: bool = False
     """Include query-local score and sanitized retrieval provenance in each result."""
 
-    token_budget: int | None = Field(default=None, ge=1)
-    """Strict maximum estimated tokens for returned memory content."""
-
 
 class GetRequest(BaseModel):
     """HTTP body for ``POST /v1/memory/get``.

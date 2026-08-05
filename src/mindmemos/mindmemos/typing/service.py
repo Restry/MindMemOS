@@ -270,9 +270,6 @@ class SearchPipelineInput(BaseModel):
     include_scores: bool = False
     """Whether to include query-local score and sanitized provenance in search results."""
 
-    token_budget: int | None = Field(default=None, ge=1)
-    """Strict maximum estimated tokens for returned memory content."""
-
 
 class SearchPipelineResult(BaseModel):
     status: ServiceResultStatus

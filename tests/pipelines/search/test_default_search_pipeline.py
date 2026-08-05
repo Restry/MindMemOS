@@ -108,12 +108,12 @@ async def test_search_empty_query_tokens_returns_empty_result_without_db_call() 
 
 
 @pytest.mark.asyncio
-async def test_budgeted_search_uses_recall_option_instead_of_final_top_k() -> None:
+async def test_search_uses_explicit_recall_option_instead_of_final_top_k() -> None:
     reader = FakeReader()
     engine = make_engine(reader)
 
     await engine.search_candidates(
-        SearchPipelineInput(query="Qdrant", top_k=1, token_budget=3),
+        SearchPipelineInput(query="Qdrant", top_k=1),
         make_context(),
         options=SearchEngineOptions(recall_top_k=7, result_top_n=7),
     )

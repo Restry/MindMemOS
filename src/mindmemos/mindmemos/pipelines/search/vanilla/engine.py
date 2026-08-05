@@ -105,7 +105,7 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         if self._explicit_graph_provenance_limit is not None:
             return self._explicit_graph_provenance_limit
         try:
-            return get_config().algo_config.search.retention.graph_provenance_limit
+            return get_config().algo_config.search.score_provenance_limit
         except Exception:
             return 8
 

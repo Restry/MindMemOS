@@ -292,7 +292,6 @@ def build_search_body(
     rerank: bool = False,
     score_threshold: float | None = None,
     include_scores: bool = False,
-    token_budget: int | None = None,
     filters: dict[str, Any] | None = None,
     app_id: str | None = None,
     agent_id: str | None = None,
@@ -303,10 +302,6 @@ def build_search_body(
         raise TypeError("rerank must be a bool")
     if not isinstance(include_scores, bool):
         raise TypeError("include_scores must be a bool")
-    if token_budget is not None and (
-        isinstance(token_budget, bool) or not isinstance(token_budget, int) or token_budget < 1
-    ):
-        raise ValueError("token_budget must be a positive integer")
     body: dict[str, Any] = {
         "user_id": user_id,
         "query": query,
@@ -317,8 +312,6 @@ def build_search_body(
     body["rerank"] = rerank
     if include_scores:
         body["include_scores"] = True
-    if token_budget is not None:
-        body["token_budget"] = token_budget
     if score_threshold is not None:
         body["score_threshold"] = score_threshold
     if app_id:

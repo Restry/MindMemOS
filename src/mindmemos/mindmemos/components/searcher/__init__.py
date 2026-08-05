@@ -2,7 +2,6 @@
 
 from .entity_recall import EntityRecall, build_entity_type_filter, combine_entity_results_rrf
 from .final_filter import SearchFinalFilter
-from .memory_retention import MemoryRetentionSelector, RetentionSelection
 from .protocols import EntityHydrator, EntityRecallStrategy, SearchStrategy
 from .rerank import rerank, rerank_with_scores
 from .rrf import reciprocal_rank_fusion
@@ -20,8 +19,6 @@ __all__ = [
     "EntityRecallStrategy",
     "SearchStrategy",
     "SearchFinalFilter",
-    "MemoryRetentionSelector",
-    "RetentionSelection",
     "GraphPathEvidence",
     "RetrievalEvidence",
     "ScoredSearchCandidate",

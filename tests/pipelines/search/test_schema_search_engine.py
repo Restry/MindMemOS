@@ -147,7 +147,7 @@ async def test_schema_search_engine_uses_schema_search_config_not_agentic_round_
 
 
 @pytest.mark.asyncio
-async def test_budgeted_schema_search_uses_bounded_candidate_pool_before_final_top_k(config_scope) -> None:
+async def test_schema_search_uses_explicit_candidate_pool_before_final_top_k(config_scope) -> None:
     search_config = SearchConfig()
     query_builder = FakeQueryBuilder(
         current_time_mode=search_config.schema_search.current_time_mode,
@@ -167,7 +167,7 @@ async def test_budgeted_schema_search_uses_bounded_candidate_pool_before_final_t
     engine._expander = expander
 
     await engine.search_candidates(
-        SearchPipelineInput(query="Qdrant", search_pipeline="schema", top_k=1, token_budget=32),
+        SearchPipelineInput(query="Qdrant", search_pipeline="schema", top_k=1),
         make_context(),
         options=SearchEngineOptions(recall_top_k=7, result_top_n=7),
     )

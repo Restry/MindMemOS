@@ -5,9 +5,8 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
-from ...components.searcher import MemoryRetentionSelector, SearchFinalFilter
+from ...components.searcher import SearchFinalFilter
 from ...config import get_config
-from ...config.algo.search.retention import MemoryRetentionConfig
 from ...llm import RerankClient
 from ...typing import (
     MemoryRequestContext,
@@ -20,7 +19,7 @@ from ...typing import (
 from ..base import MemoryDbPipelineMixin
 from ..registry import register
 from .agentic.wrapper import AgenticSearchWrapper
-from .base import SearchEngine, SearchEngineOptions
+from .base import SearchEngine
 from .default import DefaultSearchEngine
 from .schema import SchemaSearchEngine
 from .vanilla import VanillaSearchEngine
@@ -39,16 +38,14 @@ class SearchPipelineImpl(MemoryDbPipelineMixin):
         agentic_wrapper: AgenticSearchWrapper | None = None,
         final_filter: SearchFinalFilter | None = None,
         rerank_client: RerankClient | None = None,
-        retention_config: MemoryRetentionConfig | None = None,
-        retention_selector: MemoryRetentionSelector | None = None,
+        score_provenance_limit: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._engines = dict(engines or {})
         self._use_default_engines = engines is None
         self._agentic = agentic_wrapper
-        self._retention_config = retention_config
-        self._retention_selector = retention_selector
+        self._explicit_score_provenance_limit = score_provenance_limit
         if final_filter is not None:
             self._final_filter = final_filter
         else:
@@ -66,56 +63,20 @@ class SearchPipelineImpl(MemoryDbPipelineMixin):
             available = ", ".join(sorted(self._available_engine_names()))
             raise ValueError(f"Unknown search strategy {strategy!r}. Available strategies: {available}")
 
-        retention_active = inp.token_budget is not None
-        retention_config = self._resolve_retention_config() if retention_active else None
-        engine_options = (
-            SearchEngineOptions(
-                recall_top_k=retention_config.max_candidates,
-                result_top_n=retention_config.max_candidates,
-            )
-            if retention_config is not None
-            else None
-        )
         if inp.agentic:
             candidates = await self._agentic_wrapper().run(inp, context, engine)
         else:
-            candidates = await engine.search_candidates(inp, context, options=engine_options)
-        ranking_candidates = (
-            candidates[: retention_config.max_candidates] if retention_config is not None else candidates
-        )
+            candidates = await engine.search_candidates(inp, context, options=None)
         filter_result = await self._final_filter.apply_with_outcome(
             query=inp.query,
-            candidates=ranking_candidates,
+            candidates=candidates,
             top_k=inp.top_k,
             rerank=inp.rerank and _strategy_allows_rerank(strategy),
             score_threshold=inp.score_threshold,
-            score_output=inp.include_scores or retention_active,
-            truncate=not retention_active,
+            score_output=inp.include_scores,
         )
         filtered = filter_result.candidates
         metrics = _scoring_metrics(filtered, rerank_outcome=filter_result.rerank_outcome)
-        if inp.token_budget is not None:
-            assert retention_config is not None
-            selector = self._retention_selector or MemoryRetentionSelector(config=retention_config)
-            selection = selector.select(
-                query=inp.query,
-                candidates=filtered,
-                token_budget=inp.token_budget,
-            )
-            metrics.update(
-                {
-                    "token_budget": inp.token_budget,
-                    "candidate_count_before_retention": len(filtered),
-                    "candidate_count_after_retention": len(selection.candidates),
-                    "estimated_tokens_before": selection.estimated_tokens_before,
-                    "estimated_tokens_after": selection.estimated_tokens_after,
-                    "budget_utilization": selection.estimated_tokens_after / inp.token_budget,
-                    "budget_induced_empty": selection.budget_induced_empty,
-                    "retention_selector_version": retention_config.selector_version,
-                    "token_estimator_version": retention_config.estimator_version,
-                }
-            )
-            filtered = selection.candidates if inp.top_k is None else selection.candidates[: inp.top_k]
         provenance_limit = self._score_provenance_limit() if inp.include_scores else 0
         memories = [
             _project_search_result(
@@ -128,14 +89,11 @@ class SearchPipelineImpl(MemoryDbPipelineMixin):
         metrics["returned_count"] = len(memories)
         return SearchPipelineResult(status="ok", memories=memories, metrics=metrics)
 
-    def _resolve_retention_config(self) -> MemoryRetentionConfig:
-        if self._retention_config is not None:
-            return self._retention_config
-        return get_config().algo_config.search.retention
-
     def _score_provenance_limit(self) -> int:
+        if self._explicit_score_provenance_limit is not None:
+            return self._explicit_score_provenance_limit
         try:
-            return self._resolve_retention_config().graph_provenance_limit
+            return get_config().algo_config.search.score_provenance_limit
         except Exception:
             return 8
 

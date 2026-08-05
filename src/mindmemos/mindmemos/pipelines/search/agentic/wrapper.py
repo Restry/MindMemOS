@@ -102,7 +102,7 @@ class AgenticSearchWrapper:
             planner=planner,
             sufficiency=sufficiency,
             ranker=self._ranker,
-            evidence_limit=get_config().algo_config.search.retention.graph_provenance_limit,
+            evidence_limit=get_config().algo_config.search.score_provenance_limit,
         )
         parsed_filters = parse_schema_search_filters(inp.filters, context)
         entities = await loop.run(
@@ -117,7 +117,7 @@ class AgenticSearchWrapper:
             entities,
             include_edges=agentic_config.include_edges,
             output_max_edge_num=agentic_config.output_max_edge_num,
-            evidence_limit=get_config().algo_config.search.retention.graph_provenance_limit,
+            evidence_limit=get_config().algo_config.search.score_provenance_limit,
         )
 
     def _resolve_llm(self) -> LLMClient:

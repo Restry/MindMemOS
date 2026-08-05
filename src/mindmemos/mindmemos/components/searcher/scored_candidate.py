@@ -1,7 +1,7 @@
 """Internal scored search candidates and query-local score utilities.
 
 These types deliberately stay below the HTTP response boundary.  Public search
-responses are projected from them only after reranking, retention, and top-k.
+responses are projected from them only after reranking and top-k.
 """
 
 from __future__ import annotations

@@ -294,28 +294,15 @@ def test_search_preserves_requested_relevance_and_graph_provenance():
         )
 
     client = MemoryClient(_transport(handler), default_user_id="u_1")
-    result = client.search("memory", include_scores=True, token_budget=1200)
+    result = client.search("memory", include_scores=True)
 
     assert captured["body"]["include_scores"] is True
-    assert captured["body"]["token_budget"] == 1200
     relevance = result.memories[0].relevance
     assert relevance is not None
     assert relevance.score == pytest.approx(0.82)
     assert relevance.retrieval_score == pytest.approx(7.5)
     assert relevance.graph[0].seed_memory_id == "m-seed"
     assert relevance.graph[0].entity_name == "MindMemOS"
-
-
-@pytest.mark.parametrize("token_budget", [True, 0, -1, 1.5, "100"])
-def test_search_rejects_invalid_token_budget(token_budget):
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise AssertionError("invalid input must fail before sending an HTTP request")
-
-    client = MemoryClient(_transport(handler), default_user_id="u_1")
-
-    with pytest.raises((TypeError, ValueError)):
-        client.search("memory", token_budget=token_budget)
-
 
 def test_get_sends_body_and_returns_hits():
     captured = {}

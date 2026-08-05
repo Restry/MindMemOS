@@ -264,7 +264,6 @@ def to_search_record_point(
             "max_rounds": inp.max_rounds,
             "rerank": inp.rerank,
             "include_scores": inp.include_scores,
-            "token_budget": inp.token_budget,
         }
     )
     if result is not None:

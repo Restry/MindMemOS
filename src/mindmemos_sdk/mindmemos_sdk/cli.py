@@ -151,7 +151,6 @@ def _add_memory_commands(subparsers: argparse._SubParsersAction[argparse.Argumen
     )
     search.add_argument("--rerank", action="store_true", help="Enable reranking.")
     search.add_argument("--include-scores", action="store_true", help="Include query-local score details.")
-    search.add_argument("--token-budget", type=int, help="Strict estimated-token budget for returned memories.")
     search.add_argument(
         "--score-threshold",
         type=float,
@@ -555,7 +554,6 @@ def _handle_memory_search(args: argparse.Namespace) -> int:
                     rerank=args.rerank,
                     score_threshold=args.score_threshold,
                     include_scores=True if args.include_scores else None,
-                    token_budget=args.token_budget,
                     filters=filters,
                     app_id=args.app_id,
                     agent_id=args.agent_id,
