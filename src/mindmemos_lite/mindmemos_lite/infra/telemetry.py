@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
 from ..config import ObservabilityConfig
 from ..logging import get_logger
-from .observability import SQLiteSpanExporter
+from .observability import BackendSpanExporter, ObservabilityBackend, SQLiteSpanExporter
 
 logger = get_logger(__name__)
 
@@ -31,8 +31,17 @@ def _signal_endpoint(base: str, signal: str) -> str:
     return f"{base}/v1/{signal}"
 
 
-def setup_tracer_provider(config: ObservabilityConfig) -> TracerProvider | None:
-    """Build and install the process-global tracer provider."""
+def setup_tracer_provider(
+    config: ObservabilityConfig,
+    *,
+    backend: ObservabilityBackend | None = None,
+) -> TracerProvider | None:
+    """Build and install the process-global tracer provider.
+
+    ``backend`` is the composition seam for packages that reuse Lite tracing
+    without adopting its SQLite span store. When omitted, configuration keeps
+    selecting the built-in SQLite, console, or OTLP exporter.
+    """
 
     global _provider
     if not config.enabled:
@@ -47,7 +56,19 @@ def setup_tracer_provider(config: ObservabilityConfig) -> TracerProvider | None:
     )
     exporter_name = config.exporter.strip().lower()
 
-    if exporter_name == "sqlite":
+    if backend is not None:
+        exporter = BackendSpanExporter(backend, capture_content=config.capture_content)
+        provider.add_span_processor(
+            BatchSpanProcessor(
+                exporter,
+                max_queue_size=config.max_queue_size,
+                schedule_delay_millis=config.schedule_delay_millis,
+                max_export_batch_size=config.max_export_batch_size,
+                export_timeout_millis=config.export_timeout_millis,
+            )
+        )
+        exporter_name = "custom_backend"
+    elif exporter_name == "sqlite":
         exporter = SQLiteSpanExporter(
             config.sqlite_path,
             retention_days=config.retention_days,
