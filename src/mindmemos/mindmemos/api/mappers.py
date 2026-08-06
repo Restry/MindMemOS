@@ -88,13 +88,12 @@ def to_search_pipeline_input(
     req: SearchRequest,
     *,
     search_pipeline: str | None = None,
-    search_pipline: str | None = None,
 ) -> SearchPipelineInput:
     """Build pure search pipeline input from a public search request."""
 
     _validate_request_top_k(req.top_k)
     data = req.model_dump(by_alias=True, exclude=set(_ACTOR_FIELDS) | {"search_strategy"})
-    data["search_pipeline"] = search_pipeline or search_pipline
+    data["search_pipeline"] = search_pipeline
     data["agentic"] = req.search_strategy == "agentic"
     return SearchPipelineInput.model_validate(data)
 
