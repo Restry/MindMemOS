@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import yaml
-import httpx
+
 
 MM_API = os.getenv("MINDMEMOS_API", "http://127.0.0.1:8000")
 QDRANT = os.getenv("MINDMEMOS_QDRANT_URL", "http://127.0.0.1:6333")
@@ -220,27 +220,67 @@ def _save_model_settings(payload: dict) -> dict:
 
 def _provider_model_ids(endpoint: str, api_key: str) -> set[str]:
     url = endpoint.rstrip("/") + "/models"
+    escaped_key = api_key.replace("\\", "\\\\").replace('"', '\\"')
+    curl_config = (
+        f'header = "Authorization: Bearer {escaped_key}"\n'
+        'header = "Accept: application/json"\n'
+    )
+    fd, output_path = tempfile.mkstemp(prefix=".mindmemos-model-list.")
+    os.close(fd)
     try:
-        with httpx.Client(timeout=15, trust_env=False) as client:
-            response = client.get(
+        result = subprocess.run(
+            [
+                "/usr/bin/curl",
+                "--ipv4",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "15",
+                "--output",
+                output_path,
+                "--write-out",
+                "%{http_code}",
+                "--config",
+                "-",
                 url,
-                headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            ],
+            input=curl_config,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        if result.returncode:
+            print(
+                f"model endpoint curl failed: exit={result.returncode} stderr={result.stderr[-500:]!r}",
+                file=sys.stderr,
             )
-        if response.status_code in (401, 403):
+            raise ValueError("Endpoint 连接失败，请检查地址、网络和服务状态")
+        try:
+            status = int(result.stdout.strip())
+        except ValueError as exc:
+            raise ValueError("Endpoint 测试没有返回 HTTP 状态") from exc
+        if status in (401, 403):
             raise ValueError("API Key 无效或无权读取模型列表")
-        if response.status_code == 404:
+        if status == 404:
             raise ValueError("Endpoint 没有 /models 接口，请确认它是 OpenAI 兼容地址")
-        if response.status_code >= 400:
-            raise ValueError(f"Endpoint 返回 HTTP {response.status_code}")
-        if len(response.content) > 2_000_000:
+        if status >= 400:
+            raise ValueError(f"Endpoint 返回 HTTP {status}")
+        if os.path.getsize(output_path) > 2_000_000:
             raise ValueError("Endpoint 返回的模型列表过大")
-        data = response.json()
-    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        with open(output_path, "rb") as handle:
+            data = json.load(handle)
+    except (OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError("Endpoint 连接失败，请检查地址、网络和服务状态") from exc
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         if isinstance(exc, ValueError) and str(exc).startswith(("API Key", "Endpoint")):
             raise
         raise ValueError("Endpoint 返回的不是有效模型列表") from exc
+    finally:
+        try:
+            os.unlink(output_path)
+        except FileNotFoundError:
+            pass
     rows = data.get("data") if isinstance(data, dict) else None
     if not isinstance(rows, list):
         rows = data.get("models") if isinstance(data, dict) else None
@@ -251,6 +291,78 @@ def _provider_model_ids(endpoint: str, api_key: str) -> set[str]:
         for row in rows
         if isinstance(row, dict) and (row.get("id") or row.get("model"))
     }
+
+
+def _probe_rerank(endpoint: str, api_key: str, model: str) -> None:
+    escaped_key = api_key.replace("\\", "\\\\").replace('"', '\\"')
+    curl_config = (
+        f'header = "Authorization: Bearer {escaped_key}"\n'
+        'header = "Content-Type: application/json"\n'
+        'header = "Accept: application/json"\n'
+    )
+    payload = json.dumps(
+        {
+            "model": model,
+            "query": "MindMemOS connection test",
+            "documents": ["MindMemOS connection test"],
+            "top_n": 1,
+        },
+        ensure_ascii=False,
+    ).encode()
+    body_fd, body_path = tempfile.mkstemp(prefix=".mindmemos-rerank-body.")
+    output_fd, output_path = tempfile.mkstemp(prefix=".mindmemos-rerank-result.")
+    try:
+        with os.fdopen(body_fd, "wb") as body_file:
+            body_file.write(payload)
+        os.chmod(body_path, 0o600)
+        os.close(output_fd)
+        result = subprocess.run(
+            [
+                "/usr/bin/curl",
+                "--ipv4",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "20",
+                "--request",
+                "POST",
+                "--data-binary",
+                f"@{body_path}",
+                "--output",
+                output_path,
+                "--write-out",
+                "%{http_code}",
+                "--config",
+                "-",
+                endpoint.rstrip("/") + "/rerank",
+            ],
+            input=curl_config,
+            capture_output=True,
+            text=True,
+            timeout=25,
+            check=False,
+        )
+        if result.returncode:
+            raise ValueError("Rerank Endpoint 连接失败，请检查地址和网络")
+        status = int(result.stdout.strip())
+        if status in (401, 403):
+            raise ValueError("Rerank API Key 无效或没有调用权限")
+        if status == 404:
+            raise ValueError("Endpoint 没有 /rerank 接口")
+        if status >= 400:
+            raise ValueError(f"Rerank Endpoint 返回 HTTP {status}")
+        with open(output_path, "rb") as output_file:
+            response = json.load(output_file)
+        if not isinstance(response, dict) or not isinstance(response.get("results"), list):
+            raise ValueError("Rerank Endpoint 返回中没有 results")
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        raise ValueError("Rerank Endpoint 测试失败，请检查服务状态") from exc
+    finally:
+        for path in (body_path, output_path):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
 
 
 def _test_model_settings(payload: dict) -> dict:
@@ -265,6 +377,18 @@ def _test_model_settings(payload: dict) -> dict:
     cache: dict[tuple[str, str], tuple[set[str] | None, str | None]] = {}
     results = {}
     for kind, item in prepared.items():
+        requested = item["model"]
+        provider_model = requested.split("/", 1)[1] if "/" in requested else requested
+        if kind == "rerank":
+            try:
+                _probe_rerank(item["api_base"], item["api_key"], provider_model)
+                results[kind] = {
+                    "ok": True,
+                    "message": f"连接成功，模型 {provider_model} 已完成最小 Rerank 请求",
+                }
+            except ValueError as exc:
+                results[kind] = {"ok": False, "message": str(exc)}
+            continue
         cache_key = (item["api_base"], item["api_key"])
         if cache_key not in cache:
             try:
@@ -275,8 +399,6 @@ def _test_model_settings(payload: dict) -> dict:
         if error:
             results[kind] = {"ok": False, "message": error}
             continue
-        requested = item["model"]
-        provider_model = requested.split("/", 1)[1] if "/" in requested else requested
         matched = requested in model_ids or provider_model in model_ids
         results[kind] = {
             "ok": matched,
