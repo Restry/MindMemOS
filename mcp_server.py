@@ -14,17 +14,25 @@ stdio transport，手写 JSON-RPC 2.0，零第三方依赖（只用标准库）�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
 
+from mcp_tokens import local_fallback_principal
+from turn_ingest import get_default_ledger
+
 API = os.getenv("MINDMEMOS_API", "http://127.0.0.1:8000")
 USER = os.getenv("MINDMEMOS_USER", "leway")
+PROFILE_MODE = os.getenv("MINDMEMOS_PROFILE_MODE", "personal").strip().lower()
+ORGANIZATION_MODE = PROFILE_MODE == "organization"
 TIMEOUT = float(os.getenv("MINDMEMOS_TIMEOUT", "60"))
 NEO4J_USER = os.getenv("MINDMEMOS_NEO4J_USER", "neo4j")
 NEO4J_PASS = os.getenv("MINDMEMOS_NEO4J_PASS", "mindmemos_dev_password")
+NEO4J_CONTAINER = os.getenv("MINDMEMOS_NEO4J_CONTAINER", "mindmemos-neo4j")
+QDRANT = os.getenv("MINDMEMOS_QDRANT_URL", "http://127.0.0.1:6333")
 
 
 def _key() -> str:
@@ -82,27 +90,49 @@ def t_recall(args: dict) -> str:
     return "\n".join(lines)
 
 
-def t_remember(args: dict) -> str:
-    c = (args.get("content") or "").strip()
-    if not c:
+def t_remember(args: dict, *, principal=None, request_id=None) -> str:
+    content = (args.get("content") or "").strip()
+    if not content:
         return "错误：content 不能为空"
-    d = _post(
-        "/v1/memory/add",
-        {
-            "user_id": USER,
-            "session_id": args.get("session_id") or "mcp",
-            "messages": [{"role": "user", "content": c}],
-            "mode": "sync",
-            "metadata": {"source": "mcp", "client": args.get("client") or "omp"},
-        },
+
+    trusted = principal or local_fallback_principal(
+        os.getenv("MINDMEMOS_AGENT_KIND", "stdio_mcp"),
+        os.getenv("MINDMEMOS_INSTANCE") or None,
     )
-    n = len((d.get("data") or {}).get("memories") or [])
-    return f"已写入，抽取出 {n} 条记忆。" if n else "已提交，但没有抽取出记忆（内容可能太短或无事实性信息）。"
+    session_id = (args.get("session_id") or "mcp").strip()
+    event_seed = json.dumps(
+        {
+            "client_id": trusted.client_id,
+            "session_id": session_id,
+            "request_id": request_id,
+            "content": content,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    event_id = "mcp-" + hashlib.sha256(event_seed.encode()).hexdigest()
+    ledger = get_default_ledger()
+    ledger.submit_memory(
+        {
+            "event_id": event_id,
+            "session_id": session_id,
+            "content": content,
+            "safe_context": {"transport": "mcp"},
+        },
+        trusted,
+        capture_mode="explicit_remember",
+    )
+    result = ledger.process_next(_post, event_id=event_id, force=True)
+    if result is None or result.status != "done":
+        return "已持久化排队；MindMemOS 暂不可用时会自动重试，不会丢失。"
+    memories = ((result.response or {}).get("data") or {}).get("memories") or []
+    count = len(memories)
+    return f"已写入，抽取出 {count} 条记忆。" if count else "已提交，但没有抽取出记忆（内容可能太短或无事实性信息）。"
 
 
 def t_stats(_args: dict) -> str:
     try:
-        with urllib.request.urlopen("http://127.0.0.1:6333/collections/memory_item_v1", timeout=15) as r:
+        with urllib.request.urlopen(f"{QDRANT}/collections/memory_item_v1", timeout=15) as r:
             n = json.loads(r.read())["result"]["points_count"]
         return f"MindMemOS 当前记忆条数：{n}"
     except Exception as e:
@@ -120,7 +150,7 @@ def _cypher(query: str) -> list[list[str]]:
         [
             "docker",
             "exec",
-            "mindmemos-neo4j",
+            NEO4J_CONTAINER,
             "cypher-shell",
             "-u",
             NEO4J_USER,
@@ -212,20 +242,30 @@ def t_whoami(args: dict) -> str:
     代词类短查询跟"用户称呼其父亲为爸爸"的向量距离太远。
     所以这里按维度分别检索再合并，而不是指望一次语义检索捞全。
     """
-    # 每个维度用「陈述句式」的查询，比代词更贴近记忆原文的表达
-    dims = [
-        ("称呼与身份", "用户的称呼、姓名、别名、时区与语言偏好"),
-        ("家庭", "用户的儿子 女儿 配偶 妹妹 家人 健康状况 家庭收入"),
-        ("工作", "用户就职的公司 部门 岗位职责 日常会议"),
-        ("环境与设备", "用户的电脑 服务器 内网地址 硬件配置"),
-        ("协作偏好", "用户偏好的沟通方式、汇报格式、禁止事项"),
-    ]
+    # 每个维度用「陈述句式」的查询，比代词更贴近记忆原文的表达。
+    if ORGANIZATION_MODE:
+        dims = [
+            ("组织与身份", "组织名称 团队 部门 角色 职责 服务对象"),
+            ("项目与业务", "公司项目 业务目标 当前阶段 负责人 关键决策"),
+            ("工作环境", "公司服务器 内网地址 运行环境 系统依赖 部署配置"),
+            ("协作规范", "团队协作方式 汇报格式 审批流程 禁止事项 行为准则"),
+        ]
+        profile_label = "组织上下文"
+    else:
+        dims = [
+            ("称呼与身份", "用户的称呼、姓名、别名、时区与语言偏好"),
+            ("家庭", "用户的儿子 女儿 配偶 妹妹 家人 健康状况 家庭收入"),
+            ("工作", "用户就职的公司 部门 岗位职责 日常会议"),
+            ("环境与设备", "用户的电脑 服务器 内网地址 硬件配置"),
+            ("协作偏好", "用户偏好的沟通方式、汇报格式、禁止事项"),
+        ]
+        profile_label = "用户画像"
     only = (args.get("dimension") or "").strip()
     if only:
         dims = [d for d in dims if only in d[0]] or dims
 
     per = int(args.get("per_dim") or 5)
-    out = ["用户画像（按维度从记忆库聚合）：\n"]
+    out = [f"{profile_label}（按维度从记忆库聚合）：\n"]
     seen: set[str] = set()
 
     # 行为准则放最前面：这些是高权威铁律，优先级高于检索出来的内容
@@ -270,20 +310,21 @@ def t_whoami(args: dict) -> str:
     return "\n".join(out)
 
 
-SERVER_INSTRUCTIONS = """你已接入 MindMemOS —— 用户的长期记忆库，跨机器、跨 agent 共享。
+SERVER_INSTRUCTIONS = f"""你已接入 MindMemOS —— {"组织与团队的长期记忆库" if ORGANIZATION_MODE else "用户的长期记忆库"}，跨机器、跨 agent 共享。
 
 ## 开始工作前
 
-新会话的第一件事：调 `whoami` 拿用户画像和行为准则（相当于用户的
-个人档案 + 铁律清单）。里面的"行为准则"部分权威性最高，优先于你的默认行为。
+新会话的第一件事：调 `whoami` 获取{"组织上下文和行为准则" if ORGANIZATION_MODE else "用户画像和行为准则"}。
+其中的“行为准则”部分权威性最高，优先于你的默认行为。
 
-遇到用户提起过往的项目、决策、"上次那个"、"以前怎么弄的"，先 `recall` 再回答。
-**不要凭空猜测已有项目的情况**——库里有 1700+ 条真实历史。
+遇到使用方提起过往的项目、决策、“上次那个”、“以前怎么弄的”，先 `recall` 再回答。
+**不要凭空猜测已有项目的情况**——应先查询当前记忆库。
 
 ## 什么时候要写记忆（重要）
 
-这套记忆**不会自动写入**，你不调 `remember` 就什么都不会留下。
-用户在别的机器、别的 agent 上继续工作时，会因为你没记而重复劳动。
+MCP 工具和 companion Skill 本身不保证自动写入。只有安装了 runtime adapter 的客户端，
+完成轮次才会由 hook 可靠摄取；没有 adapter 时必须主动调 `remember`。
+即使启用了 adapter，用户纠正、明确偏好和关键技术决策仍应当场调 `remember`，服务端会去重。
 
 遇到这些情况，**当场调 `remember`**，别等用户提醒：
 
@@ -320,8 +361,8 @@ TOOLS = [
     {
         "name": "recall",
         "description": (
-            "检索 leway 的长期记忆库（MindMemOS）：过往项目历史、技术决策、"
-            "踩过的坑、家庭与个人偏好、合同与运维细节。"
+            f"检索 {USER} 的长期记忆库（MindMemOS）：过往项目历史、技术决策、"
+            "踩过的坑、偏好、约束与运维细节。"
             "回答任何涉及『我们之前怎么做的』『某项目的约束是什么』时先查这里。"
         ),
         "inputSchema": {
@@ -390,17 +431,29 @@ TOOLS = [
     {
         "name": "whoami",
         "description": (
-            "了解用户是谁：称呼、家庭成员、工作、机器环境、协作偏好。"
-            "**新会话开始时、或需要了解用户背景时先调这个**——"
-            "相当于 Hermes 的 USER.md。身份信息散落在多种记忆类型里，"
-            "直接用 recall 查『我是谁』召不全，这个工具按维度聚合。"
+            (
+                "了解组织上下文：组织与团队、项目与业务、工作环境、协作规范。"
+                "**新会话开始时、或需要了解组织背景时先调这个**——"
+                "信息散落在多种记忆类型里，这个工具按公司维度聚合。"
+            )
+            if ORGANIZATION_MODE
+            else (
+                "了解用户是谁：称呼、家庭成员、工作、机器环境、协作偏好。"
+                "**新会话开始时、或需要了解用户背景时先调这个**——"
+                "相当于该用户的个人上下文档案。身份信息散落在多种记忆类型里，"
+                "直接用 recall 查『我是谁』召不全，这个工具按维度聚合。"
+            )
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "dimension": {
                     "type": "string",
-                    "description": "可选，只看某维度：称呼与身份/家庭/工作/环境与设备/协作偏好",
+                    "description": (
+                        "可选，只看某维度：组织与身份/项目与业务/工作环境/协作规范"
+                        if ORGANIZATION_MODE
+                        else "可选，只看某维度：称呼与身份/家庭/工作/环境与设备/协作偏好"
+                    ),
                 },
                 "per_dim": {"type": "integer", "description": "每维度条数，默认 5"},
             },
@@ -409,6 +462,15 @@ TOOLS = [
     },
 ]
 _BY_NAME = {t["name"]: t for t in TOOLS}
+
+
+def call_tool(name: str, arguments: dict, *, principal=None, request_id=None) -> str:
+    tool = _BY_NAME.get(name)
+    if tool is None:
+        raise KeyError(name)
+    if name == "remember":
+        return t_remember(arguments, principal=principal, request_id=request_id)
+    return tool["handler"](arguments)
 
 
 # ------------------------------------------------------------------ JSON-RPC
@@ -435,9 +497,8 @@ def handle(req: dict) -> None:
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "mindmemos", "version": "1.0.0"},
                 # MCP 协议允许服务端下发 instructions，客户端会当系统提示注入。
-                # Hermes 那边靠插件自动召回/写入，别的 agent（Claude Code、Codex…）
-                # 只拿到工具却不知道该主动用——不写这段，记忆就只读不写，
-                # 用得越久越空。这是让"多端共享大脑"真正成立的关键。
+                # MCP 只提供工具和行为说明；可靠的完成轮次自动写入由可选 runtime
+                # adapter 负责。未安装 adapter 的客户端仍需按 instructions 主动 remember。
                 "instructions": SERVER_INSTRUCTIONS,
             },
         )
@@ -450,7 +511,7 @@ def handle(req: dict) -> None:
             _reply(mid, {"content": [{"type": "text", "text": f"未知工具：{p.get('name')}"}], "isError": True})
             return
         try:
-            text = tool["handler"](p.get("arguments") or {})
+            text = call_tool(p.get("name") or "", p.get("arguments") or {}, request_id=mid)
             _reply(mid, {"content": [{"type": "text", "text": text}]})
         except urllib.error.URLError as e:
             _reply(

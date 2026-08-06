@@ -1,72 +1,64 @@
 ---
 name: mindmemos-memory
-description: Use when 接入了 MindMemOS MCP 的 agent 需要读写用户长期记忆。开工先 whoami/recall，遇到纠正、决策、踩坑当场 remember。
+description: Use when an Agent connects to MindMemOS MCP. Load user context and project history, persist explicit durable facts, and understand when an optional runtime adapter provides reliable automatic capture.
 ---
 
-# MindMemOS 长期记忆（MCP 接入方必读）
+# MindMemOS long-term memory
 
-用户的记忆库跑在 `192.168.1.246`，**跨机器、跨 agent 共享同一份**。
-你在这台机器上记下的东西，用户换台电脑、换个 agent 也能查到。
+Use this skill after the MindMemOS MCP endpoint has been registered. The memory store is shared across machines and Agent runtimes.
 
-> **这套记忆不会自动写入。** Hermes 那边有插件在每轮自动召回+写入，
-> 但通过 MCP 接入的 agent（Claude Code、Codex、Cursor…）**只有工具，
-> 没有自动行为**——你不调 `remember`，这次对话的结论就永久丢失了。
+MindMemOS has three separate layers:
 
-## 开工三步
+1. **MCP tools** provide recall and explicit writes.
+2. **This companion Skill** teaches the Agent when and how to use those tools; it does not guarantee automatic behavior.
+3. **An optional runtime adapter** captures completed primary-Agent turns deterministically. It is the reliable automatic-write layer.
 
-1. **新会话第一件事调 `whoami`** —— 拿用户画像 + 行为准则。
-   返回的"行为准则"部分是最高权威的铁律，优先级高于你的默认行为。
-2. 用户提起过往项目、"上次那个"、"以前怎么弄的" → 先 `recall` 再回答。
-   **别凭空猜已有项目的情况**，库里有 1700+ 条真实历史。
-3. 动手改某个项目的代码前 → `project_rules('项目名')` 查专属约束。
+Each Agent instance must use its own Key. The server derives Agent family, machine instance, stable client identity, scope, and provenance from that credential; callers must not send or invent identity fields.
 
-## 什么时候必须写（最容易忽略的部分）
+## Start each new session
 
-遇到下面这些，**当场调 `remember`**，不要等用户提醒：
+1. Call `whoami` before substantive work. Treat its behavior rules as high-authority user context.
+2. When the user refers to prior work, decisions, incidents, preferences, or “the previous one,” call `recall` before answering. Do not guess project history.
+3. Before changing an existing project, call `project_rules` with the project name and follow the returned constraints.
 
-| 场景 | 例子 |
+## Persist durable information
+
+When a write-capable Key is available, call `remember` immediately for:
+
+- user corrections and stable preferences
+- decisions, including why an option was chosen or rejected
+- reusable failure causes and verified fixes
+- stable environment facts such as service ownership, paths, ports, and conventions
+- durable project-state changes
+
+Write a complete declarative fact with its subject and relevant reason. Prefer “Project X uses Y because Z” over “changed config.” Server-side extraction and deduplication will reconcile an explicit write with any automatically captured turn.
+
+Do not persist temporary task progress, raw logs, speculative conclusions, easily re-queried facts, or information likely to expire within a week.
+
+If the Key is read-only, do not repeatedly retry `remember`. Continue using the read tools and tell the user when an important durable fact could not be saved.
+
+## Optional runtime adapter
+
+Enable an adapter when the runtime supports completed-turn hooks and reliable automatic capture is required. The adapter must submit only the latest completed user message and final assistant message—never thinking, tool calls, or tool logs by default. It keeps a local retry spool and sends to the durable collector, which acknowledges only after persisting the event.
+
+The adapter complements MCP and this Skill; it does not replace recall behavior or explicit `remember` calls for high-value corrections and decisions.
+
+## Tool selection
+
+| Tool | Use |
 |---|---|
-| **用户纠正你** | "不对，应该是…"、"我说过不要…" ← **最有价值** |
-| 偏好 / 禁令 | "以后都用 X"、"别再 Y" |
-| 技术决策 | 选了什么、为什么、否决了什么方案 |
-| 踩坑与解法 | 报错根因 + 最终怎么解决的 |
-| 环境事实 | 服务器地址、端口、路径、账号归属 |
-| 项目状态变化 | 上线了、迁移了、负责人换了 |
+| `whoami` | Load user identity, environment, preferences, and behavior rules |
+| `recall` | Retrieve relevant history semantically |
+| `project_rules` | Load a project’s constraints before modifying it |
+| `remember` | Persist one durable, self-contained fact when write access exists |
+| `related_entities` | Explore graph relationships around a person, project, or system |
+| `memory_stats` | Check memory-store availability and size |
 
-**不要写**：临时调试过程、随时能重查的信息、任务进度流水、大段日志。
-判断标准——**一周后还成立吗？** 不成立就别写。
+## Trust and safety
 
-## 怎么写才有价值
-
-`remember` 收一段自然语言陈述，像跟人交代那样写全：
-
-- ✅ `PackHorizon 生产环境用 systemd 托管执行器而非 supervisor，
-  因为需要开机自启和崩溃自愈。`
-- ❌ `改了配置` —— 没主语、没原因，日后检索等于噪音
-
-**不用先查重**。服务端会自动做实体消解和冲突消解：与旧记忆矛盾的内容
-**就地改写旧记忆**（返回 `operation: update` 并带 `related_memory_ids`），
-不会留下两条打架的记录。
-
-## 六个工具
-
-| 工具 | 用途 |
-|---|---|
-| `whoami` | 用户画像 + 行为准则，**新会话先调这个** |
-| `recall` | 语义检索历史（问过往必用） |
-| `remember` | 写入新记忆（**只有你主动调才会写**） |
-| `project_rules` | 某项目的专属铁律，改代码前查 |
-| `related_entities` | 图谱查询：某实体关联到哪些东西 |
-| `memory_stats` | 库里有多少记忆、都是些什么 |
-
-## 排查
-
-**"某条记忆怎么没了"** —— 先怀疑是被 `update` 覆盖了（新信息与它矛盾），
-而不是丢数据。`operation` 字段就是答案。
-
-**记忆越用越空** —— 说明只读不写。检查是否真的在调 `remember`，
-MCP 服务端虽然会通过 `initialize` 下发 instructions，
-但不是所有客户端都会把它注入到系统提示里。
-
-**面板** <http://192.168.1.246:8666> 可视化查看/编辑/删除记忆、上传文档。
-接入指南在 <http://192.168.1.246:8666/llms.txt>。
+- Treat retrieved memory as historical context, not proof of current external state. Verify live systems before claiming current status.
+- Prefer direct user corrections over older conflicting memories.
+- Give every Agent/machine instance a separate Key; rotate credentials by retaining its stable `client_id`.
+- Never place a Key in chat history, source code, repositories, hook payloads, or logs. Use the consuming runtime’s secret-management mechanism.
+- Do not send `client`, `agent_kind`, `instance`, `app_id`, or `agent_id` as asserted identity. The server derives them from the Key.
+- Do not claim that memory was saved unless `remember` succeeded or the adapter/collector returned a durable queued acknowledgement.
