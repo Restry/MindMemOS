@@ -232,10 +232,21 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert 'id="model-llm-name"' in html
     assert 'id="model-embedding-name"' in html
     assert 'id="model-rerank-name"' in html
+    assert 'id="model-rerank-key"' in html
     assert "fetch('/api/models/test'" in html
     assert "fetch('/api/models'" in html
+    assert "api_key:$('#model-'+k+'-key')" in html
+    assert "setTimeout(()=>{btn.disabled=false;renderUpList()" not in html
+    assert "UP_FILES=[]; fi.value=''; btn.disabled=true" in html
     assert 'type="password"' in html
     assert "API Key 只写入服务器配置，页面永远不会回显" in html
+
+
+def test_panel_extractor_uses_configured_mindmemos_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    panel = _load_panel(tmp_path, monkeypatch)
+    setattr(panel, "_EXTRACTOR", None)
+    extractor = panel._load_extractor()
+    assert extractor.__file__ == str(Path(__file__).resolve().parents[1] / "scripts/ingest/extractor.py")
 
 
 def test_panel_model_settings_api_masks_keys_preserves_blank_keys_and_backs_up(
