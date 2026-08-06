@@ -357,10 +357,24 @@ def test_panel_model_connection_test_uses_current_key_without_persisting(
                     "data": [
                         {"id": "chat-model"},
                         {"id": "embed-model"},
-                        {"id": "BAAI/rerank-model"},
                     ]
                 }
             ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            if self.path != "/v1/rerank" or self.headers.get("Authorization") != "Bearer current-key":
+                self.send_response(401)
+                self.end_headers()
+                return
+            n = int(self.headers.get("Content-Length") or 0)
+            payload = json.loads(self.rfile.read(n))
+            assert payload["model"] == "BAAI/rerank-model"
+            body = json.dumps({"results": [{"index": 0, "relevance_score": 1.0}]}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
