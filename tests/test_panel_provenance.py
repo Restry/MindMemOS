@@ -241,6 +241,11 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert 'type="password"' in html
     assert "API Key 只写入服务器配置，页面永远不会回显" in html
 
+    server = Path("/Users/leway/Projects/mm-panel/server.py").read_text(encoding="utf-8")
+    assert 'LLMS_URL = os.getenv("MM_LLMS_URL"' in server
+    assert "self.send_header('Location', LLMS_URL)" in server
+    assert "open(os.path.join(HERE, 'llms.txt')" not in server
+
 
 def test_panel_extractor_uses_configured_mindmemos_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     panel = _load_panel(tmp_path, monkeypatch)
