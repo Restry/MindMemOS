@@ -46,7 +46,6 @@ class SearchToolRequest:
     filters: dict[str, Any] | None = None
     search_filter: SearchFilter | None = None
     entity_search_filter: SearchFilter | None = None
-    round_index: int = 1
 
 
 @dataclass(slots=True)

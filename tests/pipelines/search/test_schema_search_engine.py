@@ -134,10 +134,6 @@ async def test_schema_search_engine_uses_schema_search_config_not_agentic_round_
     )
 
     assert result[0].id == "ent-1"
-    assert result[0].retrieval_score is None
-    assert result[0].retrieval_score_type is None
-    assert result[0].relevance_score == 1.0
-    assert result[0].final_score_source == "rank_fallback"
     assert query_builder.current_time_mode == "system"
     call = expander.calls[0]
     assert call["num_hops"] == 4
@@ -209,10 +205,6 @@ async def test_schema_search_engine_falls_back_to_direct_memory_when_schema_resu
     assert result[0].memory_type == "fact"
     assert result[0].last_update_at == "2026-01-02 03:04:05"
     assert result[0].event_time is None
-    assert result[0].retrieval_score == 0.91
-    assert result[0].retrieval_score_type == "bm25"
-    assert result[0].relevance_score == 1.0
-    assert result[0].final_score_source == "retrieval"
     assert len(expander.calls) == 1
     assert len(reader.calls) == 1
     fallback_call = reader.calls[0]

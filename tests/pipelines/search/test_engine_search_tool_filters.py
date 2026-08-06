@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from mindmemos.components.searcher.scored_candidate import ScoredSearchCandidate
 from mindmemos.pipelines.search.agentic.base import SearchToolRequest
 from mindmemos.pipelines.search.agentic.wrapper import EngineSearchTool
 from mindmemos.pipelines.search.base import SearchEngineOptions
@@ -32,20 +31,10 @@ class FakeEngine:
         context: MemoryRequestContext,
         *,
         options: SearchEngineOptions | None = None,
-    ) -> list[ScoredSearchCandidate]:
+    ) -> list[MemorySearchItem]:
         self.inputs.append(inp)
         self.options.append(options)
-        return [
-            ScoredSearchCandidate(
-                item=MemorySearchItem(id="mem-1", memory="Kai uses Qdrant.", last_update_at=""),
-                original_rank=0,
-                rank=0,
-                retrieval_score=0.75,
-                retrieval_score_type="bm25",
-                relevance_score=1.0,
-                final_score_source="retrieval",
-            )
-        ]
+        return [MemorySearchItem(id="mem-1", memory="Kai uses Qdrant.", last_update_at="")]
 
 
 @pytest.mark.asyncio
@@ -67,7 +56,6 @@ async def test_engine_search_tool_drops_schema_only_filters_for_default_engine()
             num_hops=2,
             context=make_context(),
             filters={"project_id": "proj-1", "user_id": "user-1"},
-            round_index=2,
         )
     )
 
@@ -83,12 +71,6 @@ async def test_engine_search_tool_drops_schema_only_filters_for_default_engine()
         result_top_n=4,
         use_reranker=False,
     )
-    evidence = result.entities[0]._search_evidence[0]
-    assert evidence.engine == "default"
-    assert evidence.query == "what does Kai use"
-    assert evidence.round_index == 2
-    assert evidence.score == 0.75
-    assert evidence.score_type == "bm25"
 
 
 @pytest.mark.asyncio

@@ -33,14 +33,12 @@ class AgenticLoop:
         planner: AgenticPlanner,
         sufficiency: SufficiencyEvaluator,
         ranker: SchemaSearchRanker | None = None,
-        evidence_limit: int = 8,
     ) -> None:
         self._config = config
         self._tool_router = tool_router
         self._planner = planner
         self._sufficiency = sufficiency
         self._ranker = ranker or SchemaSearchRanker()
-        self._evidence_limit = max(0, evidence_limit)
 
     async def run(
         self,
@@ -82,17 +80,11 @@ class AgenticLoop:
                 filters=filters,
                 search_filter=search_filter,
                 entity_search_filter=entity_search_filter,
-                round_index=round_num,
             )
             for entity in round_entities:
                 if entity.entity_id not in all_entities:
                     all_entities[entity.entity_id] = entity
                 else:
-                    _merge_agentic_evidence(
-                        all_entities[entity.entity_id],
-                        entity,
-                        limit=self._evidence_limit,
-                    )
                     all_entities[entity.entity_id] = self._ranker.merge_entity_properties_and_edges(
                         all_entities[entity.entity_id],
                         entity,
@@ -166,7 +158,6 @@ class AgenticLoop:
         filters: dict[str, Any] | None = None,
         search_filter: SearchFilter | None = None,
         entity_search_filter: SearchFilter | None = None,
-        round_index: int = 1,
     ) -> list[TemporalEntity]:
         results: list[TemporalEntity] = []
         for query in queries:
@@ -182,7 +173,6 @@ class AgenticLoop:
                     filters=filters,
                     search_filter=search_filter,
                     entity_search_filter=entity_search_filter,
-                    round_index=round_index,
                 )
             )
             results.extend(tool_result.entities)
@@ -268,16 +258,3 @@ class AgenticLoop:
             )
         )
         logger.info("agentic_time_relaxed_query_added", next_round=round_num + 1)
-
-
-def _merge_agentic_evidence(
-    existing: TemporalEntity,
-    incoming: TemporalEntity,
-    *,
-    limit: int = 8,
-) -> None:
-    current = list(getattr(existing, "_search_evidence", []))
-    for evidence in getattr(incoming, "_search_evidence", []):
-        if evidence not in current:
-            current.append(evidence)
-    existing._search_evidence = current[: max(0, limit)]

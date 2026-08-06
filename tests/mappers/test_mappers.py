@@ -35,7 +35,7 @@ from mindmemos.typing.service import (
     DeletePipelineInput,
     GetPipelineInput,
     MemoryAddEventItem,
-    MemorySearchResultItem,
+    MemorySearchItem,
     SearchPipelineInput,
     SearchPipelineResult,
     UpdatePipelineInput,
@@ -402,12 +402,6 @@ def test_service_search_input_allows_positive_top_k_and_none() -> None:
     assert SearchPipelineInput(query="Qdrant", top_k=None).top_k is None
 
 
-def test_service_search_input_accepts_score_output_control() -> None:
-    search = SearchPipelineInput(query="Qdrant", include_scores=True)
-
-    assert search.include_scores is True
-
-
 def test_service_search_input_rejects_legacy_search_strategy_key() -> None:
     with pytest.raises(ValueError):
         SearchPipelineInput.model_validate({"query": "Qdrant", "search_strategy": "schema"})
@@ -503,21 +497,16 @@ def test_search_record_mapper_uses_protocol_fields_only() -> None:
             agentic=True,
             max_rounds=2,
             rerank=True,
-            include_scores=True,
         ),
         SearchPipelineResult(
             status="ok",
             memories=[
-                MemorySearchResultItem(
+                MemorySearchItem(
                     id="mem-1",
                     memory="Project uses Qdrant.",
                     last_update_at="2026-05-28 00:00:00",
                 )
             ],
-            metrics={
-                "scoring_version": "query-local-v1",
-                "candidate_count": 4,
-            },
         ),
         ctx=ctx,
         request_submitted_at=submitted_at,
@@ -532,11 +521,6 @@ def test_search_record_mapper_uses_protocol_fields_only() -> None:
     assert point.payload["agentic"] is True
     assert point.payload["max_rounds"] == 2
     assert point.payload["rerank"] is True
-    assert point.payload["include_scores"] is True
-    assert point.payload["search_metrics"] == {
-        "scoring_version": "query-local-v1",
-        "candidate_count": 4,
-    }
     assert point.payload["memories"][0]["id"] == "mem-1"
     assert "semantic_hit_count" not in point.payload
     assert "returned_memory_ids" not in point.payload

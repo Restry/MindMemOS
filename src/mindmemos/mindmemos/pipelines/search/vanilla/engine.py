@@ -5,14 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC
-from math import isfinite
 
-from ....components.searcher.scored_candidate import (
-    GraphPathEvidence,
-    RetrievalEvidence,
-    ScoredSearchCandidate,
-    normalize_candidate_scores,
-)
 from ....components.searcher.vanilla import dedup_by_text_similarity
 from ....components.searcher.vanilla._executor import vanilla_dedup_executor
 from ....components.text import SparseVectorEncoder, TextPreprocessor, get_text_preprocessor
@@ -71,7 +64,6 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         text_preprocessor: TextPreprocessor | None = None,
         sparse_encoder: SparseVectorEncoder | None = None,
         embed_client: EmbedClient | None = None,
-        graph_provenance_limit: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -84,7 +76,6 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         self._text_preprocessor = text_preprocessor or get_text_preprocessor(text_cfg)
         self._sparse_encoder = sparse_encoder or SparseVectorEncoder(text_cfg)
         self._explicit_search_config: VanillaSearchConfig | None = search_config
-        self._explicit_graph_provenance_limit = graph_provenance_limit
 
         self._explicit_embed_client = embed_client
         self._embed_client: EmbedClient | None = embed_client
@@ -101,14 +92,6 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
             return self._explicit_search_config
         return get_config().algo_config.search.vanilla
 
-    def _get_graph_provenance_limit(self) -> int:
-        if self._explicit_graph_provenance_limit is not None:
-            return self._explicit_graph_provenance_limit
-        try:
-            return get_config().algo_config.search.score_provenance_limit
-        except Exception:
-            return 8
-
     @traced("search.vanilla")
     async def search_candidates(
         self,
@@ -116,7 +99,7 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         context: MemoryRequestContext,
         *,
         options: SearchEngineOptions | None = None,
-    ) -> list[ScoredSearchCandidate]:
+    ) -> list[MemorySearchItem]:
         """Search memories via hybrid dense+sparse retrieval and return candidates."""
 
         scfg = self._get_vanilla_search_config()
@@ -180,31 +163,23 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
 
         hits = await self._with_graph_related_hits(result.hits, filters, context)
         ranked_hits = _rank_by_score(hits)
-        lineage_by_id, derived_to_by_id, archived_hits = await self._lineage_for_existing_hits(ranked_hits, context)
-        ranked_hits = [*ranked_hits, *archived_hits]
-        direct_score_type = "rrf" if dense_vector is not None else "bm25"
+        lineage_by_id, derived_to_by_id = await self._lineage_for_existing_hits(ranked_hits, context)
         candidates = [
-            _to_scored_search_candidate(
+            _to_memory_search_item(
                 hit,
-                index=index,
-                direct_score_type=direct_score_type,
                 lineage=_lineage_for_hit(hit, lineage_by_id=lineage_by_id, derived_to_by_id=derived_to_by_id),
             )
-            for index, hit in enumerate(ranked_hits)
+            for hit in ranked_hits
         ]
         if scfg.dedup_enabled:
-            kept_items = await vanilla_dedup_executor.run(
+            candidates = await vanilla_dedup_executor.run(
                 dedup_by_text_similarity,
-                [candidate.item for candidate in candidates],
+                candidates,
                 threshold=scfg.dedup_threshold,
                 group_keys=[_dedup_group_for_hit(hit) for hit in ranked_hits],
                 max_candidates=min(scfg.dedup_max_candidates, VANILLA_DEDUP_MAX_CANDIDATES),
             )
-            by_id = {candidate.item.id: candidate for candidate in candidates}
-            candidates = [by_id[item.id] for item in kept_items if item.id in by_id]
-        for index, candidate in enumerate(candidates):
-            candidate.rank = index
-        return normalize_candidate_scores(candidates)
+        return candidates
 
     def _resolve_embed_client(self) -> EmbedClient | None:
         if self._explicit_embed_client is not None:
@@ -248,52 +223,32 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
 
         existing_ids = {hit.memory_id for hit in hits}
         seed_scores = {hit.memory_id: hit.score for hit in hits}
-        related_by_id: dict[str, list[_GraphCandidate]] = {}
+        related_by_id: dict[str, _GraphCandidate] = {}
 
         try:
-            direct_candidates = await self._graph_candidates_by_direct_relation(
-                context,
-                seed_ids,
-                existing_ids=existing_ids,
+            related_by_id.update(
+                await self._graph_candidates_by_direct_relation(
+                    context,
+                    seed_ids,
+                    existing_ids=existing_ids,
+                )
             )
-            _merge_graph_candidate_maps(related_by_id, direct_candidates)
             max_candidates = max(0, scfg.graph_max_candidates)
-            remaining_candidates = max(
-                0,
-                max_candidates - sum(memory_id not in existing_ids for memory_id in related_by_id),
-            )
-            shared_candidates = await self._graph_candidates_by_shared_entity(
-                context,
-                seed_ids,
-                existing_ids=existing_ids | set(related_by_id),
-                max_candidates=remaining_candidates,
-            )
-            _merge_graph_candidate_maps(related_by_id, shared_candidates)
+            remaining_candidates = max(0, max_candidates - len(related_by_id))
+            for memory_id, candidate in (
+                await self._graph_candidates_by_shared_entity(
+                    context,
+                    seed_ids,
+                    existing_ids=existing_ids | set(related_by_id),
+                    max_candidates=remaining_candidates,
+                )
+            ).items():
+                related_by_id.setdefault(memory_id, candidate)
         except Exception:
             logger.warning("vanilla_search_graph_related_failed", exc_info=True)
             return hits
 
-        if not related_by_id:
-            return hits
-
-        hits_by_id = {hit.memory_id: hit for hit in hits}
-        provenance_limit = self._get_graph_provenance_limit()
-        for memory_id, graph_candidates in related_by_id.items():
-            existing_hit = hits_by_id.get(memory_id)
-            if existing_hit is None:
-                continue
-            paths = existing_hit.debug.setdefault("graph_paths", [])
-            if isinstance(paths, list):
-                paths.extend(
-                    _ranked_graph_path_debug(
-                        graph_candidates,
-                        seed_scores=seed_scores,
-                        decay=scfg.graph_decay,
-                        fallback=scfg.graph_score,
-                    )[:provenance_limit]
-                )
-
-        candidate_ids = [memory_id for memory_id in related_by_id if memory_id not in existing_ids]
+        candidate_ids = list(related_by_id)
         if not candidate_ids:
             return hits
 
@@ -310,39 +265,24 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
                 continue
             if not _memory_matches_filter(memory, filters):
                 continue
-            graph_candidates = related_by_id.get(memory.memory_id) or [
-                _GraphCandidate(
-                    memory_id=memory.memory_id,
-                    seed_memory_id="",
-                    source="neo4j_graph",
-                    debug={"graph_source": "unknown", "seed_memory_ids": seed_ids},
-                )
-            ]
-            ranked_paths = _ranked_graph_path_debug(
-                graph_candidates,
-                seed_scores=seed_scores,
-                decay=scfg.graph_decay,
-                fallback=scfg.graph_score,
-            )[:provenance_limit]
-            primary_path = ranked_paths[0]
-            graph_score = float(primary_path["graph_path_score"])
-            primary_candidate = next(
-                candidate
-                for candidate in graph_candidates
-                if candidate.seed_memory_id == primary_path["seed_memory_id"]
-                and candidate.debug.get("graph_source") == primary_path["graph_source"]
+            graph_candidate = related_by_id.get(memory.memory_id) or _GraphCandidate(
+                memory_id=memory.memory_id,
+                seed_memory_id="",
+                source="neo4j_graph",
+                debug={"graph_source": "unknown", "seed_memory_ids": seed_ids},
             )
             graph_hits.append(
                 MemoryDbSearchHit(
                     memory_id=memory.memory_id,
-                    score=graph_score,
+                    score=_graph_score(
+                        seed_scores.get(graph_candidate.seed_memory_id),
+                        decay=scfg.graph_decay,
+                        fallback=scfg.graph_score,
+                    ),
                     memory=memory,
-                    source=primary_candidate.source,
+                    source=graph_candidate.source,
                     rank=rank_start + offset,
-                    debug={
-                        **primary_path,
-                        "graph_paths": ranked_paths[1:],
-                    },
+                    debug=graph_candidate.debug,
                 )
             )
             existing_ids.add(memory.memory_id)
@@ -353,38 +293,25 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         self,
         hits: list[MemoryDbSearchHit],
         context: MemoryRequestContext,
-    ) -> tuple[dict[str, list[str]], dict[str, list[str]], list[MemoryDbSearchHit]]:
+    ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
         if not hits:
-            return {}, {}, []
+            return {}, {}
 
         seed_ids = _dedupe_ids(hit.memory_id for hit in hits if hit.memory_id)
         if not seed_ids:
-            return {}, {}, []
+            return {}, {}
 
         try:
             lineage_by_id = await self.db_reader.get_memory_lineage(context, seed_ids)
             archived_ids = _ordered_archived_ids(lineage_by_id, existing_ids=set(seed_ids))
             archived_memories = await self.db_reader.get_memories(context, archived_ids) if archived_ids else []
-            if archived_ids:
-                archived_lineage = await self.db_reader.get_memory_lineage(context, archived_ids)
-                lineage_by_id.update(archived_lineage)
         except Exception:
             logger.warning("vanilla_search_archived_memory_hydrate_failed", exc_info=True)
-            return {}, {}, []
+            return {}, {}
 
         archived_memories = _sort_memories_by_time_desc(_ordered_memories(archived_memories, archived_ids))
         lineage_by_id = _sort_lineage_ids_by_memory_time(lineage_by_id, archived_memories)
-        archived_hits = [
-            MemoryDbSearchHit(
-                memory_id=memory.memory_id,
-                score=0.0,
-                memory=memory,
-                source="lineage_archived",
-                rank=len(hits) + index,
-            )
-            for index, memory in enumerate(archived_memories)
-        ]
-        return lineage_by_id, _derived_to_by_id(lineage_by_id, seed_ids), archived_hits
+        return lineage_by_id, _derived_to_by_id(lineage_by_id, seed_ids)
 
     async def _graph_candidates_by_direct_relation(
         self,
@@ -392,7 +319,7 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         seed_ids: list[str],
         *,
         existing_ids: set[str],
-    ) -> dict[str, list[_GraphCandidate]]:
+    ) -> dict[str, _GraphCandidate]:
         scfg = self._get_vanilla_search_config()
         if not scfg.graph_enabled:
             return {}
@@ -402,24 +329,21 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
             limit_per_memory=max(0, scfg.graph_related_per_seed),
             max_candidates=max(0, scfg.graph_max_candidates),
         )
-        candidates: dict[str, list[_GraphCandidate]] = {}
+        candidates: dict[str, _GraphCandidate] = {}
         for item in _normalize_related_items(related):
             memory_id = item["memory_id"]
-            seed_memory_id = item["seed_memory_id"]
-            if memory_id == seed_memory_id:
+            if memory_id in existing_ids or memory_id in candidates:
                 continue
-            _append_graph_candidate(
-                candidates,
-                _GraphCandidate(
-                    memory_id=memory_id,
-                    seed_memory_id=seed_memory_id,
-                    source="neo4j_relates_to",
-                    debug={
-                        "graph_source": "relates_to",
-                        "seed_memory_id": seed_memory_id,
-                        "seed_memory_ids": seed_ids,
-                    },
-                ),
+            seed_memory_id = item["seed_memory_id"]
+            candidates[memory_id] = _GraphCandidate(
+                memory_id=memory_id,
+                seed_memory_id=seed_memory_id,
+                source="neo4j_relates_to",
+                debug={
+                    "graph_source": "relates_to",
+                    "seed_memory_id": seed_memory_id,
+                    "seed_memory_ids": seed_ids,
+                },
             )
         return candidates
 
@@ -430,9 +354,9 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
         *,
         existing_ids: set[str],
         max_candidates: int,
-    ) -> dict[str, list[_GraphCandidate]]:
+    ) -> dict[str, _GraphCandidate]:
         scfg = self._get_vanilla_search_config()
-        if not scfg.shared_entity_graph_enabled:
+        if not scfg.shared_entity_graph_enabled or max_candidates <= 0:
             return {}
         scopes = await self.db_reader.list_memories_by_shared_entities(
             context,
@@ -442,34 +366,27 @@ class VanillaSearchEngine(MemoryDbPipelineMixin):
             limit_per_entity=max(0, scfg.shared_entity_graph_limit_per_entity),
         )
 
-        candidates: dict[str, list[_GraphCandidate]] = {}
-        new_candidate_count = 0
+        candidates: dict[str, _GraphCandidate] = {}
         for scope in scopes:
             seed_memory_id = str(scope.seed_memory_id or "")
             for memory_id in _dedupe_ids(scope.memory_ids):
-                if memory_id == seed_memory_id:
+                if memory_id in existing_ids or memory_id in candidates:
                     continue
-                is_new_memory = memory_id not in existing_ids and memory_id not in candidates
-                if is_new_memory and (max_candidates <= 0 or new_candidate_count >= max_candidates):
-                    continue
-                _append_graph_candidate(
-                    candidates,
-                    _GraphCandidate(
-                        memory_id=memory_id,
-                        seed_memory_id=seed_memory_id,
-                        source="neo4j_shared_entity",
-                        debug={
-                            "graph_source": "shared_entity",
-                            "seed_memory_id": seed_memory_id,
-                            "seed_memory_ids": seed_ids,
-                            "entity_id": scope.entity_id,
-                            "entity_name": scope.entity_name,
-                            "entity_type": scope.entity_type,
-                        },
-                    ),
+                candidates[memory_id] = _GraphCandidate(
+                    memory_id=memory_id,
+                    seed_memory_id=seed_memory_id,
+                    source="neo4j_shared_entity",
+                    debug={
+                        "graph_source": "shared_entity",
+                        "seed_memory_id": seed_memory_id,
+                        "seed_memory_ids": seed_ids,
+                        "entity_id": scope.entity_id,
+                        "entity_name": scope.entity_name,
+                        "entity_type": scope.entity_type,
+                    },
                 )
-                if is_new_memory:
-                    new_candidate_count += 1
+                if max_candidates and len(candidates) >= max_candidates:
+                    return candidates
         return candidates
 
 
@@ -516,70 +433,10 @@ def _normalize_related_items(values) -> list[dict[str, str]]:
     return result
 
 
-def _append_graph_candidate(
-    candidates: dict[str, list[_GraphCandidate]],
-    candidate: _GraphCandidate,
-) -> None:
-    paths = candidates.setdefault(candidate.memory_id, [])
-    key = (
-        candidate.seed_memory_id,
-        candidate.source,
-        candidate.debug.get("entity_id"),
-    )
-    if any((path.seed_memory_id, path.source, path.debug.get("entity_id")) == key for path in paths):
-        return
-    paths.append(candidate)
-
-
-def _merge_graph_candidate_maps(
-    target: dict[str, list[_GraphCandidate]],
-    incoming: dict[str, list[_GraphCandidate]],
-) -> None:
-    for paths in incoming.values():
-        for path in paths:
-            _append_graph_candidate(target, path)
-
-
-def _ranked_graph_path_debug(
-    candidates: list[_GraphCandidate],
-    *,
-    seed_scores: dict[str, float],
-    decay: float,
-    fallback: float,
-) -> list[dict[str, object]]:
-    paths = []
-    for candidate in candidates:
-        seed_score = seed_scores.get(candidate.seed_memory_id)
-        paths.append(
-            {
-                **candidate.debug,
-                "graph_decay": decay,
-                "graph_path_score": _graph_score(seed_score, decay=decay, fallback=fallback),
-                "graph_score_fallback": _graph_score_uses_fallback(seed_score),
-            }
-        )
-    return sorted(
-        paths,
-        key=lambda path: (
-            -float(path["graph_path_score"]),
-            str(path.get("seed_memory_id") or ""),
-            str(path.get("graph_source") or ""),
-            str(path.get("entity_id") or ""),
-        ),
-    )
-
-
 def _graph_score(seed_score: float | None, *, decay: float, fallback: float) -> float:
-    safe_fallback = fallback if isfinite(fallback) and fallback >= 0 else 0.0
-    if _graph_score_uses_fallback(seed_score):
-        return safe_fallback
-    safe_decay = decay if isfinite(decay) and decay >= 0 else 0.0
-    score = float(seed_score) * safe_decay
-    return score if isfinite(score) and score >= 0 else safe_fallback
-
-
-def _graph_score_uses_fallback(seed_score: float | None) -> bool:
-    return seed_score is None or not isfinite(seed_score) or seed_score < 0
+    if seed_score is None:
+        return fallback
+    return seed_score * max(0.0, decay)
 
 
 def _rank_by_score(hits: list[MemoryDbSearchHit]) -> list[MemoryDbSearchHit]:
@@ -627,102 +484,6 @@ def _to_memory_search_item(hit: MemoryDbSearchHit, *, lineage: MemoryLineage | N
         source_timestamp=format_source_timestamp(memory) if memory else None,
         lineage=lineage,
     )
-
-
-def _to_scored_search_candidate(
-    hit: MemoryDbSearchHit,
-    *,
-    index: int,
-    direct_score_type: str,
-    lineage: MemoryLineage | None = None,
-) -> ScoredSearchCandidate:
-    is_graph = str(hit.source or "").startswith("neo4j")
-    is_lineage = hit.source == "lineage_archived"
-    if is_lineage:
-        return ScoredSearchCandidate(
-            item=_to_memory_search_item(hit, lineage=lineage),
-            original_rank=hit.rank if hit.rank is not None else index,
-            rank=index,
-            evidence=[RetrievalEvidence(source="lineage", rank=index)],
-        )
-    score_type = "graph_propagation" if is_graph else direct_score_type
-    graph = _graph_path_evidence(hit) if is_graph else None
-    evidence = [
-        RetrievalEvidence(
-            source="graph" if is_graph else "direct",
-            score=hit.score,
-            score_type=score_type,
-            rank=hit.rank if hit.rank is not None else index,
-            graph=graph,
-        )
-    ]
-    evidence.extend(_merged_graph_evidence(hit))
-    return ScoredSearchCandidate(
-        item=_to_memory_search_item(hit, lineage=lineage),
-        original_rank=hit.rank if hit.rank is not None else index,
-        rank=index,
-        retrieval_score=hit.score,
-        retrieval_score_type=score_type,
-        evidence=evidence,
-    )
-
-
-def _graph_path_evidence(hit: MemoryDbSearchHit) -> GraphPathEvidence:
-    debug = hit.debug or {}
-    return GraphPathEvidence(
-        seed_memory_id=str(debug.get("seed_memory_id") or ""),
-        relation=str(debug.get("graph_source") or "unknown"),
-        hops=1,
-        decay=_optional_float(debug.get("graph_decay")),
-        path_score=_optional_float(debug.get("graph_path_score")) or hit.score,
-        used_fallback=bool(debug.get("graph_score_fallback", False)),
-        entity_id=_optional_text(debug.get("entity_id")),
-        entity_name=_optional_text(debug.get("entity_name")),
-        entity_type=_optional_text(debug.get("entity_type")),
-    )
-
-
-def _merged_graph_evidence(hit: MemoryDbSearchHit) -> list[RetrievalEvidence]:
-    paths = hit.debug.get("graph_paths", []) if hit.debug else []
-    if not isinstance(paths, list):
-        return []
-    evidence: list[RetrievalEvidence] = []
-    for path in paths:
-        if not isinstance(path, dict):
-            continue
-        path_score = _optional_float(path.get("graph_path_score"))
-        evidence.append(
-            RetrievalEvidence(
-                source="graph",
-                score=path_score,
-                score_type="graph_propagation",
-                graph=GraphPathEvidence(
-                    seed_memory_id=str(path.get("seed_memory_id") or ""),
-                    relation=str(path.get("graph_source") or "unknown"),
-                    hops=1,
-                    decay=_optional_float(path.get("graph_decay")),
-                    path_score=path_score,
-                    used_fallback=bool(path.get("graph_score_fallback", False)),
-                    entity_id=_optional_text(path.get("entity_id")),
-                    entity_name=_optional_text(path.get("entity_name")),
-                    entity_type=_optional_text(path.get("entity_type")),
-                ),
-            )
-        )
-    return evidence
-
-
-def _optional_float(value: object) -> float | None:
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
-
-
-def _optional_text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None
 
 
 def _ordered_archived_ids(lineage_by_id: dict[str, list[str]], *, existing_ids: set[str]) -> list[str]:

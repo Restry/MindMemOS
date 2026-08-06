@@ -34,7 +34,6 @@ from ..typing import (
     MemoryRequestContext,
     MemoryScrollPipelineInput,
     MemoryScrollPipelineResult,
-    MemorySearchResultItem,
     SearchPipelineInput,
     SearchPipelineResult,
     UpdatePipelineInput,
@@ -54,7 +53,6 @@ from .schemas import (
     MemoryPageRequest,
     MemoryScrollData,
     MemoryScrollRequest,
-    SearchData,
     SearchRequest,
     UpdateRequest,
 )
@@ -240,25 +238,6 @@ def to_memory_list_api_response(
         message=getattr(result, "message", None) or "",
         request_id=request_id,
         data=MemoryListData(memories=result.memories),
-    )
-
-
-def to_search_api_response(
-    result: SearchPipelineResult,
-    request_id: str | None,
-) -> ApiResponse[SearchData]:
-    """Convert scored or unscored search results without stripping relevance."""
-
-    return ApiResponse[SearchData](
-        code=result.status,
-        message=getattr(result, "message", None) or "",
-        request_id=request_id,
-        data=SearchData(
-            memories=[
-                item if isinstance(item, MemorySearchResultItem) else MemorySearchResultItem(**item.model_dump())
-                for item in result.memories
-            ]
-        ),
     )
 
 

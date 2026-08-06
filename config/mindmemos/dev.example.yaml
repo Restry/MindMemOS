@@ -218,7 +218,6 @@ algo_config:
     consolidation_model:
   search:
     request_top_k_max: 100
-    score_provenance_limit: 8
     default:
       top_k: 10
     vanilla:

@@ -19,7 +19,6 @@ from .mappers import (
     to_memory_list_api_response,
     to_memory_page_api_response,
     to_memory_scroll_api_response,
-    to_search_api_response,
     to_status_api_response,
 )
 from .schemas import (
@@ -36,7 +35,6 @@ from .schemas import (
     MemoryPageRequest,
     MemoryScrollData,
     MemoryScrollRequest,
-    SearchData,
     SearchRequest,
     UpdateRequest,
 )
@@ -50,7 +48,7 @@ router = APIRouter(
 
 AddResponse = ApiResponse[AddData]
 GetResponse = ApiResponse[MemoryListData]
-SearchResponse = ApiResponse[SearchData]
+SearchResponse = ApiResponse[MemoryListData]
 ListResponse = ApiResponse[MemoryPageData]
 ScrollResponse = ApiResponse[MemoryScrollData]
 DeleteResponse = ApiResponse[None]
@@ -153,7 +151,7 @@ async def search_memory(
     service: MemoryService = Depends(get_memory_service),
 ) -> SearchResponse:
     result = await service.search(auth, payload)
-    return to_search_api_response(result, auth.request_id)
+    return to_memory_list_api_response(result, auth.request_id)
 
 
 @router.post("/feedback", response_model=FeedbackResponse)

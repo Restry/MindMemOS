@@ -21,7 +21,6 @@ auth:
     finally:
         reset_config()
 
-
 def test_telemetry_requires_endpoint_during_config_init(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MINDMEMOS_TELEMETRY_ENDPOINT", "")
     config_path = tmp_path / "dev.yaml"
@@ -130,24 +129,6 @@ algo_config:
 
     try:
         with pytest.raises(InvalidConfigError, match="hybrid_prefetch_min"):
-            init_config(config_path=config_path)
-    finally:
-        reset_config()
-
-
-def test_search_rejects_invalid_score_provenance_limit(tmp_path) -> None:
-    config_path = tmp_path / "dev.yaml"
-    config_path.write_text(
-        """
-algo_config:
-  search:
-    score_provenance_limit: 0
-""",
-        encoding="utf-8",
-    )
-
-    try:
-        with pytest.raises(InvalidConfigError, match="score_provenance_limit"):
             init_config(config_path=config_path)
     finally:
         reset_config()

@@ -24,6 +24,7 @@ def test_search_patches_defaults_to_enabled(monkeypatch: pytest.MonkeyPatch) -> 
     assert inp.include_patches is True
 
 
-def test_search_request_no_longer_accepts_token_budget() -> None:
-    with pytest.raises(ValidationError, match="token_budget"):
-        SearchRequest.model_validate({"user_id": "u1", "query": "Qdrant", "token_budget": 128})
+@pytest.mark.parametrize("field,value", [("token_budget", 128), ("include_scores", True)])
+def test_search_request_rejects_removed_search_controls(field: str, value: object) -> None:
+    with pytest.raises(ValidationError, match=field):
+        SearchRequest.model_validate({"user_id": "u1", "query": "Qdrant", field: value})

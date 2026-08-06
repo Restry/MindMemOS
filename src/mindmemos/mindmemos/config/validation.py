@@ -233,7 +233,6 @@ RANGE_RULES: tuple[RangeRule, ...] = (
         support="positive number",
     ),
     RangeRule("algo_config.search.request_top_k_max", min_value=1, support="positive integer >= 1"),
-    RangeRule("algo_config.search.score_provenance_limit", min_value=1, max_value=100),
     RangeRule(
         "algo_config.search.vanilla.dedup_threshold",
         min_value=0,

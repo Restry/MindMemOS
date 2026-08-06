@@ -1,8 +1,12 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from ...components.searcher.scored_candidate import ScoredSearchCandidate
-from ...typing import MemoryRequestContext, SearchPipelineInput, SearchPipelineResult
+from ...typing import (
+    MemoryRequestContext,
+    MemorySearchItem,
+    SearchPipelineInput,
+    SearchPipelineResult,
+)
 
 
 class SearchPipeline(Protocol):
@@ -39,7 +43,7 @@ class SearchEngine(Protocol):
         context: MemoryRequestContext,
         *,
         options: SearchEngineOptions | None = None,
-    ) -> list[ScoredSearchCandidate]:
+    ) -> list[MemorySearchItem]:
         """Retrieve candidate memories before final pipeline post-processing.
 
         Args:
@@ -48,5 +52,5 @@ class SearchEngine(Protocol):
             options: Optional wrapper-provided engine overrides.
 
         Returns:
-            Scored candidate memory items in engine ranking order.
+            Candidate memory items in engine ranking order.
         """

@@ -6,11 +6,6 @@ from typing import Any
 
 from ....components.memory_modeling.schema import EntityManager, get_entity_manager
 from ....components.searcher.schema import SchemaSearchExpander, SchemaSearchQueryBuilder
-from ....components.searcher.scored_candidate import (
-    RetrievalEvidence,
-    ScoredSearchCandidate,
-    normalize_candidate_scores,
-)
 from ....components.text import SparseVectorEncoder, TextPreprocessor, detect_prompt_language, get_text_preprocessor
 from ....config import get_config
 from ....config.algo.search import SearchConfig
@@ -89,7 +84,7 @@ class SchemaSearchEngine(MemoryDbPipelineMixin):
         context: MemoryRequestContext,
         *,
         options: SearchEngineOptions | None = None,
-    ) -> list[ScoredSearchCandidate]:
+    ) -> list[MemorySearchItem]:
         """Search schema entities and project them to public memory items."""
 
         schema_cfg = self._get_schema_search_config()
@@ -109,7 +104,9 @@ class SchemaSearchEngine(MemoryDbPipelineMixin):
         embed = self._explicit_embed or get_embed_client()
         rerank = self._explicit_rerank if self._explicit_rerank is not None else _optional_rerank_client()
         text_preprocessor = self._explicit_text_preprocessor or get_text_preprocessor()
-        sparse_encoder = self._explicit_sparse_encoder or SparseVectorEncoder(get_config().algo_config.text_processing)
+        sparse_encoder = self._explicit_sparse_encoder or SparseVectorEncoder(
+            get_config().algo_config.text_processing
+        )
         project_em = self._explicit_entity_manager or get_entity_manager(project_id=context.project_id)
         project_entity_schema = project_em.get_all_dicts() if project_em else []
 
@@ -125,7 +122,9 @@ class SchemaSearchEngine(MemoryDbPipelineMixin):
         property_filter = query_builder.all_property_filter(entity_schema=project_entity_schema)
         initial_time_window = None
         if not parsed_filters.has_time_filter:
-            initial_time_window = await query_builder.extract_time_from_query(inp.query, prompts=request_prompts)
+            initial_time_window = await query_builder.extract_time_from_query(
+                inp.query, prompts=request_prompts
+            )
 
         expander = self._expander or SchemaSearchExpander(
             db_reader=self.db_reader,
@@ -153,26 +152,19 @@ class SchemaSearchEngine(MemoryDbPipelineMixin):
                 inp, parsed_filters.context, parsed_filters.memory_filter, options
             )
 
-        return normalize_candidate_scores(
-            [
-                ScoredSearchCandidate(
-                    item=MemorySearchItem(
-                        id=entity.entity_id,
-                        memory=entity.format_entity_prompt(
-                            ignore_edge_num=schema_cfg.output_max_edge_num,
-                            include_description=False,
-                            include_edges=schema_cfg.include_edges,
-                        ),
-                        memory_type="fact",
-                        last_update_at="",
-                    ),
-                    original_rank=index,
-                    rank=index,
-                    evidence=[RetrievalEvidence(source="schema", rank=index)],
-                )
-                for index, entity in enumerate(entities)
-            ]
-        )
+        return [
+            MemorySearchItem(
+                id=entity.entity_id,
+                memory=entity.format_entity_prompt(
+                    ignore_edge_num=schema_cfg.output_max_edge_num,
+                    include_description=False,
+                    include_edges=schema_cfg.include_edges,
+                ),
+                memory_type="fact",
+                last_update_at="",
+            )
+            for entity in entities
+        ]
 
     async def _search_memory_fallback(
         self,
@@ -180,11 +172,13 @@ class SchemaSearchEngine(MemoryDbPipelineMixin):
         context: MemoryRequestContext,
         filters: SearchFilter | None,
         options: SearchEngineOptions | None,
-    ) -> list[ScoredSearchCandidate]:
+    ) -> list[MemorySearchItem]:
         """Fallback to direct memory recall when schema entity recall is empty."""
 
         text_preprocessor = self._explicit_text_preprocessor or get_text_preprocessor()
-        sparse_encoder = self._explicit_sparse_encoder or SparseVectorEncoder(get_config().algo_config.text_processing)
+        sparse_encoder = self._explicit_sparse_encoder or SparseVectorEncoder(
+            get_config().algo_config.text_processing
+        )
         preprocessed = text_preprocessor.preprocess_query(inp.query, include_entities=False)
         if not preprocessed.tokens:
             return []
@@ -204,26 +198,7 @@ class SchemaSearchEngine(MemoryDbPipelineMixin):
             indices=list(sparse.indices),
             values=list(sparse.values),
         )
-        return normalize_candidate_scores(
-            [
-                ScoredSearchCandidate(
-                    item=_to_memory_search_item(hit),
-                    original_rank=hit.rank if hit.rank is not None else index,
-                    rank=index,
-                    retrieval_score=hit.score,
-                    retrieval_score_type="bm25",
-                    evidence=[
-                        RetrievalEvidence(
-                            source="direct",
-                            score=hit.score,
-                            score_type="bm25",
-                            rank=hit.rank if hit.rank is not None else index,
-                        )
-                    ],
-                )
-                for index, hit in enumerate(result.hits)
-            ]
-        )
+        return [_to_memory_search_item(hit) for hit in result.hits]
 
 
 def _optional_rerank_client() -> RerankClient | None:

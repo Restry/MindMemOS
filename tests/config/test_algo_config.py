@@ -37,10 +37,6 @@ def test_vanilla_search_defaults_bound_prefetch_and_dedup_work() -> None:
     assert vanilla.dedup_max_candidates == 128
 
 
-def test_score_provenance_default_is_bounded() -> None:
-    assert SearchConfig().score_provenance_limit == 8
-
-
 def test_dev_configs_keep_vanilla_settings_in_canonical_sections() -> None:
     legacy_flat_alias = "non" + "_schema"
     for path in ("config/mindmemos/dev.yaml", "config/mindmemos/dev.example.yaml"):

@@ -1,4 +1,4 @@
-"""Small deterministic token estimator shared by chunking and search retention."""
+"""Small deterministic token estimator used by memory chunking."""
 
 from __future__ import annotations
 

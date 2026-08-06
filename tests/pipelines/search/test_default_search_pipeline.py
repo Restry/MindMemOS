@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import pytest
 from mindmemos.config import TextProcessingConfig
-from mindmemos.pipelines.search.base import SearchEngineOptions
 from mindmemos.pipelines.search.default import DefaultSearchEngine
 from mindmemos.typing.memory import (
     FieldCondition,
@@ -77,10 +76,6 @@ async def test_search_uses_bm25_sparse_vector_with_default_scope() -> None:
     assert result[0].memory == "Kai uses Qdrant."
     assert result[0].memory_type == "fact"
     assert result[0].last_update_at == "2026-01-02 03:04:05"
-    assert result[0].retrieval_score == 0.8
-    assert result[0].retrieval_score_type == "bm25"
-    assert result[0].relevance_score == 1.0
-    assert result[0].final_score_source == "retrieval"
 
     assert len(reader.calls) == 1
     call = reader.calls[0]
@@ -105,17 +100,3 @@ async def test_search_empty_query_tokens_returns_empty_result_without_db_call() 
 
     assert result == []
     assert reader.calls == []
-
-
-@pytest.mark.asyncio
-async def test_search_uses_explicit_recall_option_instead_of_final_top_k() -> None:
-    reader = FakeReader()
-    engine = make_engine(reader)
-
-    await engine.search_candidates(
-        SearchPipelineInput(query="Qdrant", top_k=1),
-        make_context(),
-        options=SearchEngineOptions(recall_top_k=7, result_top_n=7),
-    )
-
-    assert reader.calls[0].req.top_k == 7

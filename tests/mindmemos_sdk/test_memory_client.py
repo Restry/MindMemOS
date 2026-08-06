@@ -256,54 +256,6 @@ def test_search_returns_hits_and_sends_params():
     assert result.memories[0].lineage.derived_from_memory_ids == ["old-m1"]
 
 
-def test_search_preserves_requested_relevance_and_graph_provenance():
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={
-                "code": "ok",
-                "data": {
-                    "memories": [
-                        {
-                            "id": "m-related",
-                            "memory": "related memory",
-                            "relevance": {
-                                "score": 0.82,
-                                "source": "retrieval",
-                                "rank": 1,
-                                "retrieval_score": 7.5,
-                                "retrieval_score_type": "rrf",
-                                "graph": [
-                                    {
-                                        "seed_memory_id": "m-seed",
-                                        "relation": "mentions",
-                                        "hops": 1,
-                                        "decay": 0.8,
-                                        "path_score": 0.72,
-                                        "entity_name": "MindMemOS",
-                                    }
-                                ],
-                            },
-                        }
-                    ]
-                },
-            },
-        )
-
-    client = MemoryClient(_transport(handler), default_user_id="u_1")
-    result = client.search("memory", include_scores=True)
-
-    assert captured["body"]["include_scores"] is True
-    relevance = result.memories[0].relevance
-    assert relevance is not None
-    assert relevance.score == pytest.approx(0.82)
-    assert relevance.retrieval_score == pytest.approx(7.5)
-    assert relevance.graph[0].seed_memory_id == "m-seed"
-    assert relevance.graph[0].entity_name == "MindMemOS"
-
 def test_get_sends_body_and_returns_hits():
     captured = {}
 

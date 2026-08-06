@@ -72,7 +72,6 @@ async def test_sync_and_async_memory_clients_share_request_contract():
             search_strategy="agentic",
             rerank=True,
             score_threshold=0.2,
-            include_scores=True,
             filters={"memory_type": "fact"},
             agent_id="agent-1",
             session_id="session-1",
@@ -107,7 +106,6 @@ async def test_sync_and_async_memory_clients_share_request_contract():
             search_strategy="agentic",
             rerank=True,
             score_threshold=0.2,
-            include_scores=True,
             filters={"memory_type": "fact"},
             agent_id="agent-1",
             session_id="session-1",
@@ -130,6 +128,4 @@ async def test_sync_and_async_memory_clients_share_request_contract():
     async_results = [(await op(async_client)).model_dump() for op in async_ops]
 
     assert sync_calls == async_calls
-    search_body = next(call["body"] for call in sync_calls if call["path"] == "/v1/memory/search")
-    assert search_body["include_scores"] is True
     assert sync_results == async_results
