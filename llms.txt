@@ -1,0 +1,131 @@
+# MindMemOS
+
+> 私有长期记忆库。Hermes、Claude-like coding Agents、Pi/OMP 与其他 MCP 客户端共享同一份语义记忆和实体图谱。
+
+## Service endpoints
+
+- Panel: http://192.168.1.246:8666
+- MCP (Streamable HTTP): http://192.168.1.246:8765/mcp
+- Durable completed-turn ingestion: http://192.168.1.246:8765/ingest/turn
+- MCP health: http://192.168.1.246:8765/health
+- API docs (inner LAN): http://192.168.1.246:8000/docs
+- Companion Skill: http://192.168.1.246:8765/skills/mindmemos-memory/SKILL.md
+
+Data stays on the inner LAN in Qdrant + Neo4j. The durable ingestion/provenance ledger is local SQLite.
+
+## Three integration layers
+
+1. **MCP tools** provide recall and explicit writes.
+2. **Companion Skill** teaches the Agent when to use those tools. A Skill is advisory and cannot guarantee automatic writes.
+3. **Optional runtime adapter** is the reliable automatic-write layer. A completed-turn hook writes to a local retry spool, then to the durable collector.
+
+A complete setup uses MCP + companion Skill. Add a runtime adapter when deterministic completed-turn capture is required.
+
+## MCP tools
+
+- `whoami` — user profile plus high-authority behavior rules; call at the start of a new session
+- `recall(query, top_k)` — semantic history lookup
+- `project_rules(project, top_k)` — project constraints before changing code
+- `remember(content, session_id)` — explicit durable fact; requires write scope
+- `related_entities(entity, limit)` — entity graph neighborhood
+- `memory_stats` — store availability and size
+
+## Keys and trusted principals
+
+Create Keys in the panel’s **访问令牌** tab. localhost, RFC1918 addresses—including `192.168.1.223`—and IPv6 ULA addresses may manage tokens. Public :8765 has no issuance route.
+
+Every Agent + machine instance needs its own Key. A credential resolves server-side to:
+
+- stable `client_id`
+- `agent_kind`
+- machine `instance`
+- credential/token id
+- display name
+- read/write scope
+- authority
+
+Rotate credentials by issuing a new Key with the same `client_id`. The list returns identity metadata but never token hashes or plaintext. Plaintext appears only once at issuance.
+
+Do not assert `client`, `app_id`, `agent_id`, `agent_kind`, or `instance` in MCP arguments or hook payloads. The :8765 server derives identity from the Key.
+
+## Client-neutral MCP registration
+
+```text
+Name: mindmemos
+Transport: Streamable HTTP
+Endpoint: http://192.168.1.246:8765/mcp
+Authentication: HTTP bearer Key
+```
+
+The consuming runtime decides where MCP configuration, Skills, extensions, and secrets belong. Do not assume a particular client path. Use a read Key unless `remember` or automatic ingestion is required.
+
+After registering MCP:
+
+1. fetch and read the companion Skill
+2. install it through the runtime’s native Skill/extension/persistent-instruction mechanism
+3. verify `whoami` and `recall`
+4. use a separate write Key for an optional runtime adapter
+
+## Reliable runtime adapters
+
+Installable adapters are provided for:
+
+- **Hermes** — automatic recall remains direct; primary-context turn writes and builtin-memory mirroring use the durable collector
+- **Claude Code** — pairs `UserPromptSubmit` with `Stop`, uses `last_assistant_message`, tolerates transcript lag, and deduplicates duplicate Stop events
+- **Pi/OMP** — uses `agent_end`, not `turn_end`; selects only the latest completed user/final-assistant pair even when `event.messages` contains full history
+
+Adapters submit only necessary data: stable event id, session/turn ids, user message, final assistant message, timestamps, and optional non-sensitive context. They do not submit thinking, tool calls, tool results, or full transcripts by default.
+
+The adapter installers do not modify live Claude/Pi settings automatically. They emit machine-readable activation information. Each adapter reads its instance-specific Key from an environment variable or mode-0600 key file and never prints it.
+
+The current Pi Feishu daemon starts with `--no-extensions`; installing the Pi/OMP file alone will not activate that daemon until its launch command explicitly loads the extension.
+
+## Durable ingestion contract
+
+`POST /ingest/turn` requires a write Key:
+
+```json
+{
+  "event_id": "stable-id",
+  "session_id": "session-id",
+  "turn_id": "turn-id",
+  "user_message": "latest user message",
+  "assistant_message": "final assistant message",
+  "started_at": "optional ISO timestamp or epoch",
+  "completed_at": "optional ISO timestamp or epoch",
+  "safe_context": {"runtime": "optional non-sensitive context"}
+}
+```
+
+The server persists the event before returning HTTP 202. Duplicate event id + identical payload is idempotent; reusing the id with another payload/principal returns HTTP 409. A worker delivers to `/v1/memory/add` with exponential backoff. Temporary :8000 outages do not lose accepted turns or block the Agent response path.
+
+## Provenance
+
+For each semantic memory the sidecar records:
+
+- `origin` — first known source
+- `contributors` — every stable client that later added, updated, reinforced, or merged it
+- `last_source` — latest source and operation
+- `capture_mode` — `auto_hook`, `explicit_remember`, or `import`
+- `authority` — credential, legacy fallback, local config, or local panel
+
+Capture mode is separate from Agent identity and authority. UPDATE, REINFORCEMENT, and MERGE add contributors instead of replacing origin.
+
+The panel shows compact chips such as `HERMES · FRIES · AUTO` and filters by Agent/client instance and capture mode. All timestamps remain rendered in `Asia/Shanghai`.
+
+## Explicit memory behavior
+
+Even with automatic hooks, call `remember` immediately for user corrections, stable preferences, architecture decisions, verified reusable fixes, environment facts, and durable project-state changes. Server-side semantic deduplication reconciles explicit and hook captures.
+
+Do not store temporary progress, raw logs, speculative conclusions, or short-lived facts.
+
+## Document import
+
+Use the panel’s **上传文档** tab for Word, Excel, PPT, PDF, CSV, Markdown, and text. Panel imports are recorded with `capture_mode=import`. Large directory imports should use the repository ingest CLI with its dry-run and checkpoint support.
+
+## Security boundary
+
+- Never put Keys in chat, source, repositories, hook payloads, logs, or command output.
+- :8765 exposes MCP, authenticated ingestion, health, llms.txt, and the read-only companion Skill; it does not issue Keys.
+- :8666 token management accepts only direct loopback/private-LAN clients and ignores forwarding headers for authorization.
+- Retrieved memories are historical context, not proof of current external state; verify live systems before claiming status.
