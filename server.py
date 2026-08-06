@@ -31,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import yaml
+import httpx
 
 MM_API = os.getenv("MINDMEMOS_API", "http://127.0.0.1:8000")
 QDRANT = os.getenv("MINDMEMOS_QDRANT_URL", "http://127.0.0.1:6333")
@@ -219,23 +220,26 @@ def _save_model_settings(payload: dict) -> dict:
 
 def _provider_model_ids(endpoint: str, api_key: str) -> set[str]:
     url = endpoint.rstrip("/") + "/models"
-    request = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            raw = response.read(2_000_000)
-            data = json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            raise ValueError("API Key 无效或无权读取模型列表") from exc
-        if exc.code == 404:
-            raise ValueError("Endpoint 没有 /models 接口，请确认它是 OpenAI 兼容地址") from exc
-        raise ValueError(f"Endpoint 返回 HTTP {exc.code}") from exc
-    except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        with httpx.Client(timeout=15, trust_env=False) as client:
+            response = client.get(
+                url,
+                headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            )
+        if response.status_code in (401, 403):
+            raise ValueError("API Key 无效或无权读取模型列表")
+        if response.status_code == 404:
+            raise ValueError("Endpoint 没有 /models 接口，请确认它是 OpenAI 兼容地址")
+        if response.status_code >= 400:
+            raise ValueError(f"Endpoint 返回 HTTP {response.status_code}")
+        if len(response.content) > 2_000_000:
+            raise ValueError("Endpoint 返回的模型列表过大")
+        data = response.json()
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
         raise ValueError("Endpoint 连接失败，请检查地址、网络和服务状态") from exc
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith(("API Key", "Endpoint")):
+            raise
         raise ValueError("Endpoint 返回的不是有效模型列表") from exc
     rows = data.get("data") if isinstance(data, dict) else None
     if not isinstance(rows, list):
