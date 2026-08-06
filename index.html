@@ -841,10 +841,13 @@ $('#up-go').onclick=async()=>{
     RECENT_LOADED=0;   // 让"最近新增"下次进去时重新拉
   }catch(e){
     btn.textContent='导入失败';
+    document.querySelectorAll('#up-list .up-state').forEach(s=>{
+      s.textContent='失败'; s.style.color='#f87171';
+    });
     alert('导入失败：'+e.message);
   }
-  setTimeout(()=>{btn.disabled=false;renderUpList();
-    UP_FILES=[];fi.value='';},4000);
+  // 保留每个文件的最终结果；选择下一批文件时 renderUpList 会自然刷新。
+  UP_FILES=[]; fi.value=''; btn.disabled=true;
 };
 
 $('#go').onclick=search;

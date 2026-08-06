@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.leway.mindmemos.panel</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MM_MODEL_CONFIG_PATH</key>
+    <string>/Users/leway/Projects/MindMemOS/config/mindmemos/dev.yaml</string>
+    <key>MM_MODEL_CONFIG_BACKUP_DIR</key>
+    <string>/Users/leway/.hermes/model-config-backups</string>
+    <key>MM_MODEL_RELOAD_COMMAND</key>
+    <string>/Users/leway/Projects/mm-panel/reload_models.sh</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>/Users/leway/Projects/mm-panel/server.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/leway/Projects/mm-panel</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/mm_panel.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/mm_panel.err</string>
+</dict>
+</plist>

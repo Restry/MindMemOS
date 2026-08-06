@@ -1,0 +1,1 @@
+claw ALL=(root) NOPASSWD: /usr/local/sbin/mindmemos-company-reload-models

@@ -683,8 +683,11 @@ def _load_extractor():
         return _EXTRACTOR
     import glob
     import importlib.util
-    mm = os.path.expanduser('~/Projects/MindMemOS')
-    for sp in glob.glob(os.path.join(mm, '.venv/lib/python*/site-packages')):
+    mm = _MM_ROOT
+    venv = os.path.expanduser(
+        os.getenv('MINDMEMOS_VENV', os.path.join(mm, '.venv'))
+    )
+    for sp in glob.glob(os.path.join(venv, 'lib/python*/site-packages')):
         if sp not in sys.path:
             sys.path.append(sp)
     path = os.path.join(mm, 'scripts/ingest/extractor.py')

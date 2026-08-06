@@ -1,0 +1,17 @@
+[Unit]
+Description=MindMemOS Company LAN panel
+Wants=mindmemos-company-api.service
+After=mindmemos-company-api.service
+
+[Service]
+Type=simple
+User=claw
+Group=claw
+WorkingDirectory=/opt/mindmemos-company/panel
+EnvironmentFile=/etc/mindmemos-company/runtime.env
+ExecStart=/usr/bin/python3 /opt/mindmemos-company/panel/server.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
