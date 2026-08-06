@@ -530,6 +530,7 @@ def _lan_ip() -> str:
 
 
 LAN_IP = os.getenv("MINDMEMOS_LAN_IP") or _lan_ip()
+LLMS_URL = os.getenv("MM_LLMS_URL", f"http://{LAN_IP}:8765/llms.txt")
 
 
 
@@ -954,17 +955,12 @@ class H(BaseHTTPRequestHandler):
             return
 
         if path == '/llms.txt':
-            # 给 AI 客户端看的站点说明（llmstxt.org 约定）
-            try:
-                b = open(os.path.join(HERE, 'llms.txt'), 'rb').read()
-            except FileNotFoundError:
-                self.send_error(404)
-                return
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/plain; charset=utf-8')
-            self.send_header('Content-Length', str(len(b)))
+            # 8765 的仓库根 llms.txt 是唯一真源；8666 不再维护第二份副本。
+            self.send_response(302)
+            self.send_header('Location', LLMS_URL)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', '0')
             self.end_headers()
-            self.wfile.write(b)
             return
         if path == '/api/suggest':
             # 建议问题动态生成：从图谱取高频实体 + 最近活跃实体，
