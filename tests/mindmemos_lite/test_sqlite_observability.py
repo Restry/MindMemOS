@@ -4,12 +4,64 @@ from types import SimpleNamespace
 
 import mindmemos_lite.llm.chat as chat_module
 import pytest
-from mindmemos_lite.infra.observability import SQLiteSpanExporter
+from mindmemos_lite.infra.observability import (
+    BackendSpanExporter,
+    CompletedSpan,
+    SQLiteObservabilityBackend,
+    SQLiteSpanExporter,
+)
 from mindmemos_lite.llm.chat import LLMClient
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import Status, StatusCode
+
+
+def test_backend_exporter_does_not_require_sqlite(tmp_path) -> None:
+    class RecordingBackend:
+        def __init__(self) -> None:
+            self.spans: list[CompletedSpan] = []
+            self.flushes = 0
+            self.closed = False
+
+        def write_spans(self, spans) -> None:
+            self.spans.extend(spans)
+
+        def force_flush(self) -> None:
+            self.flushes += 1
+
+        def close(self) -> None:
+            self.closed = True
+
+    backend = RecordingBackend()
+    exporter = BackendSpanExporter(backend)
+    provider = TracerProvider(resource=Resource.create({"service.name": "skill-test"}))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with provider.get_tracer("skill").start_as_current_span("skill.trajectory.step") as span:
+        span.set_attribute("input", "private trajectory content")
+        span.set_attribute("authorization", "secret")
+        span.add_event("skill.log", {"output": "private log content", "level": "info"})
+
+    assert [span.name for span in backend.spans] == ["skill.trajectory.step"]
+    record = backend.spans[0]
+    assert record.attributes["input.redacted"] is True
+    assert record.attributes["authorization"] == "<redacted>"
+    assert record.events[0].name == "skill.log"
+    assert record.events[0].attributes["output.redacted"] is True
+    assert not (tmp_path / "traces.db").exists()
+    assert exporter.force_flush()
+    provider.shutdown()
+    assert backend.flushes >= 1
+    assert backend.closed is True
+
+
+def test_sqlite_exporter_is_composed_from_sqlite_backend(tmp_path) -> None:
+    exporter = SQLiteSpanExporter(tmp_path / "traces.db")
+
+    assert isinstance(exporter, BackendSpanExporter)
+    assert isinstance(exporter.backend, SQLiteObservabilityBackend)
+    exporter.shutdown()
 
 
 def test_sqlite_exporter_persists_generic_spans_events_and_llm_projection(tmp_path) -> None:
@@ -49,17 +101,10 @@ def test_sqlite_exporter_persists_generic_spans_events_and_llm_projection(tmp_pa
 
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
-    tables = {
-        row["name"]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        )
-    }
+    tables = {row["name"] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"traces", "spans", "span_events", "llm_calls"} <= tables
 
-    span_columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(spans)")
-    }
+    span_columns = {row["name"] for row in connection.execute("PRAGMA table_info(spans)")}
     assert "llm_model" not in span_columns
     assert "total_tokens" not in span_columns
 
@@ -71,9 +116,7 @@ def test_sqlite_exporter_persists_generic_spans_events_and_llm_projection(tmp_pa
     assert trace_row["project_id"] == "project-1"
     assert trace_row["api_key_uuid"] == "key-1"
 
-    spans = connection.execute(
-        "SELECT name, parent_span_id, status_code FROM spans ORDER BY start_time_ns"
-    ).fetchall()
+    spans = connection.execute("SELECT name, parent_span_id, status_code FROM spans ORDER BY start_time_ns").fetchall()
     assert [row["name"] for row in spans] == [
         "search.vanilla",
         "llm.chat.provider",
@@ -82,9 +125,7 @@ def test_sqlite_exporter_persists_generic_spans_events_and_llm_projection(tmp_pa
     assert spans[1]["parent_span_id"] is not None
     assert all(row["status_code"] == "OK" for row in spans)
 
-    events = connection.execute(
-        "SELECT name, attributes_json FROM span_events ORDER BY event_index"
-    ).fetchall()
+    events = connection.execute("SELECT name, attributes_json FROM span_events ORDER BY event_index").fetchall()
     input_attributes = json.loads(events[0]["attributes_json"])
     assert input_attributes["messages.redacted"] is True
     assert input_attributes["messages.chars"] > 0
