@@ -15,6 +15,9 @@ PANEL_SERVER = Path("/Users/leway/Projects/mm-panel/server.py")
 
 
 def _load_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    keys = tmp_path / "panel-keys.json"
+    keys.write_text('{"vanilla":"test-only-placeholder"}', encoding="utf-8")
+    monkeypatch.setenv("MINDMEMOS_PANEL_KEYS", str(keys))
     monkeypatch.setenv("MM_TURN_LEDGER", str(tmp_path / "panel-ledger.sqlite3"))
     spec = importlib.util.spec_from_file_location("test_mm_panel_server", PANEL_SERVER)
     assert spec is not None and spec.loader is not None
@@ -46,6 +49,20 @@ def test_panel_deployment_paths_and_identity_are_environment_configurable(
     assert panel._MM_ROOT == str(Path(__file__).resolve().parents[1])
     assert panel.mcp_tokens.STORE == str(state / "tokens.json")
     assert panel.mcp_tokens.LEGACY == str(state / "legacy-token")
+
+
+def test_panel_api_key_falls_back_to_standard_provider_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_config = tmp_path / "mindmemos.json"
+    provider_config.write_text('{"api_key":"provider-test-placeholder"}', encoding="utf-8")
+    monkeypatch.setenv("MINDMEMOS_PANEL_KEYS", str(tmp_path / "missing-legacy-keys.json"))
+    monkeypatch.setenv("MINDMEMOS_PROVIDER_CONFIG", str(provider_config))
+    spec = importlib.util.spec_from_file_location("test_mm_panel_provider_fallback", PANEL_SERVER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+
+    assert module.MM_KEY == "provider-test-placeholder"
 
 
 @pytest.mark.parametrize(
@@ -146,7 +163,7 @@ def test_panel_rules_are_validated_backed_up_and_atomically_replaced(
     assert panel._read_rules() == rules
 
 
-def test_panel_recent_snapshot_uses_beijing_today_and_zero_fills_fourteen_days(
+def test_panel_recent_snapshot_uses_beijing_today_and_zero_fills_thirty_days(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     panel = _load_panel(tmp_path, monkeypatch)
@@ -160,7 +177,7 @@ def test_panel_recent_snapshot_uses_beijing_today_and_zero_fills_fourteen_days(
 
     assert snapshot["today"] == "2026-08-06"
     assert list(snapshot["by_day"])[0] == "2026-08-06"
-    assert len(snapshot["by_day"]) == 14
+    assert len(snapshot["by_day"]) == 30
     assert snapshot["by_day"]["2026-08-06"] == 0
     assert snapshot["by_day"]["2026-08-05"] == 1
     assert snapshot["by_day"]["2026-08-04"] == 0
@@ -238,6 +255,12 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert "api_key:$('#model-'+k+'-key')" in html
     assert "setTimeout(()=>{btn.disabled=false;renderUpList()" not in html
     assert "UP_FILES=[]; fi.value=''; btn.disabled=true" in html
+    assert 'id="memory-chart-path"' in html
+    assert "getPointAtLength" in html
+    assert "duration=6000" in html
+    assert 'id="memory-terminal"' in html
+    assert "UNKNOWN OR UNSAFE COMMAND" in html
+    assert "runMemoryCommand" in html
     assert 'type="password"' in html
     assert "API Key 只写入服务器配置，页面永远不会回显" in html
 
