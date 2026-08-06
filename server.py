@@ -43,8 +43,29 @@ NEO4J_AUTH = (
 COLL = os.getenv("MINDMEMOS_MEMORY_COLLECTION", "memory_item_v1")
 ENT_COLL = os.getenv("MINDMEMOS_ENTITY_COLLECTION", "entity_item_v1")
 KEYS_PATH = os.path.expanduser(os.getenv("MINDMEMOS_PANEL_KEYS", "/tmp/mm_keys.json"))
-KEYS = json.load(open(KEYS_PATH, encoding="utf-8"))
-MM_KEY = KEYS['vanilla']
+PROVIDER_CONFIG_PATH = os.path.expanduser(
+    os.getenv("MINDMEMOS_PROVIDER_CONFIG", "~/.hermes/mindmemos.json")
+)
+
+
+def _load_memory_api_key() -> str:
+    configured = os.getenv("MINDMEMOS_API_KEY", "").strip()
+    if configured:
+        return configured
+    for path in dict.fromkeys((KEYS_PATH, PROVIDER_CONFIG_PATH)):
+        try:
+            data = json.load(open(path, encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            continue
+        if isinstance(data, dict):
+            for field in ("vanilla", "api_key", "key"):
+                value = str(data.get(field) or "").strip()
+                if value:
+                    return value
+    raise RuntimeError("MindMemOS API credential is not configured")
+
+
+MM_KEY = _load_memory_api_key()
 USER_ID = os.getenv("MINDMEMOS_USER", "leway")
 HOST = os.getenv("MM_PANEL_HOST", "0.0.0.0")
 PORT = int(os.getenv("MM_PANEL_PORT", "8666"))
@@ -428,8 +449,8 @@ def _beijing_day(value) -> str:
         return ''
 
 
-def _recent_snapshot(rows: list[dict], *, now: datetime | None = None, days: int = 14) -> dict:
-    """Return one Beijing-time recent view with explicit zero-count calendar days."""
+def _recent_snapshot(rows: list[dict], *, now: datetime | None = None, days: int = 30) -> dict:
+    """Return one Beijing-time 30-day view with explicit zero-count calendar days."""
     reference = now or datetime.now(BEIJING_TZ)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=BEIJING_TZ)
