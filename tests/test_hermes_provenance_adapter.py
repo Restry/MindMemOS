@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = Path("/Users/leway/.hermes/plugins/mindmemos/__init__.py")
+PLUGIN = ROOT / "adapters/hermes/mindmemos/__init__.py"
 
 
 def _load_plugin(monkeypatch: pytest.MonkeyPatch):
@@ -121,3 +121,38 @@ def test_auto_capture_uses_the_same_exact_low_information_rule(
     assert provider._worth_writing("嗯这个问题需要继续调查服务端队列以及失败自动重放路径")
     assert not provider._worth_writing("/remember 这是一条足够长但属于命令的输入，不应自动捕获")
     assert not provider._worth_writing("好的")
+
+
+def test_repo_owned_hermes_provider_installs_exactly(tmp_path: Path) -> None:
+    installer_path = ROOT / "adapters/hermes/install.py"
+    spec = importlib.util.spec_from_file_location("test_hermes_provider_installer", installer_path)
+    assert spec is not None and spec.loader is not None
+    installer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installer)
+
+    result = installer.install(tmp_path)
+    assert result["ok"] is True
+    for name in ("__init__.py", "plugin.yaml"):
+        assert (tmp_path / "plugins/mindmemos" / name).read_bytes() == (
+            ROOT / "adapters/hermes/mindmemos" / name
+        ).read_bytes()
+    assert not (tmp_path / "mindmemos.json").exists()
+
+
+def test_llms_txt_documents_hermes_provider_lifecycle_and_source() -> None:
+    document = (ROOT / "llms.txt").read_text(encoding="utf-8")
+    server = (ROOT / "mcp_http_server.py").read_text(encoding="utf-8")
+
+    for required in (
+        "Hermes native Memory Provider",
+        "adapters/hermes/mindmemos/__init__.py",
+        "python3 adapters/hermes/install.py --check",
+        "hermes config set memory.provider mindmemos",
+        "hermes config set memory.provider builtin",
+        "$HERMES_HOME/mindmemos.json",
+        "只配置 MCP 或安装 Skill，**不等于 Hermes Memory Provider 已接管**",
+    ):
+        assert required in document
+    assert 'LLMS_FILE = os.path.join(HERE, "llms.txt")' in server
+    assert "with open(LLMS_FILE" in server
+    assert 'return f"""# MindMemOS MCP' not in server

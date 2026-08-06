@@ -1,0 +1,3 @@
+name: mindmemos
+version: 0.1.0
+description: "MindMemOS — 本地长期记忆库，自动检索项目历史 + 异步写入对话结论。走 Fries 本机 MindMemOS 服务（Qdrant + Neo4j + 本地模型）。"

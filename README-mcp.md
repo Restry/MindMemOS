@@ -99,11 +99,17 @@ Panel 对 memory ids 做批量 SQLite 查询，不逐卡查询。卡片显示 `H
 
 ### Hermes
 
-Live provider：
+Repository source of truth：
 
 ```text
-~/.hermes/plugins/mindmemos/__init__.py
+adapters/hermes/mindmemos/__init__.py
+adapters/hermes/mindmemos/plugin.yaml
+adapters/hermes/install.py
 ```
+
+运行时安装到 `$HERMES_HOME/plugins/mindmemos/`。使用
+`python3 adapters/hermes/install.py` 同步，`--check` 验证运行文件与 Git 源码一致；
+真实 `mindmemos.json` 与 Key 不进入仓库。
 
 Recall 继续走 :8000。Primary-context `sync_turn` 与 builtin-memory mirror 先写：
 
@@ -188,7 +194,8 @@ cp /Users/leway/.hermes/backups/mindmemos-provenance-20260805-215340/MindMemOS/m
 cp /Users/leway/.hermes/backups/mindmemos-provenance-20260805-215340/MindMemOS/SKILL.md /Users/leway/Projects/MindMemOS/skills/mindmemos-memory/SKILL.md
 cp /Users/leway/.hermes/backups/mindmemos-provenance-20260805-215340/mm-panel/server.py /Users/leway/Projects/mm-panel/
 cp /Users/leway/.hermes/backups/mindmemos-provenance-20260805-215340/mm-panel/index.html /Users/leway/Projects/mm-panel/
-cp /Users/leway/.hermes/backups/mindmemos-provenance-20260805-215340/hermes-plugin/__init__.py /Users/leway/.hermes/plugins/mindmemos/
+cp /Users/leway/.hermes/backups/mindmemos-provenance-20260805-215340/hermes-plugin/__init__.py adapters/hermes/mindmemos/__init__.py
+python3 adapters/hermes/install.py
 ```
 
 随后撤销 Hermes provenance credential、从 `~/.hermes/mindmemos.json` 移除 `ingest_*` 字段，并重启 :8765/:8666。Claude/Pi live settings 本次未修改，无需恢复。

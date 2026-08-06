@@ -89,10 +89,12 @@ hermes config set memory.memory_enabled false
 hermes config set memory.user_profile_enabled false
 ```
 
-插件本体也要拷过去（如果那台没有）：
+插件本体必须从 MindMemOS Git 仓库安装，不要从某台机器的运行目录反向拷源码：
 
 ```bash
-scp -r ~/.hermes/plugins/mindmemos 另一台机器:~/.hermes/plugins/
+cd /path/to/MindMemOS
+python3 adapters/hermes/install.py
+python3 adapters/hermes/install.py --check
 ```
 
 插件的 `ingest_client_module` 必须指向随插件安装的 durable client，或新机器上

@@ -42,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.getenv("MM_MCP_PORT", "8765"))
 FALLBACK_HOST = os.getenv("MM_MCP_FALLBACK_HOST", f"127.0.0.1:{PORT}")
 SKILL_FILE = os.path.join(HERE, "skills", "mindmemos-memory", "SKILL.md")
+LLMS_FILE = os.path.join(HERE, "llms.txt")
 MAX_INGEST_BODY = int(os.getenv("MM_MAX_INGEST_BODY", str(300 * 1024)))
 _worker: IngestWorker | None = None
 
@@ -151,105 +152,17 @@ class H(BaseHTTPRequestHandler):
 
     def _llms_txt(self) -> str:
         origin = self._public_origin()
-        mcp_url = f"{origin}/mcp"
-        skill_url = f"{origin}/skills/mindmemos-memory/SKILL.md"
-        tools = "\n".join(f"- `{t['name']}` — {t['description']}" for t in _mm.TOOLS)
-        return f"""# MindMemOS MCP
-
-> 私有长期记忆库的远程 MCP 与 durable completed-turn ingestion 入口。
-
-## Endpoints
-
-- MCP tools: {mcp_url}
-- Reliable turn ingestion: {origin}/ingest/turn
-- Health: {origin}/health
-- This document: {origin}/llms.txt
-- Companion skill: {skill_url}
-
-## Authentication and identity
-
-所有 MCP 与 ingestion POST 请求都必须携带 `Authorization: Bearer <KEY>`。
-Key 由库主人在内网面板签发；公网没有 issuance/bootstrap 路由。
-
-**每个 Agent + 机器实例必须使用独立 Key。** Key 对应服务端拥有的 stable `client_id`、
-`agent_kind`、`instance`、credential id、display name 和 scope。轮换 Key 时复用同一个
-`client_id`；不要在工具参数或 hook payload 中自报 `client`、`app_id` 或 `agent_id`。
-
-## Three integration layers
-
-1. **MCP tools**：提供检索和显式写入。
-2. **Companion Skill**：教 Agent 何时 `whoami` / `recall` / `project_rules` / `remember`；
-   Skill 不能保证每个 Agent 自动执行。
-3. **Optional runtime adapter**：completed-turn hook 的可靠自动写入层。需要自动捕获时安装；
-   它不替代 MCP 召回或高价值事实的显式 `remember`。
-
-## Tools
-
-{tools}
-
-## Companion Skill
-
-接入 Agent 应获取并阅读 `{skill_url}`，再按自身 runtime 的原生 skill、extension 或
-persistent-instruction 机制安装。安装位置由调用方决定；本文件不假设固定客户端路径。
-
-## Optional runtime adapters
-
-提供 Hermes、Claude Code 与 Pi/OMP 适配器。适配器只提交最新完成的 user message 与
-final assistant message；默认不提交 thinking、tool calls、tool results 或完整 transcript。
-本地 durable spool 负责短暂断网重试，服务端在 SQLite ledger 持久化事件后才返回 202。
-
-Claude Code 适配器配对 `UserPromptSubmit` 与 `Stop`，Pi/OMP 使用 `agent_end`（不是
-`turn_end`）。安装器不会替调用方修改 live settings；调用方应审阅 machine-readable
-snippet，并把实例专属 Key 放进自己的 secret store。
-
-Adapter ingestion payload：
-
-```json
-{{
-  "event_id": "stable-id",
-  "session_id": "session-id",
-  "turn_id": "turn-id",
-  "user_message": "...",
-  "assistant_message": "...",
-  "started_at": "optional ISO/epoch",
-  "completed_at": "optional ISO/epoch",
-  "safe_context": {{"runtime": "optional non-sensitive context"}}
-}}
-```
-
-Producer identity、`app_id`、`agent_id`、authority 与 `capture_mode=auto_hook` 均由服务端
-根据 Key 注入。重复 `event_id` + 相同 payload 幂等；同 ID 不同 payload 返回 409。
-
-## Provenance semantics
-
-每条语义记忆保存 `origin`、所有 `contributors` 与 `last_source`。后续 UPDATE、
-REINFORCEMENT 或 MERGE 会加入新贡献者，不覆盖原始来源。`capture_mode` 独立于 Agent
-身份和 authority，值包括 `auto_hook`、`explicit_remember`、`import`。
-
-## Client-neutral MCP registration
-
-```text
-Name: mindmemos
-Transport: Streamable HTTP
-Endpoint: {mcp_url}
-Authentication: HTTP bearer token
-```
-
-调用方自行决定 MCP 配置与 Skill/extension 安装位置、Key 的 secret store 以及作用域。
-默认使用 read Key；`remember` 或 runtime adapter 需要 write Key。
-
-## Recommended behavior
-
-- 新会话开始调用 `whoami`
-- 回答既有项目/决策/踩坑前调用 `recall`；改项目前调用 `project_rules`
-- 关键纠正、偏好、决策与可复用解法当场 `remember`，服务端会与 hook 捕获去重
-- 不把 Key 写入聊天、源码、仓库、hook payload 或日志
-
-## Security boundary
-
-公网 :8765 只提供 `/mcp`、authenticated ingestion、`/llms.txt`、`/health` 和只读 Skill。
-它不提供 token issuance；`/api/tokens/*` 只存在于内网 :8666 面板。
-"""
+        replacements = {
+            "{{ORIGIN}}": origin,
+            "{{MCP_URL}}": f"{origin}/mcp",
+            "{{SKILL_URL}}": f"{origin}/skills/mindmemos-memory/SKILL.md",
+            "{{TOOLS}}": "\n".join(f"- `{tool['name']}` — {tool['description']}" for tool in _mm.TOOLS),
+        }
+        with open(LLMS_FILE, encoding="utf-8") as handle:
+            document = handle.read()
+        for marker, value in replacements.items():
+            document = document.replace(marker, value)
+        return document
 
     def _bearer(self) -> str:
         return (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()

@@ -1,0 +1,153 @@
+# MindMemOS
+
+> 私有长期记忆系统，提供 Hermes 原生 Memory Provider、远程 MCP、Companion Skill 和 durable completed-turn ingestion。
+
+## Public endpoints
+
+- MCP tools: {{MCP_URL}}
+- Reliable turn ingestion: {{ORIGIN}}/ingest/turn
+- Health: {{ORIGIN}}/health
+- This document: {{ORIGIN}}/llms.txt
+- Companion Skill: {{SKILL_URL}}
+
+## Four integration layers
+
+这四层用途不同，不能互相冒充：
+
+1. **Hermes Memory Provider**：Hermes 原生生命周期集成，负责每轮自动召回、常驻身份/规则、`recall` 工具、completed-turn 自动写入。
+2. **MCP tools**：跨 Agent/runtime 的显式检索和写入工具。
+3. **Companion Skill**：教 Agent 何时 `whoami` / `recall` / `project_rules` / `remember`；Skill 是行为建议，不保证自动执行。
+4. **Runtime adapters**：为不支持 Hermes Provider 的 runtime 提供 durable completed-turn 自动捕获。
+
+只配置 MCP 或安装 Skill，**不等于 Hermes Memory Provider 已接管**；也不等于 completed-turn 会自动写入。
+
+## Hermes native Memory Provider
+
+Provider 源码真源位于 MindMemOS 仓库：
+
+```text
+adapters/hermes/mindmemos/__init__.py
+adapters/hermes/mindmemos/plugin.yaml
+adapters/hermes/install.py
+adapters/hermes/mindmemos.example.json
+```
+
+Hermes 运行时部署位置：
+
+```text
+$HERMES_HOME/plugins/mindmemos/
+```
+
+运行配置：
+
+```text
+$HERMES_HOME/mindmemos.json
+```
+
+`MindMemOSProvider` 实现 Hermes `MemoryProvider` 接口：
+
+- `system_prompt_block()`：注入常驻身份、偏好和高权威规则；
+- `prefetch()`：每个 primary turn 前按当前问题自动语义召回；
+- `get_tool_schemas()` / `handle_tool_call()`：提供主动补查的 `recall` 工具；
+- `sync_turn()`：完成 primary turn 后先写本地 durable spool，再提交 collector；
+- `on_memory_write()`：同步 Hermes `memory` tool 的显式高价值写入；
+- provenance guard：不递归捕获已经来自 MindMemOS 的内容。
+
+召回走配置中的 MindMemOS `:8000` API。自动写入走 `{{ORIGIN}}/ingest/turn`，并使用该 Hermes + 机器实例专属的 write Key。collector 在 SQLite commit 后才返回 HTTP 202；短暂断网由本地 spool 重试，不阻塞最终回复。
+
+安装或更新仓库版本：
+
+```bash
+python3 adapters/hermes/install.py
+python3 adapters/hermes/install.py --check
+```
+
+安装器只同步插件源码和清单，不复制 Key、不覆盖 `mindmemos.json`、不偷偷修改 Hermes 开关。配置真实 Key 时必须使用 secret channel。
+
+启用：
+
+```bash
+hermes plugins enable mindmemos
+hermes config set memory.provider mindmemos
+hermes config set memory.memory_enabled false
+hermes config set memory.user_profile_enabled false
+```
+
+验证：
+
+```bash
+hermes memory status
+python3 adapters/hermes/install.py --check
+```
+
+期望状态是 `Provider: mindmemos`、`Status: available`，且运行文件与仓库源码一致。内置 `MEMORY.md` / `USER.md` 不会被删除，只停止自动注入。
+
+回滚：
+
+```bash
+hermes config set memory.provider builtin
+hermes config set memory.memory_enabled true
+hermes config set memory.user_profile_enabled true
+hermes plugins disable mindmemos
+```
+
+修改 Provider 或配置后必须重启 Hermes CLI/gateway。
+
+## MCP tools
+
+{{TOOLS}}
+
+## Companion Skill
+
+接入 Agent 应获取并阅读 `{{SKILL_URL}}`，再按自身 runtime 的原生 skill、extension 或 persistent-instruction 机制安装。安装位置由调用方决定；本文档不假设固定客户端路径。
+
+## Authentication and identity
+
+所有 MCP 与 ingestion POST 请求都必须携带 `Authorization: Bearer <KEY>`。Key 由库主人在内网 8666 面板签发；公网没有 issuance/bootstrap 路由。
+
+**每个 Agent + 机器实例必须使用独立 Key。** Key 对应服务端拥有的 stable `client_id`、`agent_kind`、`instance`、credential id、display name 和 scope。轮换 Key 时复用同一个 `client_id`；不要在工具参数或 hook payload 中自报 `client`、`app_id` 或 `agent_id`。
+
+默认 MCP client 使用 read Key；`remember`、Hermes Provider 自动写入或 runtime adapter 需要 write Key。Key 不得进入聊天、源码、Git、命令参数、hook payload 或日志。
+
+## Optional runtime adapters
+
+除 Hermes 原生 Provider 外，仓库还提供 Claude Code 与 Pi/OMP adapters。它们只提交最新完成的 user message 与 final assistant message；默认不提交 thinking、tool calls、tool results 或完整 transcript。
+
+本地 durable spool 负责短暂断网重试，服务端在 SQLite ledger 持久化事件后才返回 202。重复 `event_id` + 相同 payload 幂等；同 ID 不同 payload/principal 返回 409。
+
+Source：
+
+```text
+adapters/python/mindmemos_ingest_client.py
+adapters/claude_code/
+adapters/pi_omp/
+```
+
+## Provenance semantics
+
+每条语义记忆保存 `origin`、所有 `contributors` 与 `last_source`。后续 UPDATE、REINFORCEMENT 或 MERGE 会加入新贡献者，不覆盖原始来源。`capture_mode` 独立于 Agent identity 和 authority，典型值包括：
+
+- `auto_hook`
+- `explicit_remember`
+- `import`
+
+## Client-neutral MCP registration
+
+```text
+Name: mindmemos
+Transport: Streamable HTTP
+Endpoint: {{MCP_URL}}
+Authentication: HTTP bearer Key
+```
+
+## Recommended behavior
+
+- Hermes 使用原生 Memory Provider 时，由 Provider 自动 prefetch；需要补查特定主题时调用 `recall`。
+- 其他 Agent 新会话开始调用 `whoami`。
+- 回答既有项目、决策或踩坑前调用 `recall`；改项目前调用 `project_rules`。
+- 关键纠正、偏好、决策与可复用解法当场 `remember`，服务端会与自动捕获去重。
+- 召回为空时明确说没有结果，不要把无关内容当答案。
+
+## Security boundary
+
+公网服务只提供 `/mcp`、authenticated ingestion、`/llms.txt`、`/health` 和只读 Skill。它不提供 token issuance；Token 与模型设置管理只存在于内网 8666 面板。

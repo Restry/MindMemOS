@@ -1,0 +1,14 @@
+{
+  "base_url": "http://127.0.0.1:8000",
+  "api_key": "REPLACE_WITH_RECALL_API_KEY",
+  "user_id": "REPLACE_WITH_MEMORY_OWNER",
+  "top_k": 6,
+  "score_threshold": 0.1,
+  "write_enabled": true,
+  "min_write_chars": 24,
+  "ingest_url": "http://127.0.0.1:8765",
+  "ingest_key": "REPLACE_WITH_INSTANCE_WRITE_KEY",
+  "ingest_spool": "~/.hermes/mindmemos_hermes_ingest.sqlite3",
+  "ingest_client_module": "/absolute/path/to/MindMemOS/adapters/python/mindmemos_ingest_client.py",
+  "pinned_file": "~/.hermes/mindmemos_pinned.md"
+}
