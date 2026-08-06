@@ -92,6 +92,27 @@ class QdrantEngine:
 
         return self._cfg
 
+    async def collection_exists(self, collection: str) -> bool:
+        """Return whether a physical Qdrant collection exists."""
+
+        return bool(await self._client.collection_exists(collection))
+
+    async def collection_names(self) -> list[str]:
+        """Return all physical Qdrant collection names."""
+
+        return [item.name for item in (await self._client.get_collections()).collections]
+
+    async def dense_vector_size(self, collection: str, vector_name: str) -> int | None:
+        """Return one existing dense vector size without creating the collection."""
+
+        if not await self.collection_exists(collection):
+            return None
+        info = await self._client.get_collection(collection)
+        vectors = info.config.params.vectors
+        params = vectors.get(vector_name) if isinstance(vectors, dict) else vectors
+        size = getattr(params, "size", None)
+        return int(size) if isinstance(size, int) and size > 0 else None
+
     async def ensure_collection(self, spec: QdrantCollectionSpec) -> None:
         """Create one collection and its payload indexes (no ``auto_create`` gate).
 
@@ -185,6 +206,22 @@ class QdrantEngine:
             with_vectors=with_vectors,
         )
         return [self.record_from(record) for record in records], next_offset
+
+    async def count(
+        self,
+        collection: str,
+        *,
+        count_filter: qmodels.Filter | None = None,
+        exact: bool = True,
+    ) -> int:
+        """Count points in a collection with an already-built filter."""
+
+        result = await self._client.count(
+            collection_name=collection,
+            count_filter=count_filter,
+            exact=exact,
+        )
+        return int(result.count)
 
     async def query(
         self,
