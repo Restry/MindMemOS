@@ -19,6 +19,7 @@ def _load_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     keys.write_text('{"vanilla":"test-only-placeholder"}', encoding="utf-8")
     monkeypatch.setenv("MINDMEMOS_PANEL_KEYS", str(keys))
     monkeypatch.setenv("MM_TURN_LEDGER", str(tmp_path / "panel-ledger.sqlite3"))
+    monkeypatch.setenv("MM_MODEL_ENDPOINTS_PATH", str(tmp_path / "model-endpoints.json"))
     spec = importlib.util.spec_from_file_location("test_mm_panel_server", PANEL_SERVER)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -249,28 +250,24 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert 'id="model-llm-name"' in html
     assert 'id="model-embedding-name"' in html
     assert 'id="model-rerank-name"' in html
-    assert 'id="model-rerank-key"' in html
+    assert 'id="endpoint-list"' in html
+    assert 'id="endpoint-add"' in html
+    assert 'id="endpoint-refresh-all"' in html
+    assert 'id="endpoint-edit-url"' in html
+    assert 'id="endpoint-edit-key"' in html
     assert 'role="combobox"' in html
     assert 'id="model-llm-options" role="listbox"' in html
     assert 'id="model-embedding-options" role="listbox"' in html
     assert 'id="model-rerank-options" role="listbox"' in html
-    assert 'id="model-llm-toggle"' in html
-    assert 'id="model-embedding-toggle"' in html
-    assert 'id="model-rerank-toggle"' in html
-    assert 'id="model-llm-load"' in html
-    assert 'id="model-embedding-load"' in html
-    assert 'id="model-rerank-load"' in html
-    assert "renderModelMenu" in html
-    assert 'class="model-option"' in html
-    assert "fetch('/api/models/list'" in html
-    assert "requireCatalogSelections" in html
-    assert "必须从已读取的模型下拉列表中选择完整值" in html
-    for kind in ("llm", "embedding", "rerank"):
-        assert html.index(f'id="model-{kind}-endpoint"') < html.index(f'id="model-{kind}-key"')
-        assert html.index(f'id="model-{kind}-key"') < html.index(f'id="model-{kind}-name"')
-    assert "fetch('/api/models/test'" in html
-    assert "fetch('/api/models'" in html
-    assert "api_key:$('#model-'+k+'-key')" in html
+    registry_js = Path("/Users/leway/Projects/mm-panel/model-registry.js").read_text(encoding="utf-8")
+    assert "fetch('/api/model-endpoints'" in registry_js
+    assert "fetch('/api/model-endpoints/'+path" in registry_js
+    assert "CACHED_MODELS" in registry_js
+    assert "fetch('/api/models/list'" not in registry_js
+    assert "endpoint_id:s.endpoint_id" in registry_js
+    assert "model_id:s.id" in registry_js
+    assert "fetch('/api/models/test'" in registry_js
+    assert "fetch('/api/models'" in registry_js
     assert "setTimeout(()=>{btn.disabled=false;renderUpList()" not in html
     assert "UP_FILES=[]; fi.value=''; btn.disabled=true" in html
     assert 'id="memory-chart-path"' in html
@@ -329,6 +326,7 @@ database:
     monkeypatch.setenv("MINDMEMOS_PANEL_KEYS", str(keys))
     monkeypatch.setenv("MM_MODEL_CONFIG_PATH", str(config))
     monkeypatch.setenv("MM_MODEL_CONFIG_BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setenv("MM_MODEL_ENDPOINTS_PATH", str(tmp_path / "model-endpoints.json"))
     panel = _load_panel(tmp_path, monkeypatch)
     monkeypatch.setattr(panel, "_reload_model_services", lambda: {"reloaded": True})
 
@@ -341,11 +339,8 @@ database:
         response = conn.getresponse()
         current = json.loads(response.read())
         assert response.status == 200
-        assert current["models"]["llm"] == {
-            "model": "openai/old-chat",
-            "endpoint": "https://old.example/v1",
-            "key_configured": True,
-        }
+        assert current["models"]["llm"]["model"] == "openai/old-chat"
+        assert current["models"]["llm"]["endpoint_id"].startswith("ep_")
         assert "api_key" not in json.dumps(current)
 
         catalog_calls = []
@@ -355,45 +350,51 @@ database:
             return {"new-chat", "old-chat"}
 
         monkeypatch.setattr(panel, "_provider_model_ids", fake_catalog)
-        catalog_body = json.dumps(
+        endpoint_payload = json.dumps(
             {
-                "kind": "llm",
+                "name": "Catalog Hub",
                 "endpoint": "https://catalog.example/v1",
                 "api_key": "temporary-list-key",
             }
         ).encode()
         conn.request(
             "POST",
-            "/api/models/list",
-            body=catalog_body,
-            headers={"Content-Type": "application/json", "Content-Length": str(len(catalog_body))},
+            "/api/model-endpoints/save",
+            body=endpoint_payload,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(endpoint_payload))},
         )
         response = conn.getresponse()
         catalog = json.loads(response.read())
         assert response.status == 200
-        assert catalog["listed_count"] == 2
-        assert catalog["configured_listed"] is True
-        assert {item["value"] for item in catalog["models"]} == {"openai/new-chat", "openai/old-chat"}
+        catalog_endpoint = next(item for item in catalog["endpoints"] if item["name"] == "Catalog Hub")
+        assert catalog_endpoint["model_count"] == 2
+        assert {item["id"] for item in catalog["catalog"] if item["endpoint_id"] == catalog_endpoint["id"]} == {
+            "new-chat",
+            "old-chat",
+        }
         assert "temporary-list-key" not in json.dumps(catalog)
         assert catalog_calls == [("https://catalog.example/v1", "temporary-list-key")]
 
-        rerank_body = json.dumps({"kind": "rerank", "endpoint": "https://catalog.example/v1", "api_key": ""}).encode()
+        for _ in range(2):
+            conn.request("GET", "/api/model-endpoints")
+            response = conn.getresponse()
+            cached = json.loads(response.read())
+            assert response.status == 200
+            assert cached["catalog"] == catalog["catalog"]
+        assert catalog_calls == [("https://catalog.example/v1", "temporary-list-key")]
+
+        refresh_body = json.dumps({"id": catalog_endpoint["id"]}).encode()
         conn.request(
             "POST",
-            "/api/models/list",
-            body=rerank_body,
-            headers={"Content-Type": "application/json", "Content-Length": str(len(rerank_body))},
+            "/api/model-endpoints/refresh",
+            body=refresh_body,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(refresh_body))},
         )
         response = conn.getresponse()
-        rerank_catalog = json.loads(response.read())
+        refreshed = json.loads(response.read())
         assert response.status == 200
-        assert rerank_catalog["configured_listed"] is False
-        assert rerank_catalog["models"][0] == {
-            "id": "old-rerank",
-            "value": "jina_ai/old-rerank",
-            "listed": False,
-        }
-        assert catalog_calls[-1] == ("https://catalog.example/v1", "old-rerank-key")
+        assert refreshed["results"][0]["ok"] is True
+        assert len(catalog_calls) == 2
 
         payload = {
             "models": {
@@ -440,6 +441,10 @@ database:
     backups = list((tmp_path / "backups").glob("dev.*.yaml"))
     assert len(backups) == 1
     assert "old-chat-key" in backups[0].read_text(encoding="utf-8")
+    registry_path = tmp_path / "model-endpoints.json"
+    assert stat.S_IMODE(registry_path.stat().st_mode) == 0o600
+    registry_data = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert any(item["models"] == ["new-chat", "old-chat"] for item in registry_data["endpoints"])
 
 
 def test_panel_model_connection_test_uses_current_key_without_persisting(
