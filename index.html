@@ -24,7 +24,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.65 var(--mono);
 /* 扫描线质感，很淡，只提供「屏幕」感 */
 body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
   background:repeating-linear-gradient(0deg,rgba(255,255,255,.014) 0 1px,transparent 1px 3px)}
-.wrap{max-width:1240px;margin:0 auto;padding:22px 22px 70px}
+.wrap{max-width:1240px;margin:0 auto;padding:22px 22px 250px}
 
 /* ---------- header ---------- */
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
@@ -36,12 +36,12 @@ h1 .pt{color:var(--accent)}
 .sys .lbl{color:var(--accent);text-transform:uppercase}
 .sys .clk{font-size:19px;color:#fff;letter-spacing:2px;font-weight:500}
 .header-actions{margin-left:auto;display:flex;align-items:center;gap:11px}
-.refresh-btn{height:40px;padding:0 15px;border:1px solid #444;background:var(--panel2);
+.refresh-btn{width:40px;height:40px;padding:0;border:1px solid #444;background:var(--panel2);
   color:#c9c9c9;font:600 10.5px var(--mono);letter-spacing:1px;cursor:pointer;
-  text-transform:uppercase;display:flex;align-items:center;gap:7px}
+  display:flex;align-items:center;justify-content:center}
 .refresh-btn:hover{border-color:var(--accent);color:var(--accent)}
 .refresh-btn.busy svg{animation:sp .8s linear infinite}
-.refresh-state{font-size:9px;color:var(--dim);letter-spacing:.8px;white-space:nowrap}
+.refresh-state{display:none}
 .dot{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;color:var(--sub);
   letter-spacing:1.1px;text-transform:uppercase}
 .dot i{width:6px;height:6px;border-radius:50%;background:var(--dim);display:inline-block}
@@ -124,6 +124,17 @@ h1 .pt{color:var(--accent)}
 .terminal-state{min-height:14px;color:var(--dim);font-size:8.5px;letter-spacing:.9px;text-transform:uppercase}
 .terminal-suggestions{margin:8px 0 0}.terminal-suggestions .ex{font-size:9.5px;padding:4px 8px;background:rgba(229,90,63,.035)}
 .memory-terminal.compact .terminal-body{display:none}.memory-terminal.compact{max-width:430px;margin-right:0}
+.floating-terminal{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:500;
+  width:min(820px,calc(100vw - 32px));margin:0}
+.floating-terminal.compact{left:auto;right:22px;transform:none;width:min(430px,calc(100vw - 32px));margin:0}
+.search-results-layer{display:none;position:fixed;z-index:480;left:50%;bottom:214px;
+  transform:translateX(-50%);width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 270px);
+  overflow:auto;border:1px solid var(--accent-dim);background:rgba(13,13,13,.98);
+  box-shadow:0 20px 70px rgba(0,0,0,.88);padding:0 12px 12px}
+.search-results-layer.open{display:block}.search-results-head{position:sticky;top:0;z-index:2;
+  display:flex;justify-content:space-between;align-items:center;padding:9px 2px;border-bottom:1px solid var(--line);
+  background:rgba(13,13,13,.98);color:var(--accent);font-size:9.5px;letter-spacing:1.2px}
+.search-results-head button{border:0;background:transparent;color:var(--sub);font-size:20px;line-height:1;cursor:pointer}
 @keyframes terminalPulse{0%,100%{opacity:.45;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
 .rules-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
 .rule-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin:7px 0}
@@ -135,8 +146,8 @@ h1 .pt{color:var(--accent)}
 .rule-status{font-size:10px;color:var(--dim);min-height:16px;margin-top:8px}
 @media(max-width:780px){.dashboard-grid{grid-template-columns:1fr}.dash-panel.wide,.integration-strip{grid-column:auto}
   .header-actions{margin-left:0;width:100%;justify-content:space-between}.sys{margin-left:0}.curve-wrap{height:240px}
-  .curve-head{align-items:flex-start;flex-direction:column;gap:3px}.curve-summary{text-align:left}}
-@media(max-width:520px){.terminal-body{grid-template-columns:1fr}.terminal-execute{height:38px}.memory-terminal.compact{max-width:none;margin-left:0}}
+  .curve-head{align-items:flex-start;flex-direction:column;gap:3px}.curve-summary{text-align:left}.top-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:520px){.terminal-body{grid-template-columns:1fr}.terminal-execute{height:38px}.memory-terminal.compact{max-width:none;margin-left:0}.top-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.search-results-layer{bottom:245px}}
 @media(prefers-reduced-motion:reduce){.terminal-live{animation:none}.chart-line{filter:none}}
 
 /* ---------- 搜索 ---------- */
@@ -169,9 +180,10 @@ h1 .pt{color:var(--accent)}
 /* ---------- tabs ---------- */
 .tabs{display:flex;gap:0;border:1px solid var(--line);margin-bottom:18px;
   background:var(--panel);flex-wrap:wrap}
-.top-tabs{position:sticky;top:0;z-index:120;flex-wrap:nowrap;overflow-x:auto;
+.top-tabs{position:sticky;top:0;z-index:120;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));overflow:visible;
   scrollbar-width:thin;background:rgba(19,19,19,.96);backdrop-filter:blur(14px);
   box-shadow:0 8px 24px rgba(0,0,0,.32)}
+.top-tabs .tab{text-align:center;padding-left:8px;padding-right:8px}
 .tab{padding:11px 18px;font-size:11px;color:var(--sub);cursor:pointer;
   border-right:1px solid var(--line);text-transform:uppercase;letter-spacing:1.3px;
   position:relative;transition:all .15s;white-space:nowrap}
@@ -296,8 +308,8 @@ button{font-family:var(--mono)}
   <span class="dot" id="h-n4"><i></i>GRAPH</span>
   <div class="header-actions">
     <div>
-      <button class="refresh-btn" id="refresh-all" title="立即重新读取全部数据">
-        <i data-lucide="refresh-cw"></i> 刷新数据
+      <button class="refresh-btn" id="refresh-all" title="刷新数据" aria-label="刷新数据">
+        <i data-lucide="refresh-cw"></i>
       </button>
       <div class="refresh-state" id="refresh-state">每 30 秒检查更新</div>
     </div>
@@ -311,7 +323,6 @@ button{font-family:var(--mono)}
 
 <div class="tabs top-tabs">
   <div class="tab on" data-t="home">首页</div>
-  <div class="tab" data-t="search">语义搜索</div>
   <div class="tab" data-t="browse">浏览全部</div>
   <div class="tab" data-t="graph">关系图谱</div>
   <div class="tab" data-t="who">我是谁</div>
@@ -330,25 +341,27 @@ button{font-family:var(--mono)}
   </div>
 </div>
 
-<div id="pane-search" style="display:none">
-  <section class="memory-terminal" id="memory-terminal" aria-label="Memory command terminal">
-    <div class="terminal-head">
-      <span class="prompt">›</span><span>MEMORY COMMAND TERMINAL</span>
-      <i class="terminal-live" title="Panel online"></i>
-      <button class="terminal-compact" id="terminal-compact" type="button">COMPACT</button>
-    </div>
-    <div class="terminal-body">
-      <textarea id="terminal-input" aria-label="输入记忆检索或面板命令"
-        placeholder="输入记忆问题，或 /help 查看安全命令…"></textarea>
-      <button class="terminal-execute" id="terminal-execute" type="button">EXECUTE →</button>
-      <div class="terminal-footer">
-        <div class="terminal-state" id="terminal-state">READY · PLAIN TEXT RUNS SEMANTIC SEARCH</div>
-        <div class="examples terminal-suggestions" id="ex"></div>
-      </div>
-    </div>
-  </section>
-  <div id="sres"><div class="empty">输入问题，或点上面的随机问题试试</div></div>
+<div class="search-results-layer" id="search-results-layer" aria-live="polite">
+  <div class="search-results-head"><span>SEMANTIC SEARCH RESULTS</span><button id="search-results-close" type="button" aria-label="关闭搜索结果">×</button></div>
+  <div id="sres"><div class="empty">输入问题，或点浮动窗口里的随机问题试试</div></div>
 </div>
+
+<section class="memory-terminal floating-terminal" id="memory-terminal" aria-label="Memory command terminal">
+  <div class="terminal-head">
+    <span class="prompt">›</span><span>MEMORY COMMAND TERMINAL</span>
+    <i class="terminal-live" title="Panel online"></i>
+    <button class="terminal-compact" id="terminal-compact" type="button">COMPACT</button>
+  </div>
+  <div class="terminal-body">
+    <textarea id="terminal-input" aria-label="输入记忆检索或面板命令"
+      placeholder="输入记忆问题，或 /help 查看安全命令…"></textarea>
+    <button class="terminal-execute" id="terminal-execute" type="button">EXECUTE →</button>
+    <div class="terminal-footer">
+      <div class="terminal-state" id="terminal-state">READY · PLAIN TEXT RUNS SEMANTIC SEARCH</div>
+      <div class="examples terminal-suggestions" id="ex"></div>
+    </div>
+  </div>
+</section>
 
 <div id="pane-browse" style="display:none">
   <div class="filters">
@@ -660,6 +673,7 @@ document.addEventListener('click',async ev=>{
 async function search(){
   const q=$('#terminal-input').value.trim(); if(!q) return;
   const b=$('#terminal-execute'); b.disabled=true; b.innerHTML='<span class="spin"></span>';
+  $('#search-results-layer').classList.add('open');
   $('#sres').innerHTML='<div class="empty">检索中…</div>';
   try{
     const r=await (await fetch('/api/search',{method:'POST',
@@ -991,9 +1005,10 @@ $('#up-go').onclick=async()=>{
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
   const k=t.dataset.t;
-  ['home','search','browse','graph','who','recent','upload','tokens','models'].forEach(p=>{
+  ['home','browse','graph','who','recent','upload','tokens','models'].forEach(p=>{
     const el=$('#pane-'+p); if(el) el.style.display = p===k?'':'none';
   });
+  $('#search-results-layer').classList.remove('open');
   if(k==='graph'&&!GRAPH_LOADED){GRAPH_LOADED=1;drawGraph()}
   if(k==='who'&&!WHO_LOADED){WHO_LOADED=1;loadWho().catch(()=>{WHO_LOADED=0})}
   if(k==='recent'&&!RECENT_LOADED){RECENT_LOADED=1;renderRecent()}
@@ -1026,9 +1041,9 @@ async function runMemoryCommand(){
     }
     const query=command==='/search'?raw.slice(command.length).trim():raw;
     if(!query){terminalState('SEARCH QUERY IS EMPTY',true);return}
-    openPane('search');$('#terminal-input').value=query;terminalState('SEARCHING MINDMEM·OS…');
-    await search();terminalState('SEARCH COMPLETE · RESULTS OPEN BELOW');
-    $('#pane-search').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+    $('#terminal-input').value=query;terminalState('SEARCHING MINDMEM·OS…');
+    await search();terminalState('SEARCH COMPLETE · RESULTS OPEN ABOVE');
+    $('#search-results-layer').scrollTop=0;
   }catch(e){terminalState('COMMAND FAILED · '+e.message,true)}
   finally{button.disabled=false}
 }
@@ -1037,7 +1052,9 @@ $('#terminal-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDef
 $('#terminal-compact').onclick=()=>{
   const terminal=$('#memory-terminal'),compact=terminal.classList.toggle('compact');
   $('#terminal-compact').textContent=compact?'EXPAND':'COMPACT';
+  $('#search-results-layer').style.bottom=compact?'68px':'';
 };
+$('#search-results-close').onclick=()=>$('#search-results-layer').classList.remove('open');
 
 /* ================= 数据刷新 =================
    每 30 秒只查一个轻量版本号；有变化才拉全量。页面在后台或准则正在编辑时不覆盖。 */
