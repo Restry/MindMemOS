@@ -227,9 +227,15 @@ button{font-family:var(--mono)}
   border:1px solid var(--accent-dim);background:var(--accent-soft);color:var(--accent);font:600 9.5px var(--mono);letter-spacing:.8px;cursor:pointer;white-space:nowrap}
 .model-discovery button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}.model-discovery button:disabled{opacity:.45;cursor:default}
 .model-catalog-state{font-size:9.5px;color:var(--dim);line-height:1.55;overflow-wrap:anywhere}
-.model-field input:disabled{opacity:.55;cursor:not-allowed}.model-field input[list]:not(:disabled){border-color:var(--accent-dim)}
-.model-select-field{position:relative}.model-select-field::after{content:'⌄';position:absolute;right:11px;bottom:8px;color:var(--accent);pointer-events:none;font-size:15px}
-.model-select-field input{padding-right:31px!important}.model-select-field input::-webkit-calendar-picker-indicator{opacity:0}
+.model-field input:disabled{opacity:.55;cursor:not-allowed}.model-combobox input:not(:disabled){border-color:var(--accent-dim)}
+.model-combobox{position:relative}.model-combobox input{padding-right:34px!important}.model-menu-toggle{position:absolute;right:1px;bottom:1px;width:31px;height:33px;
+  border:0;border-left:1px solid var(--line);background:var(--panel2);color:var(--accent);font:15px var(--mono);cursor:pointer}.model-menu-toggle:disabled{opacity:.35;cursor:not-allowed}
+.model-options-menu{display:none;position:absolute;z-index:80;left:0;right:0;top:calc(100% - 10px);max-height:230px;overflow:auto;
+  border:1px solid var(--accent-dim);background:#0b0b0b;box-shadow:0 16px 34px rgba(0,0,0,.75);padding:4px}
+.model-options-menu.open{display:block}.model-option{display:block;width:100%;padding:8px 9px;border:0;border-bottom:1px solid var(--line);
+  background:transparent;color:var(--sub);font:10px/1.45 var(--mono);text-align:left;cursor:pointer;overflow-wrap:anywhere}
+.model-option:last-child{border-bottom:0}.model-option:hover,.model-option:focus{outline:0;background:var(--accent-soft);color:var(--accent)}
+.model-option small{display:block;color:var(--warn);font-size:8.5px;margin-top:2px}.model-option-empty{padding:12px;color:var(--dim);font-size:9.5px;text-align:center}
 .model-test-state{border-top:1px solid var(--line);margin-top:13px;padding-top:10px;font-size:10.5px;color:var(--dim);min-height:48px;line-height:1.65;overflow-wrap:anywhere}
 .model-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px;margin-top:12px}
 .model-actions button{padding:9px 14px;font:600 10.5px var(--mono);letter-spacing:1px;text-transform:uppercase}
@@ -478,8 +484,8 @@ button{font-family:var(--mono)}
       <label class="model-field"><span>API Key</span><input id="model-llm-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
       <div class="model-key-state" id="model-llm-key-state"></div>
       <div class="model-discovery"><button id="model-llm-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-llm-catalog-state">尚未读取模型列表</span></div>
-      <label class="model-field model-select-field"><span>Model · 输入搜索 / 下拉选择</span><input id="model-llm-name" list="model-llm-options" autocomplete="off" disabled placeholder="先读取模型列表"></label>
-      <datalist id="model-llm-options"></datalist><div class="model-test-state" id="model-llm-test">尚未测试</div>
+      <div class="model-field model-combobox"><span>Model · 输入搜索 / 下拉选择</span><input id="model-llm-name" role="combobox" aria-controls="model-llm-options" aria-expanded="false" autocomplete="off" disabled placeholder="先读取模型列表"><button class="model-menu-toggle" id="model-llm-toggle" type="button" disabled aria-label="展开 LLM 模型列表">⌄</button><div class="model-options-menu" id="model-llm-options" role="listbox"></div></div>
+      <div class="model-test-state" id="model-llm-test">尚未测试</div>
     </section>
     <section class="model-card" data-model-kind="embedding">
       <h3>02 · Embedding</h3><div class="model-purpose">把记忆和查询转换成向量，决定语义召回质量。</div>
@@ -487,8 +493,8 @@ button{font-family:var(--mono)}
       <label class="model-field"><span>API Key</span><input id="model-embedding-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
       <div class="model-key-state" id="model-embedding-key-state"></div>
       <div class="model-discovery"><button id="model-embedding-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-embedding-catalog-state">尚未读取模型列表</span></div>
-      <label class="model-field model-select-field"><span>Model · 输入搜索 / 下拉选择</span><input id="model-embedding-name" list="model-embedding-options" autocomplete="off" disabled placeholder="先读取模型列表"></label>
-      <datalist id="model-embedding-options"></datalist><div class="model-test-state" id="model-embedding-test">尚未测试</div>
+      <div class="model-field model-combobox"><span>Model · 输入搜索 / 下拉选择</span><input id="model-embedding-name" role="combobox" aria-controls="model-embedding-options" aria-expanded="false" autocomplete="off" disabled placeholder="先读取模型列表"><button class="model-menu-toggle" id="model-embedding-toggle" type="button" disabled aria-label="展开 Embedding 模型列表">⌄</button><div class="model-options-menu" id="model-embedding-options" role="listbox"></div></div>
+      <div class="model-test-state" id="model-embedding-test">尚未测试</div>
     </section>
     <section class="model-card" data-model-kind="rerank">
       <h3>03 · Rerank</h3><div class="model-purpose">对召回结果重新排序，提高最终答案相关度。</div>
@@ -496,8 +502,8 @@ button{font-family:var(--mono)}
       <label class="model-field"><span>API Key</span><input id="model-rerank-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
       <div class="model-key-state" id="model-rerank-key-state"></div>
       <div class="model-discovery"><button id="model-rerank-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-rerank-catalog-state">尚未读取模型列表</span></div>
-      <label class="model-field model-select-field"><span>Model · 输入搜索 / 下拉选择</span><input id="model-rerank-name" list="model-rerank-options" autocomplete="off" disabled placeholder="先读取模型列表"></label>
-      <datalist id="model-rerank-options"></datalist><div class="model-test-state" id="model-rerank-test">尚未测试</div>
+      <div class="model-field model-combobox"><span>Model · 输入搜索 / 下拉选择</span><input id="model-rerank-name" role="combobox" aria-controls="model-rerank-options" aria-expanded="false" autocomplete="off" disabled placeholder="先读取模型列表"><button class="model-menu-toggle" id="model-rerank-toggle" type="button" disabled aria-label="展开 Rerank 模型列表">⌄</button><div class="model-options-menu" id="model-rerank-options" role="listbox"></div></div>
+      <div class="model-test-state" id="model-rerank-test">尚未测试</div>
     </section>
   </div>
   <div class="model-actions">
@@ -1148,6 +1154,7 @@ const MODEL_KINDS=['llm','embedding','rerank'];
 let MODELS_LOADED=0, MODELS_TESTED=false;
 const MODEL_CATALOG=Object.fromEntries(MODEL_KINDS.map(k=>[k,new Set()]));
 const MODEL_CATALOG_READY=Object.fromEntries(MODEL_KINDS.map(k=>[k,false]));
+const MODEL_CATALOG_ITEMS=Object.fromEntries(MODEL_KINDS.map(k=>[k,[]]));
 function modelPayload(){
   const models={};
   MODEL_KINDS.forEach(k=>models[k]={
@@ -1161,9 +1168,30 @@ function setCatalogState(kind,message,color='var(--dim)'){
   const el=$('#model-'+kind+'-catalog-state');el.textContent=message;el.style.color=color;
 }
 function resetModelCatalog(kind,message='Endpoint 或 Key 已变化，请重新读取 /v1/models'){
-  MODEL_CATALOG[kind]=new Set();MODEL_CATALOG_READY[kind]=false;
-  $('#model-'+kind+'-options').innerHTML='';$('#model-'+kind+'-name').disabled=true;
+  MODEL_CATALOG[kind]=new Set();MODEL_CATALOG_READY[kind]=false;MODEL_CATALOG_ITEMS[kind]=[];
+  const menu=$('#model-'+kind+'-options'),input=$('#model-'+kind+'-name');
+  menu.innerHTML='';menu.classList.remove('open');input.disabled=true;input.setAttribute('aria-expanded','false');
+  $('#model-'+kind+'-toggle').disabled=true;
   setCatalogState(kind,message,'#fbbf24');
+}
+function closeModelMenu(kind){
+  $('#model-'+kind+'-options').classList.remove('open');$('#model-'+kind+'-name').setAttribute('aria-expanded','false');
+}
+function closeAllModelMenus(except=''){MODEL_KINDS.forEach(k=>{if(k!==except)closeModelMenu(k)})}
+function renderModelMenu(kind,query=''){
+  const needle=query.trim().toLocaleLowerCase();
+  const items=MODEL_CATALOG_ITEMS[kind].filter(item=>!needle||item.value.toLocaleLowerCase().includes(needle)||item.id.toLocaleLowerCase().includes(needle));
+  $('#model-'+kind+'-options').innerHTML=items.length?items.map(item=>
+    `<button type="button" class="model-option" role="option" data-value="${esc(item.value)}">${esc(item.value)}${item.listed?'':'<small>当前配置 · /v1/models 未返回</small>'}</button>`).join('')
+    :'<div class="model-option-empty">没有匹配模型；继续输入或清空搜索词</div>';
+}
+function openModelMenu(kind,showAll=false){
+  if(!MODEL_CATALOG_READY[kind])return;
+  closeAllModelMenus(kind);const input=$('#model-'+kind+'-name'),menu=$('#model-'+kind+'-options');
+  renderModelMenu(kind,showAll?'':input.value);menu.classList.add('open');input.setAttribute('aria-expanded','true');
+}
+function chooseModelOption(kind,value){
+  const input=$('#model-'+kind+'-name');input.value=value;closeModelMenu(kind);invalidateModelTest();input.focus();
 }
 function invalidateModelTest(){
   MODELS_TESTED=false;$('#model-save').disabled=true;
@@ -1184,16 +1212,14 @@ async function discoverModels(kind){
     const data=await response.json();
     if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);
     const options=data.models||[],values=options.map(item=>item.value);
-    MODEL_CATALOG[kind]=new Set(values);MODEL_CATALOG_READY[kind]=true;
-    $('#model-'+kind+'-options').innerHTML=options.map(item=>
-      `<option value="${esc(item.value)}" label="${esc(item.id+(item.listed?'':' · 当前配置，未在 /models 返回'))}"></option>`).join('');
-    const input=$('#model-'+kind+'-name');input.disabled=false;
+    MODEL_CATALOG[kind]=new Set(values);MODEL_CATALOG_READY[kind]=true;MODEL_CATALOG_ITEMS[kind]=options;
+    const input=$('#model-'+kind+'-name');input.disabled=false;$('#model-'+kind+'-toggle').disabled=false;
     if(!MODEL_CATALOG[kind].has(input.value.trim()))input.value=data.configured_model||values[0]||'';
     setCatalogState(kind,data.configured_listed
       ?`已读取 ${data.listed_count} 个模型 · 输入可搜索，必须从下拉选择`
       :`已读取 ${data.listed_count} 个模型 · 当前模型未在 /models 返回，已作为受保护选项保留`,
       data.configured_listed?'#34d399':'#fbbf24');
-    invalidateModelTest();input.focus();
+    invalidateModelTest();input.focus();openModelMenu(kind,true);
   }catch(e){
     resetModelCatalog(kind,'读取失败：'+e.message);setCatalogState(kind,'读取失败：'+e.message,'#f87171');
   }finally{button.disabled=false;button.textContent='读取 /v1/models'}
@@ -1266,12 +1292,24 @@ async function saveModels(){
   }finally{btn.textContent='保存并重载服务'}
 }
 MODEL_KINDS.forEach(k=>{
-  $('#model-'+k+'-name').addEventListener('input',invalidateModelTest);
+  const input=$('#model-'+k+'-name'),menu=$('#model-'+k+'-options'),toggle=$('#model-'+k+'-toggle');
+  input.addEventListener('input',()=>{invalidateModelTest();renderModelMenu(k,input.value);openModelMenu(k)});
+  input.addEventListener('focus',()=>openModelMenu(k));
+  input.addEventListener('keydown',event=>{
+    if(event.key==='ArrowDown'){event.preventDefault();openModelMenu(k,true)}
+    if(event.key==='Escape'){event.preventDefault();closeModelMenu(k)}
+    if(event.key==='Enter'&&menu.classList.contains('open')){
+      const first=menu.querySelector('.model-option');if(first){event.preventDefault();chooseModelOption(k,first.dataset.value)}
+    }
+  });
+  toggle.onclick=event=>{event.stopPropagation();if(menu.classList.contains('open'))closeModelMenu(k);else{input.focus();openModelMenu(k,true)}};
+  menu.onmousedown=event=>{const option=event.target.closest('.model-option');if(option){event.preventDefault();chooseModelOption(k,option.dataset.value)}};
   ['endpoint','key'].forEach(field=>$('#model-'+k+'-'+field).addEventListener('input',()=>{
     resetModelCatalog(k);invalidateModelTest();
   }));
   $('#model-'+k+'-load').onclick=()=>discoverModels(k);
 });
+document.addEventListener('mousedown',event=>{if(!event.target.closest('.model-combobox'))closeAllModelMenus()});
 $('#model-test').onclick=testModels;
 $('#model-save').onclick=saveModels;
 $('#model-reload').onclick=()=>{MODELS_LOADED=0;loadModels()};
