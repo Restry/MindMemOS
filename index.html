@@ -211,7 +211,7 @@ button{font-family:var(--mono)}
 .model-intro{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;
   background:var(--panel);border:1px solid var(--line);padding:16px;margin-bottom:12px}
 .model-intro strong{display:block;color:var(--ink);font-size:12px;margin-bottom:5px}
-.model-intro p{margin:0;color:var(--dim);font-size:10.5px;line-height:1.7;max-width:760px}
+.model-intro p{margin:0;color:var(--sub);font-size:10.5px;line-height:1.7;max-width:760px}
 .model-config-path{font-size:9.5px;color:var(--accent);word-break:break-all;text-align:right;max-width:430px}
 .model-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .model-card{background:var(--panel);border:1px solid var(--line);padding:16px;position:relative;min-width:0}
@@ -222,8 +222,15 @@ button{font-family:var(--mono)}
   letter-spacing:1.1px;text-transform:uppercase;margin-bottom:5px}
 .model-field input{width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg);border:1px solid var(--line);
   color:var(--ink);font:11px var(--mono);outline:none}.model-field input:focus{border-color:var(--accent)}
-.model-key-state{font-size:9.5px;color:var(--dim);margin-top:5px;min-height:14px}
-.model-test-state{border-top:1px solid var(--line);margin-top:13px;padding-top:10px;font-size:10.5px;color:var(--dim);min-height:31px;line-height:1.55;overflow-wrap:anywhere}
+.model-key-state{font-size:10px;color:var(--dim);margin-top:5px;min-height:15px;line-height:1.55}
+.model-discovery{display:flex;align-items:center;gap:9px;margin:12px 0 4px}.model-discovery button{padding:8px 10px;
+  border:1px solid var(--accent-dim);background:var(--accent-soft);color:var(--accent);font:600 9.5px var(--mono);letter-spacing:.8px;cursor:pointer;white-space:nowrap}
+.model-discovery button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}.model-discovery button:disabled{opacity:.45;cursor:default}
+.model-catalog-state{font-size:9.5px;color:var(--dim);line-height:1.55;overflow-wrap:anywhere}
+.model-field input:disabled{opacity:.55;cursor:not-allowed}.model-field input[list]:not(:disabled){border-color:var(--accent-dim)}
+.model-select-field{position:relative}.model-select-field::after{content:'⌄';position:absolute;right:11px;bottom:8px;color:var(--accent);pointer-events:none;font-size:15px}
+.model-select-field input{padding-right:31px!important}.model-select-field input::-webkit-calendar-picker-indicator{opacity:0}
+.model-test-state{border-top:1px solid var(--line);margin-top:13px;padding-top:10px;font-size:10.5px;color:var(--dim);min-height:48px;line-height:1.65;overflow-wrap:anywhere}
 .model-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px;margin-top:12px}
 .model-actions button{padding:9px 14px;font:600 10.5px var(--mono);letter-spacing:1px;text-transform:uppercase}
 .model-actions .primary{border-color:var(--accent);background:var(--accent);color:#0d0d0d}
@@ -460,37 +467,43 @@ button{font-family:var(--mono)}
   <div class="model-intro">
     <div>
       <strong>模型路由设置</strong>
-      <p>这里编辑 MindMemOS 实际使用的 LLM、Embedding 和 Rerank。先测试 Endpoint、Key 与模型列表，全部通过后才能保存。API Key 只写入服务器配置，页面永远不会回显；留空表示继续使用当前 Key。</p>
+      <p>先填写 Endpoint 和 Key，再读取该地址的 /v1/models。Model 支持输入搜索和下拉选择；选择后仍需通过真实能力测试才能保存。API Key 只写入服务器配置，页面永远不会回显；留空表示继续使用当前 Key。</p>
     </div>
     <div class="model-config-path" id="model-config-path">正在读取配置…</div>
   </div>
   <div class="model-grid">
     <section class="model-card" data-model-kind="llm">
       <h3>01 · LLM</h3><div class="model-purpose">用于记忆抽取、合并判断和高阶推理。</div>
-      <label class="model-field"><span>Model</span><input id="model-llm-name" placeholder="例如 openai/hub-cloud/gpt-5.6-terra"></label>
       <label class="model-field"><span>Endpoint</span><input id="model-llm-endpoint" placeholder="例如 https://hub.example.com/v1"></label>
       <label class="model-field"><span>API Key</span><input id="model-llm-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
-      <div class="model-key-state" id="model-llm-key-state"></div><div class="model-test-state" id="model-llm-test">尚未测试</div>
+      <div class="model-key-state" id="model-llm-key-state"></div>
+      <div class="model-discovery"><button id="model-llm-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-llm-catalog-state">尚未读取模型列表</span></div>
+      <label class="model-field model-select-field"><span>Model · 输入搜索 / 下拉选择</span><input id="model-llm-name" list="model-llm-options" autocomplete="off" disabled placeholder="先读取模型列表"></label>
+      <datalist id="model-llm-options"></datalist><div class="model-test-state" id="model-llm-test">尚未测试</div>
     </section>
     <section class="model-card" data-model-kind="embedding">
       <h3>02 · Embedding</h3><div class="model-purpose">把记忆和查询转换成向量，决定语义召回质量。</div>
-      <label class="model-field"><span>Model</span><input id="model-embedding-name" placeholder="例如 openai/text-embedding-bge-m3"></label>
       <label class="model-field"><span>Endpoint</span><input id="model-embedding-endpoint" placeholder="例如 https://hub.example.com/v1"></label>
       <label class="model-field"><span>API Key</span><input id="model-embedding-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
-      <div class="model-key-state" id="model-embedding-key-state"></div><div class="model-test-state" id="model-embedding-test">尚未测试</div>
+      <div class="model-key-state" id="model-embedding-key-state"></div>
+      <div class="model-discovery"><button id="model-embedding-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-embedding-catalog-state">尚未读取模型列表</span></div>
+      <label class="model-field model-select-field"><span>Model · 输入搜索 / 下拉选择</span><input id="model-embedding-name" list="model-embedding-options" autocomplete="off" disabled placeholder="先读取模型列表"></label>
+      <datalist id="model-embedding-options"></datalist><div class="model-test-state" id="model-embedding-test">尚未测试</div>
     </section>
     <section class="model-card" data-model-kind="rerank">
       <h3>03 · Rerank</h3><div class="model-purpose">对召回结果重新排序，提高最终答案相关度。</div>
-      <label class="model-field"><span>Model</span><input id="model-rerank-name" placeholder="例如 jina_ai/BAAI/bge-reranker-v2-m3"></label>
       <label class="model-field"><span>Endpoint</span><input id="model-rerank-endpoint" placeholder="例如 https://hub.example.com/v1"></label>
       <label class="model-field"><span>API Key</span><input id="model-rerank-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
-      <div class="model-key-state" id="model-rerank-key-state"></div><div class="model-test-state" id="model-rerank-test">尚未测试</div>
+      <div class="model-key-state" id="model-rerank-key-state"></div>
+      <div class="model-discovery"><button id="model-rerank-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-rerank-catalog-state">尚未读取模型列表</span></div>
+      <label class="model-field model-select-field"><span>Model · 输入搜索 / 下拉选择</span><input id="model-rerank-name" list="model-rerank-options" autocomplete="off" disabled placeholder="先读取模型列表"></label>
+      <datalist id="model-rerank-options"></datalist><div class="model-test-state" id="model-rerank-test">尚未测试</div>
     </section>
   </div>
   <div class="model-actions">
     <span id="model-global-state">修改任何字段后需要重新测试</span>
-    <button id="model-reload">重新读取</button>
-    <button id="model-test">测试全部连接</button>
+    <button id="model-reload">重新读取当前配置</button>
+    <button id="model-test">测试全部（不保存）</button>
     <button id="model-save" class="primary" disabled>保存并重载服务</button>
   </div>
 </div>
@@ -1133,6 +1146,8 @@ $('#tk-go').onclick=async()=>{
 /* ================= 模型设置 ================= */
 const MODEL_KINDS=['llm','embedding','rerank'];
 let MODELS_LOADED=0, MODELS_TESTED=false;
+const MODEL_CATALOG=Object.fromEntries(MODEL_KINDS.map(k=>[k,new Set()]));
+const MODEL_CATALOG_READY=Object.fromEntries(MODEL_KINDS.map(k=>[k,false]));
 function modelPayload(){
   const models={};
   MODEL_KINDS.forEach(k=>models[k]={
@@ -1142,12 +1157,53 @@ function modelPayload(){
   });
   return {models};
 }
+function setCatalogState(kind,message,color='var(--dim)'){
+  const el=$('#model-'+kind+'-catalog-state');el.textContent=message;el.style.color=color;
+}
+function resetModelCatalog(kind,message='Endpoint 或 Key 已变化，请重新读取 /v1/models'){
+  MODEL_CATALOG[kind]=new Set();MODEL_CATALOG_READY[kind]=false;
+  $('#model-'+kind+'-options').innerHTML='';$('#model-'+kind+'-name').disabled=true;
+  setCatalogState(kind,message,'#fbbf24');
+}
 function invalidateModelTest(){
   MODELS_TESTED=false;$('#model-save').disabled=true;
   $('#model-global-state').textContent='配置已变化，请重新测试后保存';
   MODEL_KINDS.forEach(k=>{
     const el=$('#model-'+k+'-test');el.textContent='尚未测试';el.style.color='var(--dim)';
   });
+}
+async function discoverModels(kind){
+  const button=$('#model-'+kind+'-load'),endpoint=$('#model-'+kind+'-endpoint').value.trim();
+  const apiKey=$('#model-'+kind+'-key').value.trim();
+  if(!endpoint){setCatalogState(kind,'请先填写 Endpoint','#f87171');return}
+  button.disabled=true;button.textContent='读取中…';setCatalogState(kind,'正在调用 '+endpoint.replace(/\/$/,'')+'/models…');
+  resetModelCatalog(kind,'正在读取模型列表…');
+  try{
+    const response=await fetch('/api/models/list',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({kind,endpoint,api_key:apiKey})});
+    const data=await response.json();
+    if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);
+    const options=data.models||[],values=options.map(item=>item.value);
+    MODEL_CATALOG[kind]=new Set(values);MODEL_CATALOG_READY[kind]=true;
+    $('#model-'+kind+'-options').innerHTML=options.map(item=>
+      `<option value="${esc(item.value)}" label="${esc(item.id+(item.listed?'':' · 当前配置，未在 /models 返回'))}"></option>`).join('');
+    const input=$('#model-'+kind+'-name');input.disabled=false;
+    if(!MODEL_CATALOG[kind].has(input.value.trim()))input.value=data.configured_model||values[0]||'';
+    setCatalogState(kind,data.configured_listed
+      ?`已读取 ${data.listed_count} 个模型 · 输入可搜索，必须从下拉选择`
+      :`已读取 ${data.listed_count} 个模型 · 当前模型未在 /models 返回，已作为受保护选项保留`,
+      data.configured_listed?'#34d399':'#fbbf24');
+    invalidateModelTest();input.focus();
+  }catch(e){
+    resetModelCatalog(kind,'读取失败：'+e.message);setCatalogState(kind,'读取失败：'+e.message,'#f87171');
+  }finally{button.disabled=false;button.textContent='读取 /v1/models'}
+}
+function requireCatalogSelections(){
+  for(const kind of MODEL_KINDS){
+    const value=$('#model-'+kind+'-name').value.trim();
+    if(!MODEL_CATALOG_READY[kind])throw new Error(`${kind} 尚未读取 /v1/models`);
+    if(!MODEL_CATALOG[kind].has(value))throw new Error(`${kind} 必须从已读取的模型下拉列表中选择完整值`);
+  }
 }
 async function loadModels(){
   MODELS_LOADED=1;MODELS_TESTED=false;$('#model-save').disabled=true;
@@ -1160,21 +1216,24 @@ async function loadModels(){
       $('#model-'+k+'-name').value=m.model||'';
       $('#model-'+k+'-endpoint').value=m.endpoint||'';
       $('#model-'+k+'-key').value='';
-      $('#model-'+k+'-key-state').textContent=m.key_configured?'✓ 当前 Key 已配置；留空不会覆盖':'⚠ 当前没有 Key，保存前必须填写';
+      $('#model-'+k+'-key-state').textContent=m.key_configured?'✓ 当前 Key 已配置；留空可使用当前 Key 读取列表':'⚠ 当前没有 Key，请先填写';
       $('#model-'+k+'-key-state').style.color=m.key_configured?'#34d399':'#fbbf24';
+      resetModelCatalog(k,'先确认 Endpoint / Key，再读取 /v1/models');
       const st=$('#model-'+k+'-test');st.textContent='尚未测试';st.style.color='var(--dim)';
     });
     $('#model-config-path').textContent=d.config_path||'';
-    $('#model-global-state').textContent='先测试全部连接，再保存并重载服务';
+    $('#model-global-state').textContent='第一步：分别读取模型列表；第二步：搜索并选择 Model；第三步：测试后保存';
   }catch(e){
     MODELS_LOADED=0;$('#model-global-state').textContent='读取失败：'+e.message;
   }
 }
 async function testModels(){
   const btn=$('#model-test');btn.disabled=true;btn.textContent='测试中…';
-  $('#model-save').disabled=true;$('#model-global-state').textContent='正在检查 /models（通常几秒）…';
-  MODEL_KINDS.forEach(k=>{const el=$('#model-'+k+'-test');el.textContent='连接中…';el.style.color='var(--dim)'});
+  $('#model-save').disabled=true;
   try{
+    requireCatalogSelections();
+    $('#model-global-state').textContent='正在验证真实模型能力（通常几秒）…';
+    MODEL_KINDS.forEach(k=>{const el=$('#model-'+k+'-test');el.textContent='连接中…';el.style.color='var(--dim)'});
     const r=await fetch('/api/models/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(modelPayload())});
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||'测试失败');
@@ -1187,13 +1246,14 @@ async function testModels(){
     $('#model-global-state').textContent=d.ok?'全部连接通过，可以保存':'存在失败项，修正后重新测试';
   }catch(e){
     MODELS_TESTED=false;$('#model-global-state').textContent='测试失败：'+e.message;
-  }finally{btn.disabled=false;btn.textContent='测试全部连接'}
+  }finally{btn.disabled=false;btn.textContent='测试全部（不保存）'}
 }
 async function saveModels(){
   if(!MODELS_TESTED)return;
   const btn=$('#model-save');btn.disabled=true;btn.textContent='保存并重载中…';
   $('#model-global-state').textContent='正在备份配置并重载 API / MCP，最多约 3 分钟…';
   try{
+    requireCatalogSelections();
     const r=await fetch('/api/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(modelPayload())});
     const d=await r.json();
     if(!r.ok||!d.ok)throw new Error(d.error||'保存失败');
@@ -1205,8 +1265,13 @@ async function saveModels(){
     btn.disabled=false;
   }finally{btn.textContent='保存并重载服务'}
 }
-MODEL_KINDS.forEach(k=>['name','endpoint','key'].forEach(field=>
-  $('#model-'+k+'-'+field).addEventListener('input',invalidateModelTest)));
+MODEL_KINDS.forEach(k=>{
+  $('#model-'+k+'-name').addEventListener('input',invalidateModelTest);
+  ['endpoint','key'].forEach(field=>$('#model-'+k+'-'+field).addEventListener('input',()=>{
+    resetModelCatalog(k);invalidateModelTest();
+  }));
+  $('#model-'+k+'-load').onclick=()=>discoverModels(k);
+});
 $('#model-test').onclick=testModels;
 $('#model-save').onclick=saveModels;
 $('#model-reload').onclick=()=>{MODELS_LOADED=0;loadModels()};

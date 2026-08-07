@@ -141,14 +141,11 @@ def _public_model_settings(config: dict | None = None) -> dict:
     return {"ok": True, "models": models, "config_path": MODEL_CONFIG_PATH}
 
 
-def _validated_model_value(kind: str, value, current: dict) -> dict:
+def _validated_model_connection(kind: str, value, current: dict) -> tuple[str, str]:
     if not isinstance(value, dict):
         raise ValueError(f"{kind} 配置必须是对象")
-    model = str(value.get("model") or "").strip()
     endpoint = str(value.get("endpoint") or "").strip().rstrip("/")
     api_key = str(value.get("api_key") or "").strip()
-    if not model or len(model) > 300 or any(ch in model for ch in "\r\n\t"):
-        raise ValueError(f"{kind} 模型名不能为空，且不能包含换行")
     parsed = urllib.parse.urlsplit(endpoint)
     if (
         parsed.scheme not in ("http", "https")
@@ -166,6 +163,16 @@ def _validated_model_value(kind: str, value, current: dict) -> dict:
         api_key = str(current.get("api_key") or "")
     if not api_key:
         raise ValueError(f"{kind} 尚未配置 API Key，请填写")
+    return endpoint, api_key
+
+
+def _validated_model_value(kind: str, value, current: dict) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{kind} 配置必须是对象")
+    model = str(value.get("model") or "").strip()
+    if not model or len(model) > 300 or any(ch in model for ch in "\r\n\t"):
+        raise ValueError(f"{kind} 模型名不能为空，且不能包含换行")
+    endpoint, api_key = _validated_model_connection(kind, value, current)
     return {"model": model, "api_base": endpoint, "api_key": api_key}
 
 
@@ -311,6 +318,46 @@ def _provider_model_ids(endpoint: str, api_key: str) -> set[str]:
         str(row.get("id") or row.get("model") or "").strip()
         for row in rows
         if isinstance(row, dict) and (row.get("id") or row.get("model"))
+    }
+
+
+def _discover_model_catalog(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("请求体必须是对象")
+    kind = str(payload.get("kind") or "").strip()
+    if kind not in MODEL_ROUTERS:
+        raise ValueError("kind 必须是 llm、embedding 或 rerank")
+    config = _model_config()
+    current = _model_endpoint(config, kind)
+    endpoint, api_key = _validated_model_connection(kind, payload, current)
+    identifiers = {
+        identifier
+        for identifier in _provider_model_ids(endpoint, api_key)
+        if identifier and len(identifier) <= 300 and not any(ch in identifier for ch in "\r\n\t")
+    }
+    configured = str(current.get("model") or "").strip()
+    configured_raw = configured.split("/", 1)[1] if "/" in configured else configured
+    prefix = configured.split("/", 1)[0] if "/" in configured else ""
+    configured_listed = configured in identifiers or configured_raw in identifiers
+    catalog = []
+    seen = set()
+    for identifier in sorted(identifiers, key=lambda item: item.casefold()):
+        value = identifier if not prefix or identifier.startswith(prefix + "/") else f"{prefix}/{identifier}"
+        if identifier in (configured, configured_raw):
+            value = configured
+        if value in seen:
+            continue
+        seen.add(value)
+        catalog.append({"id": identifier, "value": value, "listed": True})
+    if configured and configured not in seen:
+        catalog.insert(0, {"id": configured_raw, "value": configured, "listed": False})
+    return {
+        "ok": True,
+        "kind": kind,
+        "models": catalog,
+        "listed_count": len(identifiers),
+        "configured_model": configured,
+        "configured_listed": configured_listed,
     }
 
 
@@ -1166,6 +1213,22 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split('?')[0]
+
+        if path == '/api/models/list':
+            if not _is_lan(self.client_address[0]):
+                self._send({"ok": False, "error": "LAN only"}, 403)
+                return
+            try:
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > 20_000:
+                    raise ValueError('请求体为空或过大')
+                body = json.loads(self.rfile.read(n))
+                self._send(_discover_model_catalog(body))
+            except (ValueError, json.JSONDecodeError) as e:
+                self._send({"ok": False, "error": str(e)}, 400)
+            except Exception as e:
+                self._send({"ok": False, "error": f'{type(e).__name__}: {e}'}, 500)
+            return
 
         if path == '/api/models/test':
             if not _is_lan(self.client_address[0]):
