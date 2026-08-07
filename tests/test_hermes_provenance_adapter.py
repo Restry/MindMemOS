@@ -187,6 +187,9 @@ def test_llms_txt_documents_hermes_provider_lifecycle_and_source() -> None:
 
     for required in (
         "Hermes native Memory Provider",
+        "https://github.com/Restry/MindMemOS",
+        "https://github.com/Restry/MindMemOS/tree/main/adapters/hermes/mindmemos",
+        "git clone https://github.com/Restry/MindMemOS.git",
         "adapters/hermes/mindmemos/__init__.py",
         "python3 adapters/hermes/install.py --check",
         "hermes config set memory.provider mindmemos",

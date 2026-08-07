@@ -4,6 +4,9 @@
 
 ## Public endpoints
 
+- Source repository: https://github.com/Restry/MindMemOS
+- Hermes Memory Provider: https://github.com/Restry/MindMemOS/tree/main/adapters/hermes/mindmemos
+- Hermes installer: https://github.com/Restry/MindMemOS/blob/main/adapters/hermes/install.py
 - MCP tools: {{MCP_URL}}
 - Reliable turn ingestion: {{ORIGIN}}/ingest/turn
 - Health: {{ORIGIN}}/health
@@ -37,13 +40,21 @@
 
 ## Hermes native Memory Provider
 
-Provider 源码真源位于 MindMemOS 仓库：
+Provider 源码真源位于 `https://github.com/Restry/MindMemOS`：
 
 ```text
 adapters/hermes/mindmemos/__init__.py
 adapters/hermes/mindmemos/plugin.yaml
 adapters/hermes/install.py
 adapters/hermes/mindmemos.example.json
+```
+
+获取并审阅源码后安装：
+
+```bash
+git clone https://github.com/Restry/MindMemOS.git
+cd MindMemOS
+python3 adapters/hermes/install.py
 ```
 
 Hermes 运行时部署位置：
