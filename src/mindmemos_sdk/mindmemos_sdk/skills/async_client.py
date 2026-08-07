@@ -1,14 +1,13 @@
-"""Asynchronous Skill service client shared by HTTP and Lite backends."""
+"""Asynchronous Skill service client backed by the MindMemOS HTTP API."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
-from ..config import ConfigManager, DefaultsConfig
-from ..config.models import HttpConnectionConfig, InMemoryConnectionConfig
-from ..connections import AsyncConnection, HttpConnection, InMemoryConnection
-from .backends import AsyncSkillBackend, HttpSkillBackend, InMemorySkillBackend
+from ..config import ConfigManager
+from ..config.models import HttpConnectionConfig
+from ..connections import AsyncConnection, HttpConnection
+from .backends import AsyncSkillBackend, HttpSkillBackend
 from .manager import SkillManager
 from .models import (
     SkillContentData,
@@ -61,86 +60,6 @@ class AsyncSkillClient:
         )
         return cls(
             HttpSkillBackend(connection),
-            local=SkillManager.from_config_manager(manager),
-            connection=connection,
-        )
-
-    @classmethod
-    def from_lite_service(
-        cls,
-        service: Any,
-        *,
-        project_id: str,
-        config_manager: ConfigManager | None = None,
-        account_id: str = "local",
-        api_key_uuid: str = "local-sdk",
-        user_id: str | None = None,
-        app_id: str | None = None,
-        agent_id: str | None = None,
-        session_id: str | None = None,
-    ) -> AsyncSkillClient:
-        """Build a Lite-mode client that borrows an in-process Skill service."""
-
-        manager = config_manager or ConfigManager()
-        connection = InMemoryConnection(
-            InMemoryConnectionConfig(
-                project_id=project_id,
-                account_id=account_id,
-                api_key_uuid=api_key_uuid,
-            ),
-            runtime=SimpleNamespace(is_running=True, skill=service),
-            owns_runtime=False,
-        )
-        return cls(
-            InMemorySkillBackend(
-                connection,
-                defaults=DefaultsConfig(
-                    user_id=user_id,
-                    app_id=app_id,
-                    agent_id=agent_id,
-                    session_id=session_id,
-                ),
-            ),
-            local=SkillManager.from_config_manager(manager),
-            connection=connection,
-        )
-
-    @classmethod
-    def from_lite_runtime(
-        cls,
-        runtime: Any,
-        *,
-        project_id: str,
-        config_manager: ConfigManager | None = None,
-        account_id: str = "local",
-        api_key_uuid: str = "local-sdk",
-        user_id: str | None = None,
-        app_id: str | None = None,
-        agent_id: str | None = None,
-        session_id: str | None = None,
-    ) -> AsyncSkillClient:
-        """Build a Lite-mode client borrowing ``runtime.skill``."""
-
-        manager = config_manager or ConfigManager()
-        connection = InMemoryConnection(
-            InMemoryConnectionConfig(
-                project_id=project_id,
-                account_id=account_id,
-                api_key_uuid=api_key_uuid,
-            ),
-            runtime=runtime,
-            owns_runtime=False,
-        )
-        return cls(
-            InMemorySkillBackend(
-                connection,
-                defaults=DefaultsConfig(
-                    user_id=user_id,
-                    app_id=app_id,
-                    agent_id=agent_id,
-                    session_id=session_id,
-                ),
-            ),
             local=SkillManager.from_config_manager(manager),
             connection=connection,
         )

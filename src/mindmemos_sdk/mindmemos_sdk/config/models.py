@@ -8,8 +8,7 @@ schema migration here.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -73,25 +72,7 @@ class HttpConnectionConfig(BaseModel):
     max_retries: int = 2
 
 
-class InMemoryConnectionConfig(BaseModel):
-    """One shared in-process runtime connection."""
-
-    type: Literal["in_memory"] = "in_memory"
-    runtime: Literal["mindmemos_lite"] = "mindmemos_lite"
-    project_id: str
-    config_path: Path | None = None
-    config_name: str = "dev"
-    load_config_from_env: bool = False
-    start_workers: bool = True
-    account_id: str = "local"
-    api_key_uuid: str = "local-sdk"
-    project_override_config: dict[str, Any] | None = None
-
-
-ConnectionConfig = Annotated[
-    HttpConnectionConfig | InMemoryConnectionConfig,
-    Field(discriminator="type"),
-]
+ConnectionConfig = HttpConnectionConfig
 
 
 class ClientConnectionConfig(BaseModel):

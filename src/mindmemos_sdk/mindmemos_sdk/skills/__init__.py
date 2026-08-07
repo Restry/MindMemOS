@@ -2,7 +2,7 @@
 
 from ..errors import SkillBundleError
 from .async_client import AsyncSkillClient
-from .backends import AsyncSkillBackend, HttpSkillBackend, InMemorySkillBackend
+from .backends import AsyncSkillBackend, HttpSkillBackend
 from .bundle import (
     CONTENT_HASH_ALGORITHM,
     SKILL_WHITELIST,
@@ -94,7 +94,6 @@ __all__ = [
     "AsyncSkillClient",
     "AsyncSkillBackend",
     "HttpSkillBackend",
-    "InMemorySkillBackend",
     "DuplicateSkillAction",
     "DuplicateSkillMatch",
     "EvolveCloudRequest",
