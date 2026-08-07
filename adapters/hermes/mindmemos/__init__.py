@@ -15,6 +15,9 @@ Configuration (``$HERMES_HOME/mindmemos.json``):
   user_id              memory owner, default leway
   top_k                recalled memories per turn, default 6
   score_threshold      recall threshold, default 0.1
+  prefetch_rerank      rerank automatic recall, default true
+  prefetch_timeout     per automatic recall request timeout, default 6s
+  prefetch_parallelism max concurrent subqueries, default 1
   write_enabled        automatic primary-turn capture, default true
   min_write_chars      minimum user-message length, default 24
 """
@@ -31,6 +34,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from agent.memory_provider import MemoryProvider
@@ -116,6 +120,9 @@ class MindMemOSProvider(MemoryProvider):
         cfg.setdefault("user_id", "leway")
         cfg.setdefault("top_k", 6)
         cfg.setdefault("score_threshold", 0.1)
+        cfg.setdefault("prefetch_rerank", True)
+        cfg.setdefault("prefetch_timeout", _PREFETCH_TIMEOUT)
+        cfg.setdefault("prefetch_parallelism", 1)
         cfg.setdefault("write_enabled", True)
         cfg.setdefault("min_write_chars", 24)
         cfg.setdefault("ingest_url", os.getenv("MINDMEMOS_INGEST_URL", "http://127.0.0.1:8765"))
@@ -213,7 +220,11 @@ class MindMemOSProvider(MemoryProvider):
             return None
 
     def _search(
-        self, query: str, top_k: Optional[int] = None, timeout: float = _PREFETCH_TIMEOUT
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        timeout: float = _PREFETCH_TIMEOUT,
+        rerank: bool = True,
     ) -> List[Dict[str, Any]]:
         d = self._post(
             "/v1/memory/search",
@@ -221,7 +232,7 @@ class MindMemOSProvider(MemoryProvider):
                 "user_id": self._user,
                 "query": query,
                 "top_k": int(top_k or self._cfg.get("top_k", 6)),
-                "rerank": True,
+                "rerank": rerank,
                 "score_threshold": float(self._cfg.get("score_threshold", 0.1)),
             },
             timeout,
@@ -322,12 +333,26 @@ class MindMemOSProvider(MemoryProvider):
                 return text
 
         subs = self._subqueries(q)
+        timeout = max(0.25, float(self._cfg.get("prefetch_timeout", _PREFETCH_TIMEOUT)))
+        rerank_value = self._cfg.get("prefetch_rerank", True)
+        rerank = str(rerank_value).strip().lower() not in {"0", "false", "no", "off"}
+        parallelism = max(1, min(int(self._cfg.get("prefetch_parallelism", 1)), 3))
         if len(subs) == 1:
-            out = self._format(self._search(q))
+            out = self._format(self._search(q, timeout=timeout, rerank=rerank))
         else:
             merged, seen = [], set()
-            for s in subs:
-                for m in self._search(s):
+            if parallelism > 1:
+                with ThreadPoolExecutor(max_workers=min(parallelism, len(subs))) as pool:
+                    batches = list(
+                        pool.map(
+                            lambda sub: self._search(sub, timeout=timeout, rerank=rerank),
+                            subs,
+                        )
+                    )
+            else:
+                batches = [self._search(s, timeout=timeout, rerank=rerank) for s in subs]
+            for batch in batches:
+                for m in batch:
                     txt = (m.get("memory") or "").strip()
                     if txt and txt not in seen:
                         seen.add(txt)
@@ -506,6 +531,14 @@ class MindMemOSProvider(MemoryProvider):
             {"key": "user_id", "description": "记忆归属 user_id", "default": "leway"},
             {"key": "top_k", "description": "每轮自动注入的记忆条数", "default": "6"},
             {"key": "score_threshold", "description": "相关度阈值 0-1，低于此值不注入", "default": "0.1"},
+            {
+                "key": "prefetch_rerank",
+                "description": "自动召回是否执行 rerank；手动 recall 始终执行",
+                "default": "true",
+                "choices": ["true", "false"],
+            },
+            {"key": "prefetch_timeout", "description": "自动召回单请求超时秒数", "default": "6"},
+            {"key": "prefetch_parallelism", "description": "多问句并行检索数，最大 3", "default": "1"},
             {
                 "key": "write_enabled",
                 "description": "每轮对话自动写入记忆库",

@@ -4,6 +4,8 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -108,6 +110,46 @@ def test_prefetch_skips_only_low_information_chat_acknowledgements(monkeypatch: 
 
     provider.prefetch("继续检查 MindMemOS 性能")
     assert searched == ["继续检查 MindMemOS 性能"]
+
+
+def test_prefetch_can_disable_rerank_and_parallelize_multi_question_recall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = _load_plugin(monkeypatch)
+    provider = plugin.MindMemOSProvider()
+    provider._enabled = True
+    provider._cfg = {
+        "top_k": 6,
+        "score_threshold": 0.1,
+        "prefetch_rerank": "false",
+        "prefetch_timeout": 1.5,
+        "prefetch_parallelism": 3,
+    }
+    calls: list[tuple[str, float, bool]] = []
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def fake_search(query: str, **kwargs):
+        nonlocal active, peak
+        calls.append((query, kwargs["timeout"], kwargs["rerank"]))
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.08)
+        with lock:
+            active -= 1
+        return []
+
+    provider._search = fake_search
+    started = time.perf_counter()
+    provider.prefetch("1) MindMemOS 插件性能如何 2) Hermes 自动召回延迟多少 3) 记忆检索是否有积压")
+    elapsed = time.perf_counter() - started
+
+    assert len(calls) == 3
+    assert all(timeout == 1.5 and rerank is False for _, timeout, rerank in calls)
+    assert peak >= 2
+    assert elapsed < 0.5
 
 
 def test_auto_capture_uses_the_same_exact_low_information_rule(

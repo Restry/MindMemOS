@@ -78,7 +78,10 @@ $HERMES_HOME/mindmemos.json
 
 - `base_url` / `api_key`：`:8000` recall API；
 - `user_id`：记忆 owner；
-- `top_k` / `score_threshold`：自动召回参数；
+- `top_k` / `score_threshold`：自动召回数量与阈值；
+- `prefetch_rerank`：是否在每轮自动召回执行 rerank；关闭可显著降低首 token 延迟，手动 `recall` 不受影响；
+- `prefetch_timeout`：自动召回单请求硬超时，超时即跳过，不能阻塞主对话；
+- `prefetch_parallelism`：多问句并行检索数，最大 3，避免子问题串行累加；
 - `ingest_url` / `ingest_key`：`:8765` durable collector；
 - `ingest_spool`：本地失败重试 SQLite；
 - `ingest_client_module`：仓库内 dependency-free durable client；
@@ -86,6 +89,9 @@ $HERMES_HOME/mindmemos.json
 - `pinned_file`：常驻身份与高权威规则。
 
 每个 Agent + 机器实例必须使用独立 write Key。Key 不得进入源码、命令参数、聊天、日志或 hook payload。
+
+对交互延迟敏感的本地 Hermes 推荐：`prefetch_rerank=false`、`prefetch_timeout=1.5`、
+`prefetch_parallelism=3`。这只影响每轮自动注入；主动调用 `recall` 仍使用 rerank 和 30 秒超时。
 
 ## Difference from MCP
 
