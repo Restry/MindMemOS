@@ -213,6 +213,11 @@ button{font-family:var(--mono)}
 .model-intro strong{display:block;color:var(--ink);font-size:12px;margin-bottom:5px}
 .model-intro p{margin:0;color:var(--sub);font-size:10.5px;line-height:1.7;max-width:760px}
 .model-config-path{font-size:9.5px;color:var(--accent);word-break:break-all;text-align:right;max-width:430px}
+.endpoint-registry{border:1px solid var(--line);background:var(--panel);padding:14px;margin-bottom:12px}.endpoint-registry-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.endpoint-registry-head strong{display:block;font:700 11px var(--mono);letter-spacing:1.4px;color:var(--ink)}.endpoint-registry-head span{font-size:9.5px;color:var(--dim)}
+.endpoint-registry button,.endpoint-editor button{padding:8px 11px;border:1px solid var(--line2);background:var(--panel2);color:var(--sub);font:600 9.5px var(--mono);cursor:pointer;margin-left:7px}.endpoint-registry button.primary,.endpoint-editor button.primary{border-color:var(--accent);background:var(--accent);color:#0d0d0d}
+.endpoint-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px}.endpoint-item{border:1px solid var(--line);background:var(--bg);padding:11px;min-width:0}.endpoint-item strong{display:block;color:var(--ink);font-size:10.5px;margin-bottom:4px}.endpoint-url{color:var(--sub);font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.endpoint-meta{color:var(--sub);font-size:9.5px;margin-top:6px;line-height:1.55}.endpoint-item-actions{display:flex;justify-content:flex-end;margin-top:8px}.endpoint-item-actions button{padding:5px 7px;font-size:8.5px}
+.endpoint-editor{display:grid;grid-template-columns:.7fr 1.3fr 1fr;gap:10px;border-top:1px solid var(--line);margin-top:12px;padding-top:12px}.endpoint-editor-actions{grid-column:1/-1;display:flex;justify-content:flex-end;align-items:center}.endpoint-editor-actions span{margin-right:auto;color:var(--dim);font-size:9.5px}
 .model-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .model-card{background:var(--panel);border:1px solid var(--line);padding:16px;position:relative;min-width:0}
 .model-card::before{content:'';position:absolute;left:0;top:0;width:2px;height:100%;background:var(--accent);opacity:.45}
@@ -241,7 +246,7 @@ button{font-family:var(--mono)}
 .model-actions button{padding:9px 14px;font:600 10.5px var(--mono);letter-spacing:1px;text-transform:uppercase}
 .model-actions .primary{border-color:var(--accent);background:var(--accent);color:#0d0d0d}
 #model-global-state{margin-right:auto;font-size:10px;color:var(--dim)}
-@media(max-width:900px){.model-grid{grid-template-columns:1fr}.model-intro{display:block}.model-config-path{text-align:left;margin-top:9px}}
+@media(max-width:900px){.model-grid,.endpoint-list{grid-template-columns:1fr}.model-intro{display:block}.model-config-path{text-align:left;margin-top:9px}.endpoint-editor{grid-template-columns:1fr}}
 
 .empty{text-align:center;color:var(--dim);padding:48px 20px;font-size:11.5px;
   text-transform:uppercase;letter-spacing:1.6px}
@@ -472,43 +477,44 @@ button{font-family:var(--mono)}
 <div id="pane-models" style="display:none">
   <div class="model-intro">
     <div>
-      <strong>模型路由设置</strong>
-      <p>先填写 Endpoint 和 Key，再读取该地址的 /v1/models。Model 支持输入搜索和下拉选择；选择后仍需通过真实能力测试才能保存。API Key 只写入服务器配置，页面永远不会回显；留空表示继续使用当前 Key。</p>
+      <strong>Endpoint 注册表与模型路由</strong>
+      <p>Endpoint 在这里统一维护。新增或修改时抓取一次 /v1/models 并写入本地缓存；页面加载和模型搜索只读缓存，不会重复请求远端。API Key 只写入服务器配置，页面永远不会回显。</p>
     </div>
     <div class="model-config-path" id="model-config-path">正在读取配置…</div>
   </div>
+  <section class="endpoint-registry">
+    <div class="endpoint-registry-head"><div><strong>ENDPOINTS</strong><span id="endpoint-cache-summary">读取中…</span></div><div>
+      <button id="endpoint-refresh-all" type="button">刷新全部缓存</button><button id="endpoint-add" class="primary" type="button">＋ 添加 Endpoint</button>
+    </div></div>
+    <div id="endpoint-list" class="endpoint-list"><div class="empty">加载中…</div></div>
+    <div id="endpoint-editor" class="endpoint-editor" style="display:none">
+      <input id="endpoint-edit-id" type="hidden">
+      <label class="model-field"><span>名称</span><input id="endpoint-edit-name" placeholder="例如 Nexora Hub"></label>
+      <label class="model-field"><span>Endpoint</span><input id="endpoint-edit-url" placeholder="https://hub.example.com/v1"></label>
+      <label class="model-field"><span>API Key</span><input id="endpoint-edit-key" type="password" autocomplete="new-password" placeholder="编辑时留空保留当前 Key"></label>
+      <div class="endpoint-editor-actions"><span id="endpoint-editor-state">保存时会抓取并缓存 /v1/models</span><button id="endpoint-cancel" type="button">取消</button><button id="endpoint-save" class="primary" type="button">保存并同步模型</button></div>
+    </div>
+  </section>
   <div class="model-grid">
     <section class="model-card" data-model-kind="llm">
-      <h3>01 · LLM</h3><div class="model-purpose">用于记忆抽取、合并判断和高阶推理。</div>
-      <label class="model-field"><span>Endpoint</span><input id="model-llm-endpoint" placeholder="例如 https://hub.example.com/v1"></label>
-      <label class="model-field"><span>API Key</span><input id="model-llm-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
-      <div class="model-key-state" id="model-llm-key-state"></div>
-      <div class="model-discovery"><button id="model-llm-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-llm-catalog-state">尚未读取模型列表</span></div>
-      <div class="model-field model-combobox"><span>Model · 输入搜索 / 下拉选择</span><input id="model-llm-name" role="combobox" aria-controls="model-llm-options" aria-expanded="false" autocomplete="off" disabled placeholder="先读取模型列表"><button class="model-menu-toggle" id="model-llm-toggle" type="button" disabled aria-label="展开 LLM 模型列表">⌄</button><div class="model-options-menu" id="model-llm-options" role="listbox"></div></div>
-      <div class="model-test-state" id="model-llm-test">尚未测试</div>
+      <h3>01 · LLM</h3><div class="model-purpose">从所有 Endpoint 的缓存模型中选择；用于记忆抽取和高阶推理。</div>
+      <div class="model-field model-combobox"><span>Model · 搜索全部缓存</span><input id="model-llm-name" role="combobox" aria-controls="model-llm-options" aria-expanded="false" autocomplete="off" placeholder="输入模型名搜索"><button class="model-menu-toggle" id="model-llm-toggle" type="button" aria-label="展开 LLM 模型列表">⌄</button><div class="model-options-menu" id="model-llm-options" role="listbox"></div></div>
+      <div class="model-catalog-state" id="model-llm-source">尚未选择 Endpoint 模型</div><div class="model-test-state" id="model-llm-test">尚未测试</div>
     </section>
     <section class="model-card" data-model-kind="embedding">
-      <h3>02 · Embedding</h3><div class="model-purpose">把记忆和查询转换成向量，决定语义召回质量。</div>
-      <label class="model-field"><span>Endpoint</span><input id="model-embedding-endpoint" placeholder="例如 https://hub.example.com/v1"></label>
-      <label class="model-field"><span>API Key</span><input id="model-embedding-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
-      <div class="model-key-state" id="model-embedding-key-state"></div>
-      <div class="model-discovery"><button id="model-embedding-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-embedding-catalog-state">尚未读取模型列表</span></div>
-      <div class="model-field model-combobox"><span>Model · 输入搜索 / 下拉选择</span><input id="model-embedding-name" role="combobox" aria-controls="model-embedding-options" aria-expanded="false" autocomplete="off" disabled placeholder="先读取模型列表"><button class="model-menu-toggle" id="model-embedding-toggle" type="button" disabled aria-label="展开 Embedding 模型列表">⌄</button><div class="model-options-menu" id="model-embedding-options" role="listbox"></div></div>
-      <div class="model-test-state" id="model-embedding-test">尚未测试</div>
+      <h3>02 · Embedding</h3><div class="model-purpose">从同一全局缓存目录中选择；用于记忆和查询向量化。</div>
+      <div class="model-field model-combobox"><span>Model · 搜索全部缓存</span><input id="model-embedding-name" role="combobox" aria-controls="model-embedding-options" aria-expanded="false" autocomplete="off" placeholder="输入模型名搜索"><button class="model-menu-toggle" id="model-embedding-toggle" type="button" aria-label="展开 Embedding 模型列表">⌄</button><div class="model-options-menu" id="model-embedding-options" role="listbox"></div></div>
+      <div class="model-catalog-state" id="model-embedding-source">尚未选择 Endpoint 模型</div><div class="model-test-state" id="model-embedding-test">尚未测试</div>
     </section>
     <section class="model-card" data-model-kind="rerank">
-      <h3>03 · Rerank</h3><div class="model-purpose">对召回结果重新排序，提高最终答案相关度。</div>
-      <label class="model-field"><span>Endpoint</span><input id="model-rerank-endpoint" placeholder="例如 https://hub.example.com/v1"></label>
-      <label class="model-field"><span>API Key</span><input id="model-rerank-key" type="password" autocomplete="new-password" placeholder="留空则不修改当前 Key"></label>
-      <div class="model-key-state" id="model-rerank-key-state"></div>
-      <div class="model-discovery"><button id="model-rerank-load" type="button">读取 /v1/models</button><span class="model-catalog-state" id="model-rerank-catalog-state">尚未读取模型列表</span></div>
-      <div class="model-field model-combobox"><span>Model · 输入搜索 / 下拉选择</span><input id="model-rerank-name" role="combobox" aria-controls="model-rerank-options" aria-expanded="false" autocomplete="off" disabled placeholder="先读取模型列表"><button class="model-menu-toggle" id="model-rerank-toggle" type="button" disabled aria-label="展开 Rerank 模型列表">⌄</button><div class="model-options-menu" id="model-rerank-options" role="listbox"></div></div>
-      <div class="model-test-state" id="model-rerank-test">尚未测试</div>
+      <h3>03 · Rerank</h3><div class="model-purpose">从同一全局缓存目录中选择；保存前执行最小真实 Rerank 请求。</div>
+      <div class="model-field model-combobox"><span>Model · 搜索全部缓存</span><input id="model-rerank-name" role="combobox" aria-controls="model-rerank-options" aria-expanded="false" autocomplete="off" placeholder="输入模型名搜索"><button class="model-menu-toggle" id="model-rerank-toggle" type="button" aria-label="展开 Rerank 模型列表">⌄</button><div class="model-options-menu" id="model-rerank-options" role="listbox"></div></div>
+      <div class="model-catalog-state" id="model-rerank-source">尚未选择 Endpoint 模型</div><div class="model-test-state" id="model-rerank-test">尚未测试</div>
     </section>
   </div>
   <div class="model-actions">
-    <span id="model-global-state">修改任何字段后需要重新测试</span>
-    <button id="model-reload">重新读取当前配置</button>
+    <span id="model-global-state">从缓存目录选择模型后测试</span>
+    <button id="model-reload">重新读取缓存</button>
     <button id="model-test">测试全部（不保存）</button>
     <button id="model-save" class="primary" disabled>保存并重载服务</button>
   </div>
@@ -1149,7 +1155,8 @@ $('#tk-go').onclick=async()=>{
   finally{btn.disabled=false; btn.textContent='生成'}
 };
 
-/* ================= 模型设置 ================= */
+/* ================= 旧版按类别配置（禁用，迁移完成后删除） ================= */
+if(false){
 const MODEL_KINDS=['llm','embedding','rerank'];
 let MODELS_LOADED=0, MODELS_TESTED=false;
 const MODEL_CATALOG=Object.fromEntries(MODEL_KINDS.map(k=>[k,new Set()]));
@@ -1313,6 +1320,7 @@ document.addEventListener('mousedown',event=>{if(!event.target.closest('.model-c
 $('#model-test').onclick=testModels;
 $('#model-save').onclick=saveModels;
 $('#model-reload').onclick=()=>{MODELS_LOADED=0;loadModels()};
+}
 
 ['#f-doc','#f-type','#f-agent','#f-mode','#f-noise'].forEach(s=>$(s).onchange=()=>{SHOWN=60;renderBrowse()});
 
@@ -1429,5 +1437,6 @@ load().catch(e=>{
   $('#refresh-state').textContent='加载失败';
 });
 </script>
+<script src="/model-registry.js"></script>
 </body>
 </html>

@@ -14,21 +14,21 @@ Memory Command Terminal 只提供安全的面板操作：普通文本和 `/searc
 
 ## 模型设置
 
-“模型设置”页管理三类路由：
+“模型设置”页分成两层：
 
-- LLM
-- Embedding
-- Rerank
+- Endpoint 注册表：统一维护多个 OpenAI-compatible Endpoint 与 Key。
+- 模型路由：LLM、Embedding、Rerank 只从全局缓存目录选择模型。
 
-读取接口不会返回 API Key，只返回是否已经配置。配置时先填写 Endpoint 和 Key，再由面板服务端调用该地址的 `/models`（Endpoint 通常已经以 `/v1` 结尾，即最终请求 `/v1/models`）。返回列表在 Model 输入框中支持输入搜索和下拉选择；测试前会强制要求使用目录中的完整值。Key 输入框留空会使用现有 Key 获取列表并保留现有值，临时输入只用于本次请求，不会回显或持久化。
+新增或修改 Endpoint 时，面板服务端调用一次 `/models`（Endpoint 通常已经以 `/v1` 结尾，即最终请求 `/v1/models`），并把模型 ID、来源 Endpoint 和抓取时间持久化到权限为 `0600` 的运行时缓存。页面加载、重新进入模型页和输入搜索都只读取缓存，不访问远端；只有“保存 Endpoint”“刷新缓存”“刷新全部缓存”会重新调用远端。
 
-配置文件需要的 LiteLLM provider 前缀会在目录结果中保留。保存前还必须验证真实模型能力；Rerank 会执行最小 rerank 请求，而不是只相信 `/v1/models`。保存时会创建权限为 `0600` 的配置备份，并通过固定的服务端命令重载 API/MCP。
+API 响应不会返回 Key。编辑 Endpoint 时 Key 留空会保留现有值。模型保存前会验证缓存归属并执行真实能力测试；Rerank 会执行最小 rerank 请求。配置保存仍会创建 `0600` 备份并通过固定命令重载 API/MCP。
 
 相关环境变量：
 
 ```text
 MM_MODEL_CONFIG_PATH
 MM_MODEL_CONFIG_BACKUP_DIR
+MM_MODEL_ENDPOINTS_PATH
 MM_MODEL_RELOAD_COMMAND
 MINDMEMOS_API_KEY
 MINDMEMOS_PANEL_KEYS

@@ -99,6 +99,9 @@ MODEL_CONFIG_BACKUP_DIR = os.path.expanduser(
     )
 )
 MODEL_RELOAD_COMMAND = os.getenv("MM_MODEL_RELOAD_COMMAND", "").strip()
+MODEL_ENDPOINTS_PATH = os.path.expanduser(
+    os.getenv("MM_MODEL_ENDPOINTS_PATH", os.path.join(STATE_DIR, "model-endpoints.json"))
+)
 MODEL_ROUTERS = {
     "llm": "chat_model_router",
     "embedding": "embed_model_router",
@@ -130,15 +133,22 @@ def _model_endpoint(config: dict, kind: str) -> dict:
 
 def _public_model_settings(config: dict | None = None) -> dict:
     data = config or _model_config()
+    registry = _endpoint_registry()
+    by_url = {item["endpoint"].rstrip("/"): item["id"] for item in registry["endpoints"]}
     models = {}
     for kind in MODEL_ROUTERS:
         endpoint = _model_endpoint(data, kind)
+        api_base = str(endpoint.get("api_base") or "").rstrip("/")
         models[kind] = {
             "model": str(endpoint.get("model") or ""),
-            "endpoint": str(endpoint.get("api_base") or ""),
-            "key_configured": bool(str(endpoint.get("api_key") or "").strip()),
+            "endpoint_id": by_url.get(api_base, ""),
         }
-    return {"ok": True, "models": models, "config_path": MODEL_CONFIG_PATH}
+    return {
+        "ok": True,
+        "models": models,
+        "config_path": MODEL_CONFIG_PATH,
+        "endpoint_registry_path": MODEL_ENDPOINTS_PATH,
+    }
 
 
 def _validated_model_connection(kind: str, value, current: dict) -> tuple[str, str]:
@@ -192,6 +202,193 @@ def _write_yaml_atomic(path: str, data: dict) -> None:
             os.unlink(tmp)
 
 
+def _write_json_atomic(path: str, data: dict) -> None:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".mindmemos-endpoints.", dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _endpoint_registry() -> dict:
+    try:
+        with open(MODEL_ENDPOINTS_PATH, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        config = _model_config()
+        endpoints = []
+        by_url = {}
+        for kind in MODEL_ROUTERS:
+            route = _model_endpoint(config, kind)
+            url = str(route.get("api_base") or "").strip().rstrip("/")
+            if not url:
+                continue
+            if url in by_url:
+                continue
+            item = {
+                "id": "ep_" + hashlib.sha256(url.encode()).hexdigest()[:12],
+                "name": urllib.parse.urlsplit(url).hostname or f"Endpoint {len(endpoints) + 1}",
+                "endpoint": url,
+                "api_key": str(route.get("api_key") or ""),
+                "models": [],
+                "fetched_at": None,
+            }
+            endpoints.append(item)
+            by_url[url] = item
+        data = {"version": 1, "endpoints": endpoints}
+        _write_json_atomic(MODEL_ENDPOINTS_PATH, data)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("Endpoint 注册表不是有效 JSON") from exc
+    endpoints = data.get("endpoints") if isinstance(data, dict) else None
+    if not isinstance(endpoints, list) or any(not isinstance(item, dict) for item in endpoints):
+        raise ValueError("Endpoint 注册表格式不正确")
+    return data
+
+
+def _public_endpoint_registry() -> dict:
+    data = _endpoint_registry()
+    endpoints = []
+    catalog = []
+    for item in data["endpoints"]:
+        models = [str(value) for value in item.get("models", []) if str(value).strip()]
+        endpoints.append(
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or ""),
+                "endpoint": str(item.get("endpoint") or ""),
+                "key_configured": bool(str(item.get("api_key") or "").strip()),
+                "model_count": len(models),
+                "fetched_at": item.get("fetched_at"),
+            }
+        )
+        catalog.extend(
+            {
+                "endpoint_id": str(item.get("id") or ""),
+                "endpoint_name": str(item.get("name") or ""),
+                "id": model_id,
+            }
+            for model_id in models
+        )
+    return {
+        "ok": True,
+        "endpoints": endpoints,
+        "catalog": catalog,
+        "registry_path": MODEL_ENDPOINTS_PATH,
+    }
+
+
+def _find_registered_endpoint(registry: dict, endpoint_id: str) -> dict:
+    for item in registry["endpoints"]:
+        if str(item.get("id") or "") == endpoint_id:
+            return item
+    raise ValueError("找不到指定 Endpoint")
+
+
+def _save_registered_endpoint(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("请求体必须是对象")
+    with _MODEL_SETTINGS_LOCK:
+        registry = _endpoint_registry()
+        endpoint_id = str(payload.get("id") or "").strip()
+        current = _find_registered_endpoint(registry, endpoint_id) if endpoint_id else {}
+        name = str(payload.get("name") or "").strip()
+        if not name or len(name) > 80 or any(ch in name for ch in "\r\n\t"):
+            raise ValueError("Endpoint 名称不能为空且不能超过 80 字")
+        endpoint, api_key = _validated_model_connection("Endpoint", payload, current)
+        for item in registry["endpoints"]:
+            if item is not current and str(item.get("endpoint") or "").rstrip("/") == endpoint:
+                raise ValueError("这个 Endpoint 地址已经存在")
+        models = sorted(_provider_model_ids(endpoint, api_key), key=str.casefold)
+        if not endpoint_id:
+            endpoint_id = "ep_" + hashlib.sha256((endpoint + name).encode()).hexdigest()[:12]
+            current = {}
+            registry["endpoints"].append(current)
+        current.update(
+            {
+                "id": endpoint_id,
+                "name": name,
+                "endpoint": endpoint,
+                "api_key": api_key,
+                "models": models,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        _write_json_atomic(MODEL_ENDPOINTS_PATH, registry)
+    return _public_endpoint_registry()
+
+
+def _refresh_registered_endpoints(payload: dict) -> dict:
+    endpoint_id = str((payload or {}).get("id") or "").strip()
+    with _MODEL_SETTINGS_LOCK:
+        registry = _endpoint_registry()
+        targets = [_find_registered_endpoint(registry, endpoint_id)] if endpoint_id else registry["endpoints"]
+        results = []
+        changed = False
+        for item in targets:
+            try:
+                models = sorted(
+                    _provider_model_ids(str(item.get("endpoint") or ""), str(item.get("api_key") or "")),
+                    key=str.casefold,
+                )
+                item["models"] = models
+                item["fetched_at"] = datetime.now(timezone.utc).isoformat()
+                changed = True
+                results.append({"id": item["id"], "ok": True, "model_count": len(models)})
+            except ValueError as exc:
+                results.append({"id": item.get("id"), "ok": False, "error": str(exc)})
+        if changed:
+            _write_json_atomic(MODEL_ENDPOINTS_PATH, registry)
+    return {**_public_endpoint_registry(), "results": results}
+
+
+def _delete_registered_endpoint(payload: dict) -> dict:
+    endpoint_id = str((payload or {}).get("id") or "").strip()
+    with _MODEL_SETTINGS_LOCK:
+        registry = _endpoint_registry()
+        target = _find_registered_endpoint(registry, endpoint_id)
+        target_url = str(target.get("endpoint") or "").rstrip("/")
+        config = _model_config()
+        used_by = [
+            kind
+            for kind in MODEL_ROUTERS
+            if str(_model_endpoint(config, kind).get("api_base") or "").rstrip("/") == target_url
+        ]
+        if used_by:
+            raise ValueError("Endpoint 正被以下模型使用，不能删除：" + "、".join(used_by))
+        registry["endpoints"] = [item for item in registry["endpoints"] if item is not target]
+        _write_json_atomic(MODEL_ENDPOINTS_PATH, registry)
+    return _public_endpoint_registry()
+
+
+def _resolved_model_value(kind: str, value, current: dict, registry: dict) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{kind} 配置必须是对象")
+    endpoint_id = str(value.get("endpoint_id") or "").strip()
+    if not endpoint_id:
+        return _validated_model_value(kind, value, current)
+    endpoint = _find_registered_endpoint(registry, endpoint_id)
+    model = str(value.get("model") or "").strip()
+    model_id = str(value.get("model_id") or "").strip()
+    if not model or not model_id or model_id not in endpoint.get("models", []):
+        raise ValueError(f"{kind} 必须从缓存模型目录中选择")
+    if model != model_id and not model.endswith("/" + model_id):
+        raise ValueError(f"{kind} 模型值与缓存目录不匹配")
+    return {
+        "model": model,
+        "api_base": str(endpoint.get("endpoint") or ""),
+        "api_key": str(endpoint.get("api_key") or ""),
+    }
+
+
 def _reload_model_services() -> dict:
     if not MODEL_RELOAD_COMMAND:
         return {"reloaded": False, "reload_message": "配置已保存；当前环境未配置自动重载命令"}
@@ -217,9 +414,10 @@ def _save_model_settings(payload: dict) -> dict:
         raise ValueError("models 必须完整包含 llm、embedding、rerank")
     with _MODEL_SETTINGS_LOCK:
         config = _model_config()
+        registry = _endpoint_registry()
         for kind in MODEL_ROUTERS:
             target = _model_endpoint(config, kind)
-            target.update(_validated_model_value(kind, models[kind], target))
+            target.update(_resolved_model_value(kind, models[kind], target, registry))
 
         os.makedirs(MODEL_CONFIG_BACKUP_DIR, mode=0o700, exist_ok=True)
         os.chmod(MODEL_CONFIG_BACKUP_DIR, 0o700)
@@ -321,46 +519,6 @@ def _provider_model_ids(endpoint: str, api_key: str) -> set[str]:
     }
 
 
-def _discover_model_catalog(payload: dict) -> dict:
-    if not isinstance(payload, dict):
-        raise ValueError("请求体必须是对象")
-    kind = str(payload.get("kind") or "").strip()
-    if kind not in MODEL_ROUTERS:
-        raise ValueError("kind 必须是 llm、embedding 或 rerank")
-    config = _model_config()
-    current = _model_endpoint(config, kind)
-    endpoint, api_key = _validated_model_connection(kind, payload, current)
-    identifiers = {
-        identifier
-        for identifier in _provider_model_ids(endpoint, api_key)
-        if identifier and len(identifier) <= 300 and not any(ch in identifier for ch in "\r\n\t")
-    }
-    configured = str(current.get("model") or "").strip()
-    configured_raw = configured.split("/", 1)[1] if "/" in configured else configured
-    prefix = configured.split("/", 1)[0] if "/" in configured else ""
-    configured_listed = configured in identifiers or configured_raw in identifiers
-    catalog = []
-    seen = set()
-    for identifier in sorted(identifiers, key=lambda item: item.casefold()):
-        value = identifier if not prefix or identifier.startswith(prefix + "/") else f"{prefix}/{identifier}"
-        if identifier in (configured, configured_raw):
-            value = configured
-        if value in seen:
-            continue
-        seen.add(value)
-        catalog.append({"id": identifier, "value": value, "listed": True})
-    if configured and configured not in seen:
-        catalog.insert(0, {"id": configured_raw, "value": configured, "listed": False})
-    return {
-        "ok": True,
-        "kind": kind,
-        "models": catalog,
-        "listed_count": len(identifiers),
-        "configured_model": configured,
-        "configured_listed": configured_listed,
-    }
-
-
 def _probe_rerank(endpoint: str, api_key: str, model: str) -> None:
     escaped_key = api_key.replace("\\", "\\\\").replace('"', '\\"')
     curl_config = (
@@ -438,11 +596,11 @@ def _test_model_settings(payload: dict) -> dict:
     if not isinstance(models, dict) or set(models) != set(MODEL_ROUTERS):
         raise ValueError("models 必须完整包含 llm、embedding、rerank")
     config = _model_config()
+    registry = _endpoint_registry()
     prepared = {}
     for kind in MODEL_ROUTERS:
         current = _model_endpoint(config, kind)
-        prepared[kind] = _validated_model_value(kind, models[kind], current)
-    cache: dict[tuple[str, str], tuple[set[str] | None, str | None]] = {}
+        prepared[kind] = _resolved_model_value(kind, models[kind], current, registry)
     results = {}
     for kind, item in prepared.items():
         requested = item["model"]
@@ -457,24 +615,9 @@ def _test_model_settings(payload: dict) -> dict:
             except ValueError as exc:
                 results[kind] = {"ok": False, "message": str(exc)}
             continue
-        cache_key = (item["api_base"], item["api_key"])
-        if cache_key not in cache:
-            try:
-                cache[cache_key] = (_provider_model_ids(*cache_key), None)
-            except ValueError as exc:
-                cache[cache_key] = (None, str(exc))
-        model_ids, error = cache[cache_key]
-        if error:
-            results[kind] = {"ok": False, "message": error}
-            continue
-        matched = requested in model_ids or provider_model in model_ids
         results[kind] = {
-            "ok": matched,
-            "message": (
-                f"连接成功，已找到模型 {provider_model}"
-                if matched
-                else f"连接成功，但模型列表中没有 {provider_model}"
-            ),
+            "ok": True,
+            "message": f"已从 Endpoint 缓存目录确认模型 {provider_model}",
         }
     return {"ok": all(item["ok"] for item in results.values()), "results": results}
 
@@ -902,6 +1045,15 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b)
             return
+        if path == '/model-registry.js':
+            b = open(os.path.join(HERE, 'model-registry.js'), 'rb').read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Content-Length', str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
         if path == '/lucide.js':
             # 本地托管，不依赖外网 CDN（内网机器可能上不了外网）
             try:
@@ -1008,6 +1160,18 @@ class H(BaseHTTPRequestHandler):
                 return
             self._send({"ok": True, "tokens": mcp_tokens.listing(),
                         "mcp_url": f"http://{LAN_IP}:8765/mcp"})
+            return
+
+        if path == '/api/model-endpoints':
+            if not _is_lan(self.client_address[0]):
+                self._send({"ok": False, "error": "LAN only"}, 403)
+                return
+            try:
+                self._send(_public_endpoint_registry())
+            except ValueError as e:
+                self._send({"ok": False, "error": str(e)}, 400)
+            except Exception as e:
+                self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
         if path == '/api/models':
@@ -1214,16 +1378,22 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split('?')[0]
 
-        if path == '/api/models/list':
+        if path in ('/api/model-endpoints/save', '/api/model-endpoints/refresh', '/api/model-endpoints/delete'):
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
             try:
                 n = int(self.headers.get('Content-Length') or 0)
-                if n <= 0 or n > 20_000:
-                    raise ValueError('请求体为空或过大')
-                body = json.loads(self.rfile.read(n))
-                self._send(_discover_model_catalog(body))
+                if n < 0 or n > 20_000:
+                    raise ValueError('请求体过大')
+                body = json.loads(self.rfile.read(n) or b'{}')
+                if path.endswith('/save'):
+                    result = _save_registered_endpoint(body)
+                elif path.endswith('/refresh'):
+                    result = _refresh_registered_endpoints(body)
+                else:
+                    result = _delete_registered_endpoint(body)
+                self._send(result)
             except (ValueError, json.JSONDecodeError) as e:
                 self._send({"ok": False, "error": str(e)}, 400)
             except Exception as e:
