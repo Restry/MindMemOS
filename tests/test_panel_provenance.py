@@ -250,12 +250,18 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert 'id="model-embedding-name"' in html
     assert 'id="model-rerank-name"' in html
     assert 'id="model-rerank-key"' in html
-    assert 'list="model-llm-options"' in html
-    assert 'list="model-embedding-options"' in html
-    assert 'list="model-rerank-options"' in html
+    assert 'role="combobox"' in html
+    assert 'id="model-llm-options" role="listbox"' in html
+    assert 'id="model-embedding-options" role="listbox"' in html
+    assert 'id="model-rerank-options" role="listbox"' in html
+    assert 'id="model-llm-toggle"' in html
+    assert 'id="model-embedding-toggle"' in html
+    assert 'id="model-rerank-toggle"' in html
     assert 'id="model-llm-load"' in html
     assert 'id="model-embedding-load"' in html
     assert 'id="model-rerank-load"' in html
+    assert "renderModelMenu" in html
+    assert 'class="model-option"' in html
     assert "fetch('/api/models/list'" in html
     assert "requireCatalogSelections" in html
     assert "必须从已读取的模型下拉列表中选择完整值" in html
