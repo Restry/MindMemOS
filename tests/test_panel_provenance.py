@@ -250,6 +250,18 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert 'id="model-embedding-name"' in html
     assert 'id="model-rerank-name"' in html
     assert 'id="model-rerank-key"' in html
+    assert 'list="model-llm-options"' in html
+    assert 'list="model-embedding-options"' in html
+    assert 'list="model-rerank-options"' in html
+    assert 'id="model-llm-load"' in html
+    assert 'id="model-embedding-load"' in html
+    assert 'id="model-rerank-load"' in html
+    assert "fetch('/api/models/list'" in html
+    assert "requireCatalogSelections" in html
+    assert "必须从已读取的模型下拉列表中选择完整值" in html
+    for kind in ("llm", "embedding", "rerank"):
+        assert html.index(f'id="model-{kind}-endpoint"') < html.index(f'id="model-{kind}-key"')
+        assert html.index(f'id="model-{kind}-key"') < html.index(f'id="model-{kind}-name"')
     assert "fetch('/api/models/test'" in html
     assert "fetch('/api/models'" in html
     assert "api_key:$('#model-'+k+'-key')" in html
@@ -329,6 +341,53 @@ database:
             "key_configured": True,
         }
         assert "api_key" not in json.dumps(current)
+
+        catalog_calls = []
+
+        def fake_catalog(endpoint: str, api_key: str) -> set[str]:
+            catalog_calls.append((endpoint, api_key))
+            return {"new-chat", "old-chat"}
+
+        monkeypatch.setattr(panel, "_provider_model_ids", fake_catalog)
+        catalog_body = json.dumps(
+            {
+                "kind": "llm",
+                "endpoint": "https://catalog.example/v1",
+                "api_key": "temporary-list-key",
+            }
+        ).encode()
+        conn.request(
+            "POST",
+            "/api/models/list",
+            body=catalog_body,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(catalog_body))},
+        )
+        response = conn.getresponse()
+        catalog = json.loads(response.read())
+        assert response.status == 200
+        assert catalog["listed_count"] == 2
+        assert catalog["configured_listed"] is True
+        assert {item["value"] for item in catalog["models"]} == {"openai/new-chat", "openai/old-chat"}
+        assert "temporary-list-key" not in json.dumps(catalog)
+        assert catalog_calls == [("https://catalog.example/v1", "temporary-list-key")]
+
+        rerank_body = json.dumps({"kind": "rerank", "endpoint": "https://catalog.example/v1", "api_key": ""}).encode()
+        conn.request(
+            "POST",
+            "/api/models/list",
+            body=rerank_body,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(rerank_body))},
+        )
+        response = conn.getresponse()
+        rerank_catalog = json.loads(response.read())
+        assert response.status == 200
+        assert rerank_catalog["configured_listed"] is False
+        assert rerank_catalog["models"][0] == {
+            "id": "old-rerank",
+            "value": "jina_ai/old-rerank",
+            "listed": False,
+        }
+        assert catalog_calls[-1] == ("https://catalog.example/v1", "old-rerank-key")
 
         payload = {
             "models": {
