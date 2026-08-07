@@ -193,6 +193,9 @@ def test_llms_txt_documents_hermes_provider_lifecycle_and_source() -> None:
         "hermes config set memory.provider builtin",
         "$HERMES_HOME/mindmemos.json",
         "只配置 MCP 或安装 Skill，**不等于 Hermes Memory Provider 已接管**",
+        "Automatic activation boundary",
+        "`llms.txt` 是被动的发现与接入说明",
+        "仅把本文件 URL 放进聊天不构成接入",
     ):
         assert required in document
     assert 'LLMS_FILE = os.path.join(HERE, "llms.txt")' in server

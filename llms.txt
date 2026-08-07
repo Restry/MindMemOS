@@ -21,6 +21,20 @@
 
 只配置 MCP 或安装 Skill，**不等于 Hermes Memory Provider 已接管**；也不等于 completed-turn 会自动写入。
 
+## Automatic activation boundary
+
+`llms.txt` 是被动的发现与接入说明，不会被所有 Agent 自动读取，也不会自行安装插件、写入凭据、修改运行时配置或重启进程。
+
+新的 Hermes 实例只有完成以下步骤后，才算由 MindMemOS Memory Provider 自动接管：
+
+1. 安装 `adapters/hermes/mindmemos/` Provider；
+2. 通过安全渠道配置该实例专属的 recall Key 与 write Key；
+3. 启用 `mindmemos` 插件并设置 `memory.provider=mindmemos`；
+4. 重启 Hermes CLI 或 gateway；
+5. 用 `hermes memory status` 和 Provider 安装检查确认状态。
+
+接管成功后，`system_prompt_block()`、每轮 `prefetch()`、`recall` 工具和 completed-turn durable ingestion 才会自动运行。非 Hermes Agent 必须由宿主显式注册 MCP，并按需安装 Companion Skill 或 runtime adapter；仅把本文件 URL 放进聊天不构成接入。
+
 ## Hermes native Memory Provider
 
 Provider 源码真源位于 MindMemOS 仓库：
