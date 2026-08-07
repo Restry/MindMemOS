@@ -1,17 +1,9 @@
 {
-  "base_url": "http://127.0.0.1:8000",
-  "api_key": "REPLACE_WITH_RECALL_API_KEY",
-  "user_id": "REPLACE_WITH_MEMORY_OWNER",
-  "top_k": 6,
-  "score_threshold": 0.1,
-  "prefetch_rerank": false,
-  "prefetch_timeout": 1.5,
-  "prefetch_parallelism": 3,
-  "write_enabled": true,
+  "mcp_url": "https://memory.studio.nexora.restry.cn/mcp",
+  "ingest_url": "https://memory.studio.nexora.restry.cn/ingest/turn",
+  "recall_limit": 6,
+  "auto_ingest": true,
   "min_write_chars": 24,
-  "ingest_url": "http://127.0.0.1:8765",
-  "ingest_key": "REPLACE_WITH_INSTANCE_WRITE_KEY",
-  "ingest_spool": "~/.hermes/mindmemos_hermes_ingest.sqlite3",
-  "ingest_client_module": "/absolute/path/to/MindMemOS/adapters/python/mindmemos_ingest_client.py",
-  "pinned_file": "~/.hermes/mindmemos_pinned.md"
+  "background_flush": true,
+  "request_timeout_seconds": 20
 }

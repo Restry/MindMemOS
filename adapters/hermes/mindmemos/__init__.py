@@ -1,29 +1,8 @@
-"""MindMemOS memory provider — local long-term memory for Hermes.
-
-Automatic recall: search before each primary turn and inject relevant history.
-Automatic write: persist the completed primary turn to a local SQLite spool, then
-submit it to the authenticated :8765 durable collector without blocking the reply.
-Builtin-memory mirroring uses the same trusted collector and avoids recursive capture.
-
-Configuration (``$HERMES_HOME/mindmemos.json``):
-  base_url             MindMemOS recall API, default http://127.0.0.1:8000
-  api_key              :8000 API key (or MINDMEMOS_API_KEY)
-  ingest_url           durable collector base URL, default http://127.0.0.1:8765
-  ingest_key           write Key dedicated to this Hermes + machine instance
-  ingest_spool         local SQLite retry spool
-  ingest_client_module dependency-free durable client module path
-  user_id              memory owner, default leway
-  top_k                recalled memories per turn, default 6
-  score_threshold      recall threshold, default 0.1
-  prefetch_rerank      rerank automatic recall, default true
-  prefetch_timeout     per automatic recall request timeout, default 6s
-  prefetch_parallelism max concurrent subqueries, default 1
-  write_enabled        automatic primary-turn capture, default true
-  min_write_chars      minimum user-message length, default 24
-"""
+"""MindMemOS external memory provider for Hermes Agent."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import logging
@@ -32,29 +11,23 @@ import re
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from agent.memory_provider import MemoryProvider
-from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
 
-_PREFETCH_TIMEOUT = 6.0  # 检索最多等这么久，超时就不注入（不能拖死对话）
-_BREAKER_THRESHOLD = 4  # 连续失败几次后熔断
-_BREAKER_COOLDOWN = 180.0  # 熔断冷却秒数
-
-# Slash/bang commands are control input, not durable user content.
-_COMMAND_PREFIXES = ("/", "!")
-
-# Pure acknowledgements carry no retrieval intent.  Keep this exact rather than
-# prefix-based so "继续检查 MindMemOS" still recalls project context.
 _LOW_INFORMATION_RE = re.compile(
     r"^(?:(?:好的?|好|谢谢(?:你)?|多谢|收到|明白(?:了)?|知道了|了解|继续|可以|行|没问题|"
     r"ok(?:ay)?|yes|嗯+|哦+|对(?:的)?|是的)[\s，,。.!！?？]*)+$",
     re.IGNORECASE,
+)
+_COMMAND_PREFIXES = ("/", "!")
+_SPLIT_RE = re.compile(
+    r"(?:^|[\s，,；;。])\s*(?:\d+[)）.、]|[一二三四五六七八九十]+[)）.、])\s*"
 )
 
 
@@ -62,324 +35,316 @@ def _is_low_information_input(text: str) -> bool:
     return bool(_LOW_INFORMATION_RE.fullmatch((text or "").strip()))
 
 
-_INGEST_MODULE = None
+def _load_profile_config(environ: Mapping[str, str]) -> Dict[str, Any]:
+    home = str(environ.get("HERMES_HOME", "")).strip()
+    if not home:
+        from hermes_constants import get_hermes_home
 
-
-def _load_ingest_module(path: str):
-    global _INGEST_MODULE
-    if _INGEST_MODULE is not None:
-        return _INGEST_MODULE
-    spec = importlib.util.spec_from_file_location("hermes_mindmemos_ingest_client", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    _INGEST_MODULE = module
-    return module
+        home = str(get_hermes_home())
+    path = os.path.join(os.path.expanduser(home), "mindmemos.json")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        return loaded if isinstance(loaded, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        logger.warning("Could not load MindMemOS config %s: %s", path, exc)
+        return {}
 
 
 class MindMemOSProvider(MemoryProvider):
-    def __init__(self) -> None:
-        self._cfg: Dict[str, Any] = {}
-        self._base = ""
-        self._key = ""
-        self._user = "leway"
-        self._session_id = ""
-        self._platform = "cli"
-        self._writable = True  # 非 primary context（cron/subagent）不写
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        environ: Optional[Mapping[str, str]] = None,
+    ) -> None:
+        self._environ = environ if environ is not None else os.environ
+        self._explicit_config = config is not None
+        self._config = dict(config) if config is not None else _load_profile_config(self._environ)
+        self._cfg = self._config  # legacy adapter compatibility
+        self._api_key = ""
+        self._mcp_url = ""
+        self._recall_limit = 6
+        self._timeout = 20.0
+        self._ingest_url = ""
+        self._auto_ingest = True
+        self._background_flush = True
+        self._legacy_mode = False
+        self._legacy_ingest_module = None
+        self._legacy_ingest_client = None
         self._enabled = False
+        self._session_id = ""
+        self._agent_context = "primary"
+        self._whoami = ""
+        self._hermes_home = ""
+        self._spool_dir = ""
+        self._platform = ""
+        self._profile = ""
+        self._flush_lock = threading.Lock()
+        self._apply_config(self._config)
 
-        self._prefetch_cache = ""
-        self._last_result: tuple = ("", "", 0.0)  # (query, 结果文本, 时间戳)
-        self._prefetch_lock = threading.Lock()
-        self._prefetch_thread: Optional[threading.Thread] = None
-
-        self._ingest_module = None
-        self._ingest_client = None
-
-        self._fail_count = 0
-        self._breaker_until = 0.0
-
-    # ---------------------------------------------------------------- 基本信息
+    def _apply_config(self, config: Dict[str, Any]) -> None:
+        self._config = dict(config)
+        self._cfg = self._config
+        self._api_key = str(
+            self._config.get("api_key")
+            or self._environ.get("MINDMEMOS_API_KEY", "")
+        ).strip()
+        self._mcp_url = str(self._config.get("mcp_url", "")).rstrip("/")
+        self._recall_limit = int(self._config.get("recall_limit", self._config.get("top_k", 6)))
+        self._timeout = float(self._config.get("request_timeout_seconds", 20))
+        self._ingest_url = str(self._config.get("ingest_url", "")).rstrip("/")
+        self._auto_ingest = self._config.get("auto_ingest", True) is not False
+        self._background_flush = self._config.get("background_flush", True) is not False
+        self._legacy_mode = bool(self._config.get("base_url") and not self._mcp_url)
+        self._enabled = bool(self._api_key and (self._mcp_url or self._legacy_mode))
 
     @property
     def name(self) -> str:
         return "mindmemos"
 
-    def _load_cfg(self, hermes_home: str) -> Dict[str, Any]:
-        path = os.path.join(hermes_home, "mindmemos.json")
-        cfg: Dict[str, Any] = {}
-        if os.path.exists(path):
-            try:
-                cfg = json.load(open(path, encoding="utf-8"))
-            except Exception as e:
-                logger.warning("mindmemos.json 读取失败: %s", e)
-        cfg.setdefault("base_url", os.getenv("MINDMEMOS_BASE_URL", "http://127.0.0.1:8000"))
-        cfg.setdefault("api_key", os.getenv("MINDMEMOS_API_KEY", ""))
-        cfg.setdefault("user_id", "leway")
-        cfg.setdefault("top_k", 6)
-        cfg.setdefault("score_threshold", 0.1)
-        cfg.setdefault("prefetch_rerank", True)
-        cfg.setdefault("prefetch_timeout", _PREFETCH_TIMEOUT)
-        cfg.setdefault("prefetch_parallelism", 1)
-        cfg.setdefault("write_enabled", True)
-        cfg.setdefault("min_write_chars", 24)
-        cfg.setdefault("ingest_url", os.getenv("MINDMEMOS_INGEST_URL", "http://127.0.0.1:8765"))
-        cfg.setdefault("ingest_key", os.getenv("MINDMEMOS_INGEST_KEY", ""))
-        cfg.setdefault(
-            "ingest_spool",
-            os.path.join(hermes_home, "mindmemos_hermes_ingest.sqlite3"),
-        )
-        cfg.setdefault(
-            "ingest_client_module",
-            os.path.expanduser("~/Projects/MindMemOS/adapters/python/mindmemos_ingest_client.py"),
-        )
-        return cfg
-
     def is_available(self) -> bool:
-        home = os.getenv("HERMES_HOME") or os.path.expanduser("~/.hermes")
-        cfg = self._load_cfg(home)
-        # 只查配置，不做网络调用（ABC 要求）
-        return bool(cfg.get("api_key"))
+        return self._enabled
 
-    # ---------------------------------------------------------------- 生命周期
+    def _post_json(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            return json.load(response)
 
-    def initialize(self, session_id: str, **kwargs) -> None:
-        home = kwargs.get("hermes_home") or os.getenv("HERMES_HOME") or os.path.expanduser("~/.hermes")
-        self._cfg = self._load_cfg(home)
-        self._base = str(self._cfg["base_url"]).rstrip("/")
-        self._key = str(self._cfg["api_key"])
-        self._user = str(self._cfg["user_id"])
+    def _call_mcp(self, name: str, arguments: Dict[str, Any]) -> str:
+        envelope = self._post_json(
+            self._mcp_url,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+        )
+        result = envelope.get("result") or {}
+        if result.get("isError"):
+            raise RuntimeError(f"MindMemOS tool failed: {name}")
+        return "\n".join(
+            item.get("text", "")
+            for item in result.get("content", [])
+            if item.get("type") == "text"
+        ).strip()
+
+    def _load_legacy_ingest_module(self, path: str):
+        spec = importlib.util.spec_from_file_location(
+            "hermes_mindmemos_ingest_client", os.path.expanduser(path)
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._session_id = session_id
-        self._platform = kwargs.get("platform", "cli")
+        self._agent_context = str(kwargs.get("agent_context") or "primary")
+        self._hermes_home = str(
+            kwargs.get("hermes_home")
+            or self._environ.get("HERMES_HOME")
+            or os.path.expanduser("~/.hermes")
+        )
+        if not self._explicit_config:
+            config_environ = dict(self._environ)
+            config_environ["HERMES_HOME"] = self._hermes_home
+            self._apply_config(_load_profile_config(config_environ))
+        self._platform = str(kwargs.get("platform") or "")
+        self._profile = str(kwargs.get("agent_identity") or "default")
 
-        ctx = kwargs.get("agent_context", "primary")
-        self._writable = bool(self._cfg.get("write_enabled", True)) and ctx == "primary"
-        self._enabled = bool(self._key)
-
-        if not self._enabled:
-            logger.warning("MindMemOS provider 未配置 api_key，已停用")
+        if self._legacy_mode:
+            if not self._enabled:
+                return
+            module_path = str(self._config.get("ingest_client_module") or "")
+            if module_path:
+                self._legacy_ingest_module = self._load_legacy_ingest_module(module_path)
+                self._legacy_ingest_client = self._legacy_ingest_module.DurableIngestClient(
+                    self._ingest_url,
+                    str(self._config.get("ingest_key") or ""),
+                    str(self._config.get("ingest_spool") or ""),
+                )
+                self._legacy_ingest_client.start_worker()
             return
 
-        self._ingest_module = _load_ingest_module(os.path.expanduser(str(self._cfg["ingest_client_module"])))
-        self._ingest_client = self._ingest_module.DurableIngestClient(
-            str(self._cfg["ingest_url"]),
-            str(self._cfg.get("ingest_key") or ""),
-            str(self._cfg["ingest_spool"]),
-        )
-        self._ingest_client.start_worker()
-        if self._writable and not self._cfg.get("ingest_key"):
-            logger.warning("MindMemOS 自动写入 Key 未配置；轮次会留在本地 durable spool 等待配置")
-        logger.info(
-            "MindMemOS provider 就绪 base=%s ingest=%s writable=%s",
-            self._base,
-            self._cfg["ingest_url"],
-            self._writable,
-        )
-
-    def shutdown(self) -> None:
-        if self._ingest_client is not None:
-            self._ingest_client.stop_worker(timeout=5.0)
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=5.0)
-
-    def on_session_switch(self, new_session_id: str, **kwargs) -> None:
-        self._session_id = new_session_id
-        with self._prefetch_lock:
-            self._last_result = ("", "", 0.0)
-
-    # ---------------------------------------------------------------- HTTP
-
-    def _breaker_open(self) -> bool:
-        return time.time() < self._breaker_until
-
-    def _record_fail(self) -> None:
-        self._fail_count += 1
-        if self._fail_count >= _BREAKER_THRESHOLD:
-            self._breaker_until = time.time() + _BREAKER_COOLDOWN
-            self._fail_count = 0
-            logger.warning("MindMemOS 连续失败，熔断 %ds", int(_BREAKER_COOLDOWN))
-
-    def _post(self, path: str, payload: Dict[str, Any], timeout: float) -> Optional[Dict[str, Any]]:
-        if self._breaker_open():
-            return None
-        req = urllib.request.Request(
-            f"{self._base}{path}",
-            data=json.dumps(payload).encode(),
-            headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                out = json.loads(r.read())
-            self._fail_count = 0
-            return out
-        except Exception as e:
-            logger.debug("MindMemOS %s 失败: %s", path, str(e)[:200])
-            self._record_fail()
-            return None
-
-    def _search(
-        self,
-        query: str,
-        top_k: Optional[int] = None,
-        timeout: float = _PREFETCH_TIMEOUT,
-        rerank: bool = True,
-    ) -> List[Dict[str, Any]]:
-        d = self._post(
-            "/v1/memory/search",
-            {
-                "user_id": self._user,
-                "query": query,
-                "top_k": int(top_k or self._cfg.get("top_k", 6)),
-                "rerank": rerank,
-                "score_threshold": float(self._cfg.get("score_threshold", 0.1)),
-            },
-            timeout,
-        )
-        if not d:
-            return []
-        return d.get("data", {}).get("memories", []) or []
-
-    # ---------------------------------------------------------------- 自动检索
-
-    @staticmethod
-    def _format(mems: List[Dict[str, Any]]) -> str:
-        if not mems:
-            return ""
-        lines = ["## 长期记忆（MindMemOS 自动召回）", ""]
-        for m in mems:
-            t = m.get("memory_type") or ""
-            lines.append(f"- [{t}] {m.get('memory', '')}")
-        lines.append("")
-        lines.append("以上为过往会话沉淀的事实，可能已过时；与当前对话冲突时以当前对话为准。")
-        return "\n".join(lines)
+        self._spool_dir = os.path.join(self._hermes_home, "mindmemos-spool")
+        os.makedirs(self._spool_dir, mode=0o700, exist_ok=True)
+        os.chmod(self._spool_dir, 0o700)
+        if self._agent_context == "primary":
+            try:
+                self._whoami = self._call_mcp("whoami", {})
+            except Exception as exc:
+                logger.warning("MindMemOS whoami failed; continuing without it: %s", exc)
+            if self._ingest_url:
+                self._start_flush()
 
     def system_prompt_block(self) -> str:
-        """常驻块：高权威身份/铁律不走语义检索，避免措辞差异导致召回不到。
-
-        实测过 "怎么称呼用户" 这类问题 rerank 分数低于阈值被砍掉 —— 身份类
-        记忆一旦漏召回，接管 memory 后就会忘掉最基本的规矩。所以这类内容
-        常驻系统提示，语义检索只负责项目历史。
-        """
-        if not self._enabled:
+        if self._agent_context != "primary" or self._legacy_mode:
             return ""
-        parts = [
-            "## MindMemOS 长期记忆已接管",
-            "",
-            "过往项目历史、决策、踩坑会在每轮自动召回并注入。需要补查特定主题时调用 `recall` 工具。",
-            "召回为空表示库里确实没有，不要编造。",
-        ]
-        pinned = self._load_pinned()
-        if pinned:
-            parts += ["", "### 常驻铁律（高权威，优先级高于召回内容）", ""]
-            parts += [f"- {p}" for p in pinned]
-        return "\n".join(parts)
+        identity = f"\n\n## 用户画像与高优先级规则\n{self._whoami}" if self._whoami else ""
+        return (
+            "# MindMemOS 长期记忆\n"
+            "已启用跨机器长期记忆。相关记忆会在每轮自动召回；深度补查、项目约束和显式保存请使用 mcp_mindmemos_* 工具。"
+            + identity
+        )
 
-    def _load_pinned(self) -> List[str]:
-        """读取常驻铁律。默认取内置 MEMORY.md / USER.md 的前若干条身份/偏好。"""
-        path = self._cfg.get("pinned_file")
-        if not path:
-            home = os.getenv("HERMES_HOME") or os.path.expanduser("~/.hermes")
-            path = os.path.join(home, "mindmemos_pinned.md")
-        if not os.path.exists(path):
-            return []
-        try:
-            raw = open(path, encoding="utf-8").read()
-        except Exception:
-            return []
-        return [b.strip() for b in raw.split("\n§\n") if len(b.strip()) >= 8]
+    @staticmethod
+    def _format_legacy(memories: List[Dict[str, Any]]) -> str:
+        if not memories:
+            return ""
+        lines = ["## 长期记忆（MindMemOS 自动召回）", ""]
+        for memory in memories:
+            lines.append(
+                f"- [{memory.get('memory_type') or ''}] {memory.get('memory', '')}"
+            )
+        return "\n".join(lines)
 
-    _SPLIT_RE = re.compile(r"(?:^|[\s，,；;。])\s*(?:\d+[)）.、]|[一二三四五六七八九十]+[)）.、])\s*")
+    @staticmethod
+    def _subqueries(query: str) -> List[str]:
+        if len(query) < 30:
+            return [query]
+        parts = [part.strip(" ：:，,。；;？?") for part in _SPLIT_RE.split(query)]
+        parts = [part for part in parts if len(part) >= 4]
+        return parts if len(parts) >= 2 else [query]
 
-    # 身份类代词查询：这类问题靠字面语义检索必然召不回
-    _IDENTITY_RE = re.compile(
-        r"我是谁|我叫什么|我的名字|怎么称呼我|你认识我|我是什么人|"
-        r"我的身份|了解我|关于我|我的家人|我家人|我的家庭"
-    )
-
-    def _subqueries(self, q: str) -> List[str]:
-        """把「1)…2)…3)…」这种多问句拆成子问题。
-
-        为什么要拆：rerank 是拿整句算相关度的。一句话里塞 5 个话题时
-        每个话题的信号被稀释，实测「wingman 是什么项目」单问能召回 4 条，
-        混在 5 问里一条都召不回。拆开分别检索再合并才不会漏。
-        """
-        if len(q) < 30:
-            return [q]
-        parts = [p.strip(" ：:，,。；;？?") for p in self._SPLIT_RE.split(q)]
-        parts = [p for p in parts if len(p) >= 4]
-        # 至少拆出 2 段才算多问句，否则按原样查
-        return parts if len(parts) >= 2 else [q]
+    def _search(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        return []
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """按当轮真实问题检索并注入。带短期缓存，避免同问题重复烧算力。"""
-        if not self._enabled:
+        text = (query or "").strip()
+        if self._agent_context != "primary" or not text or _is_low_information_input(text):
             return ""
-        q = (query or "").strip()
-        if len(q) < 2:
-            return ""
-        if _is_low_information_input(q):
-            return ""
-        # 身份类代词查询（「我是谁」「我叫什么」）字面太短、语义又跟
-        # 「用户称呼其父亲为爸爸」这类记忆原文距离很远，直查召不回。
-        # 改写成陈述句式的关键词再检索。
-        if self._IDENTITY_RE.search(q):
-            q = "用户的称呼 姓名 别名 家庭成员 工作单位 时区 语言偏好"
-        now = time.time()
-        with self._prefetch_lock:
-            key, text, ts = self._last_result
-            if key == q and now - ts < 120:
-                return text
-
-        subs = self._subqueries(q)
-        timeout = max(0.25, float(self._cfg.get("prefetch_timeout", _PREFETCH_TIMEOUT)))
-        rerank_value = self._cfg.get("prefetch_rerank", True)
-        rerank = str(rerank_value).strip().lower() not in {"0", "false", "no", "off"}
-        parallelism = max(1, min(int(self._cfg.get("prefetch_parallelism", 1)), 3))
-        if len(subs) == 1:
-            out = self._format(self._search(q, timeout=timeout, rerank=rerank))
-        else:
-            merged, seen = [], set()
-            if parallelism > 1:
-                with ThreadPoolExecutor(max_workers=min(parallelism, len(subs))) as pool:
+        if self._legacy_mode or (
+            self._cfg.get("score_threshold") is not None and not self._cfg.get("mcp_url")
+        ):
+            timeout = max(0.25, float(self._cfg.get("prefetch_timeout", 6.0)))
+            rerank = str(self._cfg.get("prefetch_rerank", True)).strip().lower() not in {
+                "0", "false", "no", "off"
+            }
+            subqueries = self._subqueries(text)
+            parallelism = max(1, min(int(self._cfg.get("prefetch_parallelism", 1)), 3))
+            if len(subqueries) > 1 and parallelism > 1:
+                with ThreadPoolExecutor(max_workers=min(parallelism, len(subqueries))) as pool:
                     batches = list(
                         pool.map(
-                            lambda sub: self._search(sub, timeout=timeout, rerank=rerank),
-                            subs,
+                            lambda item: self._search(item, timeout=timeout, rerank=rerank),
+                            subqueries,
                         )
                     )
             else:
-                batches = [self._search(s, timeout=timeout, rerank=rerank) for s in subs]
+                batches = [self._search(item, timeout=timeout, rerank=rerank) for item in subqueries]
+            merged: List[Dict[str, Any]] = []
+            seen = set()
             for batch in batches:
-                for m in batch:
-                    txt = (m.get("memory") or "").strip()
-                    if txt and txt not in seen:
-                        seen.add(txt)
-                        merged.append(m)
-            out = self._format(merged)
+                for memory in batch:
+                    value = str(memory.get("memory") or "").strip()
+                    if value and value not in seen:
+                        seen.add(value)
+                        merged.append(memory)
+            return self._format_legacy(merged)
+        try:
+            recalled = self._call_mcp(
+                "recall", {"query": text, "limit": self._recall_limit}
+            )
+            return f"## MindMemOS 相关长期记忆\n{recalled}" if recalled else ""
+        except Exception as exc:
+            logger.debug("MindMemOS recall failed: %s", exc)
+            return ""
 
-        with self._prefetch_lock:
-            self._last_result = (q, out, now)
-        return out
+    def _write_spool_record(self, record: Dict[str, Any], event_id: str) -> str:
+        if not self._spool_dir:
+            raise RuntimeError("MindMemOS provider is not initialized")
+        destination = os.path.join(self._spool_dir, f"{event_id}.json")
+        temporary = os.path.join(self._spool_dir, f".{event_id}.{uuid.uuid4().hex}.tmp")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(record, handle, ensure_ascii=False, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+            os.chmod(destination, 0o600)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        return destination
 
-    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        """本轮结束后的预取钩子 —— 故意不做任何事。
+    def _send_turn(self, payload: Dict[str, Any]) -> bool:
+        request = urllib.request.Request(
+            self._ingest_url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            status = getattr(response, "status", response.getcode())
+            body = json.load(response)
+        return status == 202 and body.get("ok") is True
 
-        ABC 的设计意图是「用本轮内容预热下一轮」，但下一轮爸爸问的是新问题，
-        拿本轮的 query 去预取必然命中不了，缓存作废还白烧一次
-        search + embedding + rerank（实测一次对话变成 2 次检索）。
-        真正的检索在 prefetch() 里按当轮真实问题同步做，够快（~1s）。
-        """
-        return
+    def _send_remember(self, record: Dict[str, Any]) -> bool:
+        content = str(record.get("content") or "").strip()
+        if not content:
+            return False
+        arguments = {"content": content}
+        session_id = str(record.get("session_id") or "").strip()
+        if session_id:
+            arguments["session_id"] = session_id
+        return bool(self._call_mcp("remember", arguments))
 
-    # ---------------------------------------------------------------- 自动写入
+    def _flush_spool_once(self) -> None:
+        if not self._spool_dir or not os.path.isdir(self._spool_dir):
+            return
+        if not self._flush_lock.acquire(blocking=False):
+            return
+        try:
+            for name in sorted(os.listdir(self._spool_dir)):
+                if not name.endswith(".json") or name.startswith("."):
+                    continue
+                path = os.path.join(self._spool_dir, name)
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        record = json.load(handle)
+                    acknowledged = False
+                    if record.get("kind") == "turn":
+                        acknowledged = self._send_turn(record.get("payload") or {})
+                    elif record.get("kind") == "remember":
+                        acknowledged = self._send_remember(record)
+                    if acknowledged:
+                        os.unlink(path)
+                except Exception as exc:
+                    logger.debug("MindMemOS spool delivery retained %s: %s", path, exc)
+        finally:
+            self._flush_lock.release()
+
+    def _start_flush(self) -> None:
+        if self._background_flush:
+            threading.Thread(target=self._flush_spool_once, daemon=True).start()
 
     def _worth_writing(self, user_content: str) -> bool:
-        s = (user_content or "").strip()
-        if len(s) < int(self._cfg.get("min_write_chars", 24)):
-            return False
-        return not s.startswith(_COMMAND_PREFIXES) and not _is_low_information_input(s)
+        text = (user_content or "").strip()
+        minimum = int(self._cfg.get("min_write_chars", 24))
+        return (
+            len(text) >= minimum
+            and not text.startswith(_COMMAND_PREFIXES)
+            and not _is_low_information_input(text)
+        )
 
     @staticmethod
     def _is_recursive_capture(messages: Optional[List[Dict[str, Any]]]) -> bool:
@@ -398,47 +363,94 @@ class MindMemOSProvider(MemoryProvider):
         session_id: str = "",
         messages: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
-        if not (self._enabled and self._writable and self._ingest_client):
+        if self._legacy_mode:
+            if (
+                self._agent_context != "primary"
+                or not self._enabled
+                or self._legacy_ingest_client is None
+                or not self._worth_writing(user_content)
+                or not (assistant_content or "").strip()
+                or self._is_recursive_capture(messages)
+            ):
+                return
+            sid = session_id or self._session_id or "hermes"
+            legacy_module = self._legacy_ingest_module
+            assert legacy_module is not None
+            event_id = legacy_module.stable_event_id(
+                "hermes", sid, len(messages or []), user_content, assistant_content
+            )
+            self._legacy_ingest_client.enqueue(
+                "/ingest/turn",
+                {
+                    "event_id": event_id,
+                    "session_id": sid,
+                    "turn_id": f"turn-{len(messages or []) or event_id[-12:]}",
+                    "user_message": user_content[:6000],
+                    "assistant_message": assistant_content[:6000],
+                    "safe_context": {"runtime": "hermes", "platform": self._platform},
+                },
+            )
             return
-        if not self._worth_writing(user_content) or not (assistant_content or "").strip():
+        if (
+            self._agent_context != "primary"
+            or not self._auto_ingest
+            or not self._ingest_url
+            or not self._worth_writing(user_content)
+            or not (assistant_content or "").strip()
+            or self._is_recursive_capture(messages)
+        ):
             return
-        if self._is_recursive_capture(messages):
-            return
-        resolved_session = session_id or self._session_id or "hermes"
-        message_count = len(messages or [])
-        event_id = self._ingest_module.stable_event_id(
-            "hermes",
-            resolved_session,
-            message_count,
-            user_content,
-            assistant_content,
-        )
+        sid = session_id or self._session_id or "unknown"
+        digest = hashlib.sha256(
+            (sid + "\0" + user_content + "\0" + (assistant_content or "")).encode("utf-8")
+        ).hexdigest()
+        event_id = f"hermes-{digest[:32]}"
         payload = {
             "event_id": event_id,
-            "session_id": resolved_session,
-            "turn_id": f"turn-{message_count or event_id[-12:]}",
-            "user_message": user_content[:6000],
-            "assistant_message": assistant_content[:6000],
-            "safe_context": {"runtime": "hermes", "platform": self._platform},
+            "session_id": sid,
+            "turn_id": digest[32:48],
+            "user_message": user_content,
+            "assistant_message": assistant_content or "",
+            "safe_context": {
+                "runtime": "hermes-agent",
+                "platform": self._platform,
+                "profile": self._profile,
+                "capture_mode": "completed_turn",
+            },
         }
-        try:
-            self._ingest_client.enqueue("/ingest/turn", payload)
-        except Exception as e:
-            logger.error("MindMemOS durable turn spool 写入失败: %s", str(e)[:200])
+        self._write_spool_record({"kind": "turn", "payload": payload}, event_id)
+        self._start_flush()
+
+    @staticmethod
+    def _has_mindmemos_provenance(content: str, metadata: Optional[Dict[str, Any]]) -> bool:
+        provenance = json.dumps(metadata or {}, ensure_ascii=False).lower()
+        text = (content or "").lower()
+        return "mindmemos" in provenance or text.startswith("mindmemos recall")
 
     def on_memory_write(
-        self, action: str, target: str, content: str, metadata: Optional[Dict[str, Any]] = None
+        self,
+        action: str,
+        target: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Mirror explicit builtin-memory writes through the trusted collector."""
-        if not (self._enabled and self._writable and self._ingest_client) or action == "remove":
-            return
-        if not content or len(content.strip()) < 8:
-            return
-        if isinstance(metadata, dict) and metadata.get("mindmemos_capture"):
-            return
-        event_id = self._ingest_module.stable_event_id("hermes-memory", self._session_id, action, target, content)
-        try:
-            self._ingest_client.enqueue(
+        if self._legacy_mode:
+            if (
+                self._agent_context != "primary"
+                or not self._enabled
+                or self._legacy_ingest_client is None
+                or action == "remove"
+                or not (content or "").strip()
+                or self._has_mindmemos_provenance(content, metadata)
+            ):
+                return
+            sid = str((metadata or {}).get("session_id") or self._session_id or "hermes")
+            legacy_module = self._legacy_ingest_module
+            assert legacy_module is not None
+            event_id = legacy_module.stable_event_id(
+                "hermes-memory", sid, action, target, content
+            )
+            self._legacy_ingest_client.enqueue(
                 "/ingest/memory",
                 {
                     "event_id": event_id,
@@ -451,120 +463,116 @@ class MindMemOSProvider(MemoryProvider):
                     },
                 },
             )
-        except Exception as e:
-            logger.error("MindMemOS durable builtin-memory spool 写入失败: %s", str(e)[:200])
-
-    # ---------------------------------------------------------------- 模型工具
+            return
+        if (
+            self._agent_context != "primary"
+            or action not in {"add", "replace"}
+            or not (content or "").strip()
+            or self._has_mindmemos_provenance(content, metadata)
+        ):
+            return
+        sid = str((metadata or {}).get("session_id") or self._session_id or "unknown")
+        digest = hashlib.sha256(
+            ("remember\0" + sid + "\0" + target + "\0" + action + "\0" + content).encode("utf-8")
+        ).hexdigest()
+        event_id = f"hermes-remember-{digest[:24]}"
+        record = {
+            "kind": "remember",
+            "content": content,
+            "session_id": sid,
+            "safe_context": {
+                "runtime": "hermes-agent",
+                "target": target,
+                "action": action,
+                "capture_mode": "explicit_memory_write",
+            },
+        }
+        self._write_spool_record(record, event_id)
+        self._start_flush()
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "name": "recall",
-                "description": (
-                    "检索长期记忆库（MindMemOS），查过往项目历史、决策、踩过的坑、用户偏好。"
-                    "每轮已自动召回相关记忆；仅当需要补充查询特定主题时才主动调用。"
-                    "查不到会明确返回空，不要把无关结果当答案。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "要查什么，用自然语言"},
-                        "top_k": {"type": "integer", "description": "返回条数，默认 10"},
-                    },
-                    "required": ["query"],
-                },
-            }
-        ]
-
-    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
-        if tool_name != "recall":
-            return tool_error(f"Unknown tool: {tool_name}")
-        if not self._enabled:
-            return tool_error("MindMemOS 未配置")
-        q = (args.get("query") or "").strip()
-        if not q:
-            return tool_error("query 不能为空")
-        mems = self._search(q, top_k=int(args.get("top_k") or 10), timeout=30.0)
-        return json.dumps(
-            {
-                "success": True,
-                "count": len(mems),
-                "memories": [
-                    {"memory": m.get("memory"), "type": m.get("memory_type"), "time": m.get("last_update_at")}
-                    for m in mems
-                ],
-                "note": "没有结果说明库里确实没有相关内容，不要编造。" if not mems else "",
-            },
-            ensure_ascii=False,
-        )
-
-    # ---------------------------------------------------------------- 配置向导
+        # The same six tools are exposed through the configured MCP server.
+        return []
 
     def get_config_schema(self) -> List[Dict[str, Any]]:
         return [
             {
                 "key": "api_key",
-                "description": "MindMemOS API Key",
+                "description": "MindMemOS instance credential",
                 "secret": True,
                 "required": True,
                 "env_var": "MINDMEMOS_API_KEY",
+                "url": "http://192.168.1.246:8666",
             },
             {
-                "key": "base_url",
-                "description": "MindMemOS API 地址",
-                "default": "http://127.0.0.1:8000",
-                "env_var": "MINDMEMOS_BASE_URL",
-            },
-            {
-                "key": "ingest_key",
-                "description": "MindMemOS 当前 Hermes 实例专属写 Key",
-                "secret": True,
+                "key": "mcp_url",
+                "description": "MindMemOS Streamable HTTP MCP endpoint",
                 "required": True,
-                "env_var": "MINDMEMOS_INGEST_KEY",
+                "default": "https://memory.studio.nexora.restry.cn/mcp",
             },
             {
                 "key": "ingest_url",
-                "description": "MindMemOS durable collector 地址",
-                "default": "http://127.0.0.1:8765",
-                "env_var": "MINDMEMOS_INGEST_URL",
+                "description": "Durable completed-turn collector endpoint",
+                "required": True,
+                "default": "https://memory.studio.nexora.restry.cn/ingest/turn",
             },
-            {"key": "user_id", "description": "记忆归属 user_id", "default": "leway"},
-            {"key": "top_k", "description": "每轮自动注入的记忆条数", "default": "6"},
-            {"key": "score_threshold", "description": "相关度阈值 0-1，低于此值不注入", "default": "0.1"},
             {
-                "key": "prefetch_rerank",
-                "description": "自动召回是否执行 rerank；手动 recall 始终执行",
+                "key": "recall_limit",
+                "description": "Maximum memories injected before each turn",
+                "default": "6",
+            },
+            {
+                "key": "auto_ingest",
+                "description": "Capture completed primary-agent turns",
                 "default": "true",
                 "choices": ["true", "false"],
             },
-            {"key": "prefetch_timeout", "description": "自动召回单请求超时秒数", "default": "6"},
-            {"key": "prefetch_parallelism", "description": "多问句并行检索数，最大 3", "default": "1"},
             {
-                "key": "write_enabled",
-                "description": "每轮对话自动写入记忆库",
-                "default": "true",
-                "choices": ["true", "false"],
+                "key": "min_write_chars",
+                "description": "Minimum non-acknowledgement user-message length for automatic capture",
+                "default": "24",
+            },
+            {
+                "key": "request_timeout_seconds",
+                "description": "MindMemOS HTTP request timeout",
+                "default": "20",
             },
         ]
 
     def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
-        path = os.path.join(hermes_home, "mindmemos.json")
-        cur = {}
-        if os.path.exists(path):
+        from pathlib import Path
+        from utils import atomic_json_write
+
+        path = Path(hermes_home) / "mindmemos.json"
+        existing: Dict[str, Any] = {}
+        if path.exists():
             try:
-                cur = json.load(open(path, encoding="utf-8"))
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
             except Exception:
-                cur = {}
-        cur.update({k: v for k, v in values.items() if v not in (None, "")})
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(cur, f, ensure_ascii=False, indent=1)
-        os.chmod(path, 0o600)
+                existing = {}
+        safe_values = {k: v for k, v in values.items() if k not in {"api_key", "token"}}
+        existing.update(safe_values)
+        atomic_json_write(path, existing, mode=0o600)
 
-    def backup_paths(self) -> List[str]:
-        home = os.getenv("HERMES_HOME") or os.path.expanduser("~/.hermes")
-        return [os.path.join(home, "mindmemos.json")]
+    def on_session_switch(
+        self,
+        new_session_id: str,
+        *,
+        parent_session_id: str = "",
+        reset: bool = False,
+        rewound: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        self._session_id = new_session_id or self._session_id
+
+    def shutdown(self) -> None:
+        if self._legacy_ingest_client is not None:
+            self._legacy_ingest_client.stop_worker(timeout=5.0)
+        else:
+            self._flush_spool_once()
 
 
-def register(ctx) -> None:
-    """注册 MindMemOS 为 memory provider。"""
+def register(ctx: Any) -> None:
     ctx.register_memory_provider(MindMemOSProvider())
