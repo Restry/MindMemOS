@@ -120,7 +120,9 @@ h1 .pt{color:var(--accent)}
 .terminal-execute{min-width:126px;border:1px solid rgba(229,90,63,.55);background:rgba(229,90,63,.09);
   color:var(--accent);font:700 10px var(--mono);letter-spacing:1.2px;cursor:pointer;text-transform:uppercase}
 .terminal-execute:hover{background:var(--accent);color:#090909}.terminal-execute:disabled{opacity:.4;cursor:default}
-.terminal-state{grid-column:1/-1;min-height:14px;color:var(--dim);font-size:8.5px;letter-spacing:.9px;text-transform:uppercase}
+.terminal-footer{grid-column:1/-1;border-top:1px solid rgba(229,90,63,.16);padding-top:8px}
+.terminal-state{min-height:14px;color:var(--dim);font-size:8.5px;letter-spacing:.9px;text-transform:uppercase}
+.terminal-suggestions{margin:8px 0 0}.terminal-suggestions .ex{font-size:9.5px;padding:4px 8px;background:rgba(229,90,63,.035)}
 .memory-terminal.compact .terminal-body{display:none}.memory-terminal.compact{max-width:430px;margin-right:0}
 @keyframes terminalPulse{0%,100%{opacity:.45;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
 .rules-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
@@ -167,6 +169,9 @@ h1 .pt{color:var(--accent)}
 /* ---------- tabs ---------- */
 .tabs{display:flex;gap:0;border:1px solid var(--line);margin-bottom:18px;
   background:var(--panel);flex-wrap:wrap}
+.top-tabs{position:sticky;top:0;z-index:120;flex-wrap:nowrap;overflow-x:auto;
+  scrollbar-width:thin;background:rgba(19,19,19,.96);backdrop-filter:blur(14px);
+  box-shadow:0 8px 24px rgba(0,0,0,.32)}
 .tab{padding:11px 18px;font-size:11px;color:var(--sub);cursor:pointer;
   border-right:1px solid var(--line);text-transform:uppercase;letter-spacing:1.3px;
   position:relative;transition:all .15s;white-space:nowrap}
@@ -304,29 +309,9 @@ button{font-family:var(--mono)}
 </header>
 <p class="sub">// LONG-TERM MEMORY STORE · 语义检索 + 实体图谱 · 数据不出内网</p>
 
-<div class="stats" id="stats"></div>
-<div class="dashboard-grid" id="dashboard">
-  <section class="dash-panel wide"><div class="empty">30D 活动曲线加载中…</div></section>
-  <section class="dash-panel"><div class="empty">最近活动加载中…</div></section>
-  <section class="dash-panel"><div class="empty">分布加载中…</div></section>
-</div>
-
-<section class="memory-terminal" id="memory-terminal" aria-label="Memory command terminal">
-  <div class="terminal-head">
-    <span class="prompt">›</span><span>MEMORY COMMAND TERMINAL</span>
-    <i class="terminal-live" title="Panel online"></i>
-    <button class="terminal-compact" id="terminal-compact" type="button">COMPACT</button>
-  </div>
-  <div class="terminal-body">
-    <textarea id="terminal-input" aria-label="输入记忆检索或面板命令"
-      placeholder="输入记忆问题，或 /help 查看安全命令…"></textarea>
-    <button class="terminal-execute" id="terminal-execute" type="button">EXECUTE →</button>
-    <div class="terminal-state" id="terminal-state">READY · PLAIN TEXT RUNS SEMANTIC SEARCH</div>
-  </div>
-</section>
-
-<div class="tabs">
-  <div class="tab on" data-t="search">语义搜索</div>
+<div class="tabs top-tabs">
+  <div class="tab on" data-t="home">首页</div>
+  <div class="tab" data-t="search">语义搜索</div>
   <div class="tab" data-t="browse">浏览全部</div>
   <div class="tab" data-t="graph">关系图谱</div>
   <div class="tab" data-t="who">我是谁</div>
@@ -336,13 +321,33 @@ button{font-family:var(--mono)}
   <div class="tab" data-t="models">模型设置</div>
 </div>
 
-<div id="pane-search">
-  <div class="searchbar">
-    <input id="q" placeholder="用大白话提问，例如：image-studio 有什么已知限制" autocomplete="off">
-    <button id="go">搜索</button>
+<div id="pane-home">
+  <div class="stats" id="stats"></div>
+  <div class="dashboard-grid" id="dashboard">
+    <section class="dash-panel wide"><div class="empty">30D 活动曲线加载中…</div></section>
+    <section class="dash-panel"><div class="empty">最近活动加载中…</div></section>
+    <section class="dash-panel"><div class="empty">分布加载中…</div></section>
   </div>
-  <div class="examples" id="ex"></div>
-  <div id="sres"><div class="empty">输入问题，或点上面的示例试试</div></div>
+</div>
+
+<div id="pane-search" style="display:none">
+  <section class="memory-terminal" id="memory-terminal" aria-label="Memory command terminal">
+    <div class="terminal-head">
+      <span class="prompt">›</span><span>MEMORY COMMAND TERMINAL</span>
+      <i class="terminal-live" title="Panel online"></i>
+      <button class="terminal-compact" id="terminal-compact" type="button">COMPACT</button>
+    </div>
+    <div class="terminal-body">
+      <textarea id="terminal-input" aria-label="输入记忆检索或面板命令"
+        placeholder="输入记忆问题，或 /help 查看安全命令…"></textarea>
+      <button class="terminal-execute" id="terminal-execute" type="button">EXECUTE →</button>
+      <div class="terminal-footer">
+        <div class="terminal-state" id="terminal-state">READY · PLAIN TEXT RUNS SEMANTIC SEARCH</div>
+        <div class="examples terminal-suggestions" id="ex"></div>
+      </div>
+    </div>
+  </section>
+  <div id="sres"><div class="empty">输入问题，或点上面的随机问题试试</div></div>
 </div>
 
 <div id="pane-browse" style="display:none">
@@ -653,8 +658,8 @@ document.addEventListener('click',async ev=>{
 });
 
 async function search(){
-  const q=$('#q').value.trim(); if(!q) return;
-  const b=$('#go'); b.disabled=true; b.innerHTML='<span class="spin"></span>';
+  const q=$('#terminal-input').value.trim(); if(!q) return;
+  const b=$('#terminal-execute'); b.disabled=true; b.innerHTML='<span class="spin"></span>';
   $('#sres').innerHTML='<div class="empty">检索中…</div>';
   try{
     const r=await (await fetch('/api/search',{method:'POST',
@@ -674,7 +679,7 @@ async function search(){
   }catch(e){
     $('#sres').innerHTML=`<div class="err">${esc(e.message)}</div>`;
   }
-  b.disabled=false; b.textContent='搜索';
+  b.disabled=false; b.textContent='EXECUTE →';
 }
 
 function renderBrowse(){
@@ -830,7 +835,7 @@ async function loadSuggest(){
 }
 $('#ex').onclick=e=>{
   if(e.target.id==='ex-more'){loadSuggest();return}
-  if(e.target.classList.contains('ex')){$('#q').value=e.target.textContent;search()}
+  if(e.target.classList.contains('ex')){$('#terminal-input').value=e.target.textContent;runMemoryCommand()}
 };
 loadSuggest();
 
@@ -983,12 +988,10 @@ $('#up-go').onclick=async()=>{
   UP_FILES=[]; fi.value=''; btn.disabled=true;
 };
 
-$('#go').onclick=search;
-$('#q').onkeydown=e=>{if(e.key==='Enter')search()};
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
   const k=t.dataset.t;
-  ['search','browse','graph','who','recent','upload','tokens','models'].forEach(p=>{
+  ['home','search','browse','graph','who','recent','upload','tokens','models'].forEach(p=>{
     const el=$('#pane-'+p); if(el) el.style.display = p===k?'':'none';
   });
   if(k==='graph'&&!GRAPH_LOADED){GRAPH_LOADED=1;drawGraph()}
@@ -1023,14 +1026,14 @@ async function runMemoryCommand(){
     }
     const query=command==='/search'?raw.slice(command.length).trim():raw;
     if(!query){terminalState('SEARCH QUERY IS EMPTY',true);return}
-    openPane('search');$('#q').value=query;terminalState('SEARCHING MINDMEM·OS…');
+    openPane('search');$('#terminal-input').value=query;terminalState('SEARCHING MINDMEM·OS…');
     await search();terminalState('SEARCH COMPLETE · RESULTS OPEN BELOW');
     $('#pane-search').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
   }catch(e){terminalState('COMMAND FAILED · '+e.message,true)}
   finally{button.disabled=false}
 }
 $('#terminal-execute').onclick=runMemoryCommand;
-$('#terminal-input').onkeydown=e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();runMemoryCommand()}};
+$('#terminal-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runMemoryCommand()}};
 $('#terminal-compact').onclick=()=>{
   const terminal=$('#memory-terminal'),compact=terminal.classList.toggle('compact');
   $('#terminal-compact').textContent=compact?'EXPAND':'COMPACT';
@@ -1039,7 +1042,7 @@ $('#terminal-compact').onclick=()=>{
 /* ================= 数据刷新 =================
    每 30 秒只查一个轻量版本号；有变化才拉全量。页面在后台或准则正在编辑时不覆盖。 */
 let DATA_VERSION='', REFRESHING=false;
-function activePane(){return document.querySelector('.tab.on')?.dataset.t||'search'}
+function activePane(){return document.querySelector('.tab.on')?.dataset.t||'home'}
 async function refreshAll(manual=false){
   if(REFRESHING)return;
   REFRESHING=true;const btn=$('#refresh-all'),state=$('#refresh-state');

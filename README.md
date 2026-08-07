@@ -10,7 +10,7 @@ MindMemOS 的内网管理面板，默认监听 `8666`。提供记忆浏览、关
 
 Memory Command Terminal 只提供安全的面板操作：普通文本和 `/search` 执行语义检索，
 `/whoami`、`/browse`、`/recent`、`/upload`、`/graph`、`/tokens`、`/models` 切换页面，
-`/refresh` 刷新快照。它不接受 shell 或任意服务器命令。
+`/refresh` 刷新快照。它不接受 shell 或任意服务器命令。功能 Tabs 固定在页面内容顶部，默认打开首页；语义搜索页使用浮动 Terminal 替代传统搜索框，动态建议问题直接显示在 READY 状态下方。
 
 ## 模型设置
 
