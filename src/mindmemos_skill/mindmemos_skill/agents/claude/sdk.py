@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ...errors import SkillCapabilityUnavailableError
-from ...registry import register
+from ...registry import ComponentType, register
 from ...typing import AgentExecutionRequest, AgentType, SkillInjectionMode, Trajectory
 from ..base import Agent
 from .config import ClaudeSDKAgentConfig
@@ -23,7 +23,7 @@ from .support import (
 )
 
 
-@register(type="agent", name=AgentType.CLAUDE_SDK.value)
+@register(type=ComponentType.AGENT, name=AgentType.CLAUDE_SDK.value)
 class ClaudeSDKAgent(Agent[ClaudeSDKAgentConfig]):
     """Agent that uses ``claude_agent_sdk`` to execute tasks with skill support."""
 

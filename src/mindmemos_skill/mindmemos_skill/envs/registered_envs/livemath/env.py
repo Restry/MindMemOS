@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import Field
 
 from ....agents.base import Agent
-from ....registry import register
+from ....registry import ComponentType, register
 from ....typing import EnvConfig, Reward, Skill, Task, Trajectory
 from ...base import BaseEnv, EnvRolloutContext, PreparedRollout
 
@@ -40,7 +40,7 @@ class LiveMathEnvConfig(EnvConfig):
     use_sketch: bool = False
 
 
-@register(type="env", name="livemath")
+@register(type=ComponentType.ENV, name="livemath")
 class LiveMathEnv(BaseEnv[LiveMathEnvConfig]):
     """Run one LiveMath question with the original chat protocol."""
 

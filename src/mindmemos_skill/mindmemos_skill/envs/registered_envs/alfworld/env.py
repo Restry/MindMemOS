@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import Field
 
 from ....agents.base import Agent
-from ....registry import register
+from ....registry import ComponentType, register
 from ....typing import EnvConfig, Reward, Skill, Task, Trajectory
 from ...base import BaseEnv, EnvRolloutContext, PreparedRollout
 
@@ -40,7 +40,7 @@ class ALFWorldEnvConfig(EnvConfig):
     seed: int = 42
 
 
-@register(type="env", name="alfworld")
+@register(type=ComponentType.ENV, name="alfworld")
 class ALFWorldEnv(BaseEnv[ALFWorldEnvConfig]):
     """Run clean O(N) message history over one ALFWorld simulator."""
 

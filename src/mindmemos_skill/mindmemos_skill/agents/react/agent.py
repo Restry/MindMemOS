@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from ...llm import ChatResponse
-from ...registry import register
+from ...registry import ComponentType, register
 from ...typing import (
     AgentExecutionRequest,
     AgentType,
@@ -37,7 +37,7 @@ class ChatClient(Protocol):
     ) -> ChatResponse | None: ...
 
 
-@register(type="agent", name=AgentType.REACT.value)
+@register(type=ComponentType.AGENT, name=AgentType.REACT.value)
 class ReactAgent(Agent[ReactAgentConfig]):
     """A minimal ReAct loop over native OpenAI ``tool_calls`` messages.
 

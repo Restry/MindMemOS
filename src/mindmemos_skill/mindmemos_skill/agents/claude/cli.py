@@ -13,7 +13,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from ...registry import register
+from ...registry import ComponentType, register
 from ...typing import AgentExecutionRequest, AgentType, SkillInjectionMode, Trajectory
 from ..base import Agent
 from .config import ClaudeAgentConfig
@@ -26,7 +26,7 @@ from .support import (
 )
 
 
-@register(type="agent", name=AgentType.CLAUDE.value)
+@register(type=ComponentType.AGENT, name=AgentType.CLAUDE.value)
 class ClaudeAgent(Agent[ClaudeAgentConfig]):
     agent_type = AgentType.CLAUDE
     config_type = ClaudeAgentConfig

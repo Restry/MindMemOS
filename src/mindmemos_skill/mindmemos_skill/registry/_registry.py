@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
@@ -13,9 +14,16 @@ if TYPE_CHECKING:
     from ..envs.base import BaseEnv
     from ..typing import AgentType, EnvConfig
 
-ComponentType = str
 
-_VALID_COMPONENT_TYPES = {"env", "dataset", "algo", "agent"}
+class ComponentType(StrEnum):
+    """Supported unified component registry categories."""
+
+    ENV = "env"
+    DATASET = "dataset"
+    ALGO = "algo"
+    AGENT = "agent"
+
+
 _COMPONENT_REGISTRY: dict[ComponentType, dict[str, type[Any]]] = {}
 _BUILTINS_LOADED = False
 _BUILTIN_MODULES = (
@@ -30,9 +38,7 @@ _BUILTIN_MODULES = (
 def register(*, type: ComponentType, name: str):
     """Register a component class under a type/name pair."""
 
-    if type not in _VALID_COMPONENT_TYPES:
-        valid = ", ".join(sorted(_VALID_COMPONENT_TYPES))
-        raise ValueError(f"Unknown component type {type!r}. Valid types: {valid}")
+    _require_component_type(type)
     if not name:
         raise ValueError("component name must not be empty")
 
@@ -49,6 +55,7 @@ def register(*, type: ComponentType, name: str):
 def create(*, type: ComponentType, name: str, **kwargs: Any) -> Any:
     """Create a registered component by type/name."""
 
+    _require_component_type(type)
     load_builtin_components()
     component_cls = _COMPONENT_REGISTRY.get(type, {}).get(name)
     if component_cls is None:
@@ -62,8 +69,15 @@ def list_components(*, type: ComponentType | None = None) -> dict[str, list[str]
 
     load_builtin_components()
     if type is not None:
-        return {type: sorted(_COMPONENT_REGISTRY.get(type, {}))}
-    return {t: sorted(names) for t, names in _COMPONENT_REGISTRY.items()}
+        _require_component_type(type)
+        return {type.value: sorted(_COMPONENT_REGISTRY.get(type, {}))}
+    return {component_type.value: sorted(names) for component_type, names in _COMPONENT_REGISTRY.items()}
+
+
+def _require_component_type(value: ComponentType) -> None:
+    if not isinstance(value, ComponentType):
+        valid = ", ".join(item.value for item in ComponentType)
+        raise TypeError(f"component type must be a ComponentType enum member; valid types: {valid}")
 
 
 def get_agent(
@@ -81,13 +95,13 @@ def get_agent(
         normalized_type = AgentType(agent_type)
     except ValueError as exc:
         raise ValueError(f"Unknown agent type: {agent_type!r}") from exc
-    return cast(Agent[Any], create(type="agent", name=normalized_type.value, config=config, **kwargs))
+    return cast(Agent[Any], create(type=ComponentType.AGENT, name=normalized_type.value, config=config, **kwargs))
 
 
 def list_agents() -> list[str]:
     """List Agent names registered in the unified component registry."""
 
-    return list_components(type="agent").get("agent", [])
+    return list_components(type=ComponentType.AGENT).get(ComponentType.AGENT.value, [])
 
 
 def get_env(
@@ -100,13 +114,13 @@ def get_env(
 
     from ..envs.base import BaseEnv
 
-    return cast(BaseEnv[Any], create(type="env", name=name, config=config, **kwargs))
+    return cast(BaseEnv[Any], create(type=ComponentType.ENV, name=name, config=config, **kwargs))
 
 
 def list_envs() -> list[str]:
     """List built-in and package-external registered environment names."""
 
-    return list_components(type="env").get("env", [])
+    return list_components(type=ComponentType.ENV).get(ComponentType.ENV.value, [])
 
 
 def load_builtin_components() -> None:

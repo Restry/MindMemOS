@@ -158,9 +158,9 @@ MindMemOS can participate in the same selection path:
 
 ```python
 from mindmemos_skill.envs import BaseEnv
-from mindmemos_skill.registry import register
+from mindmemos_skill.registry import ComponentType, register
 
-@register(type="env", name="my_benchmark")
+@register(type=ComponentType.ENV, name="my_benchmark")
 class MyBenchmarkEnv(BaseEnv):
     ...
 ```

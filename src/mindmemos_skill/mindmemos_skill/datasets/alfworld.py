@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..envs.registered_envs.alfworld import SYSTEM_PROMPT
-from ..registry import register
+from ..registry import ComponentType, register
 from ..typing import Task
 from .base import TaskDataset
 
@@ -24,7 +24,7 @@ TASK_TYPES = (
 )
 
 
-@register(type="dataset", name="alfworld_path_split")
+@register(type=ComponentType.DATASET, name="alfworld_path_split")
 class ALFWorldPathSplitDataset(TaskDataset):
     """Load the same gamefile manifests used by Skill-GRPO."""
 

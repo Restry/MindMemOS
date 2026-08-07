@@ -8,7 +8,7 @@ import random
 from pathlib import Path
 from typing import Any
 
-from ..registry import register
+from ..registry import ComponentType, register
 from ..typing import Task
 from .base import TaskDataset
 
@@ -16,7 +16,7 @@ SPLIT_DIR_NAMES = {"train": "train", "validation": "val", "test": "test"}
 _CHOICE_LABELS = ("A", "B", "C", "D", "E", "F", "G")
 
 
-@register(type="dataset", name="livemath_id_split")
+@register(type=ComponentType.DATASET, name="livemath_id_split")
 class LiveMathIdSplitDataset(TaskDataset):
     """Load official LiveMath JSON files through stable split IDs."""
 
