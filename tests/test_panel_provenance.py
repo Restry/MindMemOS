@@ -240,6 +240,13 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert "setInterval(checkForUpdates,30000)" in html
     assert 'id="dashboard"' in html
     assert "renderDashboard(s,RECENT)" in html
+    assert "function recentBarsSvg(days,today)" in html
+    assert 'class="recent-bars"' in html
+    assert 'aria-label="最近三十天每日新增柱状图"' in html
+    assert "[...Object.entries(RECENT.by_day||{})].reverse()" in html
+    assert "今日进行中" in html
+    assert "if(k==='recent')setTerminalCompact(true)" in html
+    assert "growthRows(days,max)" not in html
     assert 'id="rules-edit"' in html
     assert "fetch('/api/rules'" in html
     assert "fetch('/api/recent'" not in html
