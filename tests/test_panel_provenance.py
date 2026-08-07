@@ -246,7 +246,19 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert "setTimeout(()=>loadWho(1)" not in html
     assert "$('#rule-cancel').onclick=()=>loadWho()" not in html
     assert 'data-t="models"' in html
+    assert 'class="tabs top-tabs"' in html
+    assert 'class="tab on" data-t="home"' in html
+    assert html.index('class="tabs top-tabs"') < html.index('id="pane-home"')
+    assert html.index('id="pane-home"') < html.index('id="pane-search"')
     assert 'id="pane-models"' in html
+    assert 'id="memory-terminal"' in html
+    assert 'class="terminal-footer"' in html
+    assert html.index('id="memory-terminal"') < html.index('id="ex"')
+    assert 'id="q"' not in html
+    assert 'id="go"' not in html
+    assert "||'home'" in html
+    assert "e.key==='Enter'&&!e.shiftKey" in html
+    assert "$('#terminal-input').value=e.target.textContent;runMemoryCommand()" in html
     assert 'id="model-llm-name"' in html
     assert 'id="model-embedding-name"' in html
     assert 'id="model-rerank-name"' in html
