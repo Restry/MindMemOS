@@ -248,12 +248,19 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert 'data-t="models"' in html
     assert 'class="tabs top-tabs"' in html
     assert 'class="tab on" data-t="home"' in html
+    assert 'data-t="search"' not in html
+    assert 'id="pane-search"' not in html
     assert html.index('class="tabs top-tabs"') < html.index('id="pane-home"')
-    assert html.index('id="pane-home"') < html.index('id="pane-search"')
+    assert "grid-template-columns:repeat(8,minmax(0,1fr));overflow:visible" in html
     assert 'id="pane-models"' in html
-    assert 'id="memory-terminal"' in html
+    assert 'class="memory-terminal floating-terminal"' in html
+    assert 'id="search-results-layer"' in html
     assert 'class="terminal-footer"' in html
     assert html.index('id="memory-terminal"') < html.index('id="ex"')
+    refresh_button = html.split('id="refresh-all"', 1)[1].split("</button>", 1)[0]
+    refresh_button_content = refresh_button.split(">", 1)[1]
+    assert "刷新数据" not in refresh_button_content
+    assert 'data-lucide="refresh-cw"' in refresh_button_content
     assert 'id="q"' not in html
     assert 'id="go"' not in html
     assert "||'home'" in html
