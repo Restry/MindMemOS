@@ -88,6 +88,30 @@ def t_recall(args: dict) -> str:
         },
     )
     mems = (d.get("data") or {}).get("memories") or []
+    if args.get("response_format") == "json":
+        structured = []
+        for memory in mems[:limit]:
+            content = str(memory.get("memory") or "").strip()
+            if not content:
+                continue
+            memory_id = str(memory.get("id") or "").strip()
+            if not memory_id:
+                memory_id = "content-" + hashlib.sha256(content.encode("utf-8")).hexdigest()[:24]
+            structured.append(
+                {
+                    "id": memory_id,
+                    "memory": content,
+                    "memory_type": str(memory.get("memory_type") or memory.get("type") or "fact"),
+                    "last_update_at": str(memory.get("last_update_at") or ""),
+                    "event_time": memory.get("event_time"),
+                    "source_timestamp": memory.get("source_timestamp"),
+                }
+            )
+        return json.dumps(
+            {"query": q, "memories": structured},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     if not mems:
         return f"没有查到与「{q}」相关的记忆。"
     records = []
@@ -389,6 +413,11 @@ TOOLS = [
             "properties": {
                 "query": {"type": "string", "description": "自然语言查询"},
                 "top_k": {"type": "integer", "description": "返回条数，默认 8"},
+                "response_format": {
+                    "type": "string",
+                    "enum": ["text", "json"],
+                    "description": "可选；默认 text。json 供生命周期适配器构建短上下文。",
+                },
             },
             "required": ["query"],
         },

@@ -38,14 +38,26 @@ def test_prefetch_skips_only_low_information_chat_acknowledgements(monkeypatch: 
         environ={"MINDMEMOS_API_KEY": "test-key"},
     )
     recalled: list[tuple[str, dict]] = []
-    provider._call_mcp = lambda name, args: recalled.append((name, args)) or "memory"
+    provider._call_mcp = lambda name, args: (
+        recalled.append((name, args))
+        or ('{"query":"q","memories":[{"id":"m1","memory":"memory","memory_type":"fact","last_update_at":"v1"}]}')
+    )
 
     for query in ("好的", "谢谢", "继续", "可以", "嗯，可以", "收到。"):
         assert provider.prefetch(query) == ""
     assert recalled == []
 
     provider.prefetch("继续检查 MindMemOS 性能")
-    assert recalled == [("recall", {"query": "继续检查 MindMemOS 性能", "limit": 8})]
+    assert recalled == [
+        (
+            "recall",
+            {
+                "query": "继续检查 MindMemOS 性能",
+                "limit": 8,
+                "response_format": "json",
+            },
+        )
+    ]
 
 
 def test_auto_capture_uses_the_same_exact_low_information_rule(

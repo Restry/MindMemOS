@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 MCP_SERVER = Path(__file__).resolve().parents[1] / "mcp_server.py"
@@ -35,3 +36,25 @@ def test_recall_forces_rerank_and_caps_complete_records(monkeypatch):
     assert "memory-6-" not in output
     assert len(output) <= 4000
     assert not output.endswith("…")
+
+
+def test_structured_recall_preserves_ids_and_does_not_change_text_default(monkeypatch):
+    module = load_mcp_server()
+    memories = [
+        {
+            "id": "memory-123",
+            "memory": "Hermes 使用稳定的 api_content 保持 Prompt Cache。",
+            "memory_type": "fact",
+            "last_update_at": "2026-08-08 10:00:00",
+        }
+    ]
+    monkeypatch.setattr(module, "_post", lambda path, body: {"data": {"memories": memories}})
+
+    structured = json.loads(module.t_recall({"query": "Hermes Prompt Cache", "top_k": 8, "response_format": "json"}))
+    assert structured["memories"][0]["id"] == "memory-123"
+    assert structured["memories"][0]["memory"] == memories[0]["memory"]
+    assert structured["memories"][0]["last_update_at"] == "2026-08-08 10:00:00"
+
+    text = module.t_recall({"query": "Hermes Prompt Cache", "top_k": 8})
+    assert text.startswith("查到 1 条相关记忆：")
+    assert "memory-123" not in text

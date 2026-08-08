@@ -55,7 +55,20 @@ def test_initialize_injects_whoami_and_prefetch_recalls(tmp_path):
         if name == "whoami":
             return "用户偏好只用中文回复。"
         if name == "recall":
-            return "Hallmark 使用 ERPNext 作为底座。"
+            return json.dumps(
+                {
+                    "query": arguments["query"],
+                    "memories": [
+                        {
+                            "id": "hallmark-erpnext",
+                            "memory": "Hallmark 使用 ERPNext 作为底座。",
+                            "memory_type": "fact",
+                            "last_update_at": "2026-08-08 10:00:00",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
         raise AssertionError(name)
 
     provider._call_mcp = fake_call
@@ -72,8 +85,139 @@ def test_initialize_injects_whoami_and_prefetch_recalls(tmp_path):
     assert "Hallmark 使用 ERPNext 作为底座" in recalled
     assert calls == [
         ("whoami", {}),
-        ("recall", {"query": "Hallmark 项目的底座是什么？", "limit": 3}),
+        (
+            "recall",
+            {
+                "query": "Hallmark 项目的底座是什么？",
+                "limit": 3,
+                "response_format": "json",
+            },
+        ),
     ]
+
+
+def test_auto_capsule_is_short_deduplicated_and_persistent(tmp_path):
+    module = load_plugin()
+    records = [
+        {
+            "id": f"memory-{index}",
+            "memory": (
+                "背景说明与当前问题无关。" * 30
+                + f"Hermes Prompt Cache 通过 api_content 稳定重放，这是第 {index} 条证据。"
+            ),
+            "memory_type": "fact",
+            "last_update_at": "2026-08-08 10:00:00",
+        }
+        for index in range(4)
+    ]
+    recall_calls = []
+
+    def fake_call(name, arguments):
+        if name == "whoami":
+            return "profile"
+        recall_calls.append(arguments)
+        return json.dumps({"query": arguments["query"], "memories": records}, ensure_ascii=False)
+
+    config = {
+        "mcp_url": "https://memory.example/mcp",
+        "auto_ingest": False,
+        "auto_context_max_items": 3,
+        "auto_context_chars": 1800,
+        "auto_memory_chars": 560,
+        "session_context_chars": 6000,
+    }
+    provider = module.MindMemOSProvider(
+        config=config,
+        environ={"MINDMEMOS_API_KEY": "test-key"},
+    )
+    provider._call_mcp = fake_call
+    provider.initialize(
+        "capsule-session",
+        hermes_home=str(tmp_path),
+        platform="feishu",
+        agent_context="primary",
+    )
+
+    first = provider.prefetch("Hermes Prompt Cache 如何保持稳定？", session_id="capsule-session")
+    assert first.startswith("## MindMemOS 记忆胶囊")
+    assert first.count("\n- [fact]") == 3
+    assert len(first) <= 1800
+    assert "api_content 稳定重放" in first
+    assert len(recall_calls) == 1
+
+    # Exact repeated queries skip even the MCP call instead of leaking lower-ranked tail records.
+    assert provider.prefetch("Hermes Prompt Cache 如何保持稳定？", session_id="capsule-session") == ""
+    assert len(recall_calls) == 1
+
+    state_files = list((tmp_path / "mindmemos-capsules").glob("*.json"))
+    assert len(state_files) == 1
+    assert state_files[0].stat().st_mode & 0o777 == 0o600
+
+    # A new provider process reloads the capsule state and preserves deduplication.
+    restarted_calls = []
+    restarted = module.MindMemOSProvider(
+        config=config,
+        environ={"MINDMEMOS_API_KEY": "test-key"},
+    )
+
+    def restarted_call(name, arguments):
+        if name == "whoami":
+            return "profile"
+        restarted_calls.append(arguments)
+        return json.dumps({"query": arguments["query"], "memories": records}, ensure_ascii=False)
+
+    restarted._call_mcp = restarted_call
+    restarted.initialize(
+        "capsule-session",
+        hermes_home=str(tmp_path),
+        platform="feishu",
+        agent_context="primary",
+    )
+    assert restarted.prefetch("Hermes Prompt Cache 如何保持稳定？", session_id="capsule-session") == ""
+    assert restarted_calls == []
+
+
+def test_updated_memory_can_reenter_capsule_for_a_new_query(tmp_path):
+    module = load_plugin()
+    provider = module.MindMemOSProvider(
+        config={
+            "mcp_url": "https://memory.example/mcp",
+            "auto_ingest": False,
+            "query_cache_seconds": 0,
+        },
+        environ={"MINDMEMOS_API_KEY": "test-key"},
+    )
+    version = {"value": "v1"}
+
+    def fake_call(name, arguments):
+        if name == "whoami":
+            return "profile"
+        return json.dumps(
+            {
+                "query": arguments["query"],
+                "memories": [
+                    {
+                        "id": "same-memory",
+                        "memory": f"Hermes 压缩模型版本是 {version['value']}。",
+                        "memory_type": "fact",
+                        "last_update_at": version["value"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    provider._call_mcp = fake_call
+    provider.initialize(
+        "updated-session",
+        hermes_home=str(tmp_path),
+        platform="feishu",
+        agent_context="primary",
+    )
+    query = "Hermes 压缩模型是什么？"
+    assert "v1" in provider.prefetch(query, session_id="updated-session")
+    version["value"] = "v2"
+    assert "v2" in provider.prefetch(query, session_id="updated-session")
 
 
 def test_default_constructor_loads_profile_config(tmp_path):
