@@ -75,6 +75,25 @@ class RecallEvaluationTests(unittest.TestCase):
                 }
             )
 
+    def test_ai_scores_are_separate_from_human_reviews(self) -> None:
+        self.store.save_ai_review(
+            search_record_id="search-1",
+            memory_id="m1",
+            query="Home AI Hub 有哪些约束",
+            content="业务系统必须通过 Hub。",
+            judge_version="v1",
+            model="hub-cloud/gpt-4.1",
+            score=95,
+            label="relevant",
+            confidence=0.98,
+            reason="直接描述问题中的约束",
+        )
+        snapshot = build_recall_snapshot(self.points, self.store)
+        memory = snapshot["records"][0]["memories"][0]
+        self.assertEqual(memory["ai_review"]["score"], 95)
+        self.assertIsNone(memory["review"])
+        self.assertEqual(snapshot["summary"]["ai_scored_memories"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

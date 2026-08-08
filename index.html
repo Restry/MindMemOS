@@ -189,6 +189,7 @@ h1 .pt{color:var(--accent)}
 .eval-call{border:1px solid var(--line);background:var(--panel);margin-bottom:10px}.eval-call>summary{list-style:none;cursor:pointer;padding:14px 16px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}.eval-call>summary::-webkit-details-marker{display:none}.eval-query{font-size:13px;color:var(--ink);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.eval-full-query{padding:12px 0;color:var(--ink);font-size:12px;line-height:1.65;white-space:pre-wrap;border-bottom:1px solid var(--line)}.eval-meta{display:flex;gap:9px;align-items:center;color:var(--sub);font-size:10.5px;letter-spacing:.25px;margin-top:7px;flex-wrap:wrap}.eval-state{padding:4px 8px;border:1px solid var(--line2);font-size:9px;letter-spacing:.8px}.eval-state.useful{color:var(--ok);border-color:#3fb95066}.eval-state.poor{color:var(--bad);border-color:#f8514966}.eval-state.expected_empty{color:var(--accent);border-color:var(--accent-dim)}.eval-state.unreviewed{color:var(--warn);border-color:#d2992266}.eval-body{padding:0 16px 16px;border-top:1px solid var(--line)}
 .eval-memory{padding:12px 0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:42px minmax(0,1fr);gap:11px}.eval-rank{color:var(--accent);font-size:10px;padding-top:3px}.eval-memory-text{font-size:12px;line-height:1.55;color:var(--sub);white-space:pre-wrap}.eval-labels{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.eval-label{border:1px solid var(--line2);background:transparent;color:var(--dim);padding:4px 7px;font-size:9px;cursor:pointer}.eval-label.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
 .eval-call-review{display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding-top:13px}.eval-verdict{border:1px solid var(--line2);background:transparent;color:var(--sub);padding:6px 9px;cursor:pointer}.eval-verdict.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}.eval-note{flex:1;min-width:220px;background:var(--bg);border:1px solid var(--line);color:var(--ink);padding:7px 9px}.eval-save{border-color:var(--accent);color:var(--accent)}.eval-save-status{font-size:10px;color:var(--dim)}
+.eval-ai{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 3px;padding:7px 9px;border-left:2px solid var(--line2);background:#101010}.eval-ai-score{font-size:16px;font-weight:700;min-width:38px}.eval-ai.relevant{border-color:var(--ok)}.eval-ai.relevant .eval-ai-score{color:var(--ok)}.eval-ai.partial{border-color:var(--warn)}.eval-ai.partial .eval-ai-score{color:var(--warn)}.eval-ai.irrelevant{border-color:var(--bad)}.eval-ai.irrelevant .eval-ai-score{color:var(--bad)}.eval-ai-label{font-size:9px;letter-spacing:1px;color:var(--sub)}.eval-ai-reason{font-size:10px;color:var(--sub);flex:1;min-width:180px}.eval-ai-confidence{font-size:9px;color:var(--dim)}.eval-run{font-size:10px;color:var(--dim)}
 @media(max-width:900px){.eval-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.eval-intro{flex-direction:column}.eval-boundary{margin-left:0}.eval-toolbar{flex-wrap:wrap}}
 
 /* ---------- 搜索 ---------- */
@@ -454,15 +455,16 @@ button{font-family:var(--mono)}
 
 <div id="pane-eval" style="display:none">
   <div class="eval-intro">
-    <div><div class="eval-kicker">RECALL QUALITY LAB</div><strong>召回观测与人工评价</strong>
-      <p>展示真实搜索审计记录。这里的评价只写入独立 sidecar，不修改记忆、阈值、排序或核心搜索逻辑。</p></div>
-    <button id="eval-refresh" type="button">刷新记录</button>
+    <div><div class="eval-kicker">RECALL QUALITY LAB</div><strong>召回观测、AI 评分与人工复核</strong>
+      <p>GPT‑4.1 每 30 分钟逐条评价最近 100 次 Recall。AI 分数只用于观测和排序；人工标签独立保留，不修改记忆、阈值、Rerank 或核心搜索逻辑。</p></div>
+    <div style="display:flex;gap:8px"><button id="eval-judge" type="button">立即评分</button><button id="eval-refresh" type="button">刷新记录</button></div>
   </div>
   <div id="eval-kpis" class="eval-kpis"></div>
   <div class="eval-toolbar">
-    <select id="eval-filter"><option value="all">全部记录</option><option value="unreviewed">待评价</option><option value="poor">质量失败</option><option value="useful">质量通过</option></select>
-    <span id="eval-count"></span>
-    <span class="eval-boundary">仅人工评价 · 不自动优化</span>
+    <select id="eval-filter"><option value="all">全部记录</option><option value="unreviewed">待人工评价</option><option value="poor">人工：质量失败</option><option value="useful">人工：质量通过</option></select>
+    <select id="eval-sort"><option value="ai-desc">AI 相关性：高到低</option><option value="ai-asc">AI 相关性：低到高</option><option value="recent">调用时间：最新</option></select>
+    <span id="eval-count"></span><span id="eval-run" class="eval-run"></span>
+    <span class="eval-boundary">AI 观测 + 人工复核 · 不自动优化</span>
   </div>
   <div id="eval-list"><div class="empty">打开页面后加载最近召回记录…</div></div>
 </div>
@@ -1029,14 +1031,18 @@ function setupRulesEditor(initial){
 /* ===== 召回评测：只读审计 + 独立人工标签，不触碰记忆和搜索配置 ===== */
 let EVAL={records:[],summary:{}},EVAL_LOADED=0;
 const EVAL_LABELS={relevant:'相关',partial:'部分相关',irrelevant:'无关',stale:'已过时',conflict:'冲突'};
+const EVAL_AI_LABELS={relevant:'相关',partial:'部分相关',irrelevant:'无关'};
 const EVAL_VERDICTS={useful:'质量通过',poor:'质量失败',expected_empty:'正确空召回'};
 function evalState(record){return record.review?.verdict||'unreviewed'}
 function evalRecordHtml(record){
   const state=evalState(record),review=record.review||{};
-  const memories=(record.memories||[]).map(memory=>{
+  const memories=[...(record.memories||[])].sort((a,b)=>(b.ai_review?.score??-1)-(a.ai_review?.score??-1)||a.rank-b.rank).map(memory=>{
     const selected=memory.review?.label||'';
-    return `<div class="eval-memory" data-mid="${esc(memory.memory_id)}"><div class="eval-rank">#${memory.rank}</div><div>
+    const ai=memory.ai_review;
+    const aiHtml=ai?`<div class="eval-ai ${esc(ai.label)}"><span class="eval-ai-score">${Number(ai.score)}</span><span class="eval-ai-label">AI ${esc(EVAL_AI_LABELS[ai.label]||ai.label)}</span><span class="eval-ai-reason">${esc(ai.reason)}</span><span class="eval-ai-confidence">CONF ${(Number(ai.confidence)*100).toFixed(0)}% · ${esc(ai.model)}</span></div>`:`<div class="eval-ai"><span class="eval-ai-label">AI 待评分</span></div>`;
+    return `<div class="eval-memory" data-mid="${esc(memory.memory_id)}"><div class="eval-rank">原 #${memory.rank}</div><div>
       <div class="eval-memory-text">${esc(memory.content||'（空内容）')}</div>
+      ${aiHtml}
       <div class="eval-meta"><span>${memory.chars} 字</span><span>${esc(memory.memory_type)}</span>${memory.score!=null?`<span>SCORE ${Number(memory.score).toFixed(3)}</span>`:''}</div>
       <div class="eval-labels">${Object.entries(EVAL_LABELS).map(([key,label])=>`<button type="button" class="eval-label ${selected===key?'on':''}" data-label="${key}">${label}</button>`).join('')}</div>
     </div></div>`;
@@ -1045,6 +1051,7 @@ function evalRecordHtml(record){
     <summary><div><div class="eval-query">${esc(record.query)}</div><div class="eval-meta">
       <span>${esc(fmtBeijing(record.occurred_at))}</span><span>${esc(record.actor)}</span><span>${esc(record.algorithm||record.pipeline)}</span>
       <span>${record.memory_count} 条</span><span>API 返回 ${record.context_chars.toLocaleString('zh-CN')} 字</span><span>${record.latency_ms==null?'—':record.latency_ms+' ms'}</span><span>RERANK ${record.rerank?'ON':'OFF'}</span>
+      ${record.ai_score!=null?`<span>AI AVG ${Number(record.ai_score).toFixed(1)}</span>`:'<span>AI 待评分</span>'}
     </div></div><span class="eval-state ${state}">${esc(EVAL_VERDICTS[state]||'待评价')}</span></summary>
     <div class="eval-body"><div class="eval-full-query"><strong>QUERY</strong><br>${esc(record.query)}</div>${memories}<div class="eval-call-review">
       ${Object.entries(EVAL_VERDICTS).map(([key,label])=>`<button type="button" class="eval-verdict ${state===key?'on':''}" data-verdict="${key}">${label}</button>`).join('')}
@@ -1057,21 +1064,29 @@ function evalRecordHtml(record){
 }
 function renderEvaluations(){
   const filter=$('#eval-filter').value;
-  const rows=(EVAL.records||[]).filter(record=>filter==='all'||evalState(record)===filter);
+  const sort=$('#eval-sort').value;
+  const rows=(EVAL.records||[]).filter(record=>filter==='all'||evalState(record)===filter).sort((a,b)=>{
+    if(sort==='recent')return String(b.occurred_at).localeCompare(String(a.occurred_at));
+    const av=a.ai_score??(sort==='ai-desc'?-1:101),bv=b.ai_score??(sort==='ai-desc'?-1:101);
+    return sort==='ai-asc'?av-bv:bv-av;
+  });
   $('#eval-count').textContent=`显示 ${rows.length} / ${(EVAL.records||[]).length} 次`;
   $('#eval-list').innerHTML=rows.length?rows.map(evalRecordHtml).join(''):'<div class="empty">没有符合条件的召回记录</div>';
   const s=EVAL.summary||{},pct=v=>v==null?'—':v+'%';
   $('#eval-kpis').innerHTML=[
-    [s.calls??0,'RECENT CALLS',''],[pct(s.technical_success_rate),'TECHNICAL SUCCESS',''],[s.reviewed_calls??0,'HUMAN REVIEWED',''],[s.poor_calls??0,'QUALITY FAILURES',s.poor_calls?'warn':''],[pct(s.context_waste_rate),'LABELED CONTEXT WASTE',s.context_waste_rate>30?'warn':'']
+    [s.calls??0,'RECENT CALLS',''],[s.ai_scored_memories??0,'AI SCORED MEMORIES',''],[s.reviewed_calls??0,'HUMAN REVIEWED',''],[s.poor_calls??0,'HUMAN QUALITY FAILURES',s.poor_calls?'warn':''],[pct(s.ai_context_waste_rate),'AI CONTEXT WASTE',s.ai_context_waste_rate>30?'warn':'']
   ].map(([v,l,c])=>`<div class="eval-kpi ${c}"><b>${v}</b><span>${l}</span></div>`).join('');
+  const run=EVAL.ai_judge?.last_run;
+  $('#eval-run').textContent=run?`JUDGE ${run.status.toUpperCase()} · ${run.scored_memories}/${run.candidate_memories} · ${fmtBeijing(run.completed_at||run.started_at)}`:`JUDGE 尚未运行`;
 }
 async function loadEvaluations(){
   const box=$('#eval-list'),button=$('#eval-refresh');button.disabled=true;box.innerHTML='<div class="empty">读取 search_record_v1 审计记录…</div>';
-  try{const response=await fetch('/api/recall-evaluations?limit=50'),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);EVAL=data;renderEvaluations()}
+  try{const response=await fetch('/api/recall-evaluations?limit=100'),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);EVAL=data;renderEvaluations()}
   catch(e){box.innerHTML=`<div class="err">召回记录加载失败：${esc(e.message)}</div>`;throw e}
   finally{button.disabled=false}
 }
-$('#eval-filter').onchange=renderEvaluations;$('#eval-refresh').onclick=()=>loadEvaluations();
+$('#eval-filter').onchange=renderEvaluations;$('#eval-sort').onchange=renderEvaluations;$('#eval-refresh').onclick=()=>loadEvaluations();
+$('#eval-judge').onclick=async()=>{const b=$('#eval-judge');b.disabled=true;b.textContent='已启动…';try{const r=await fetch('/api/recall-evaluations/judge',{method:'POST'}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'启动失败');setTimeout(loadEvaluations,1500)}catch(e){alert('评分启动失败：'+e.message)}finally{setTimeout(()=>{b.disabled=false;b.textContent='立即评分'},2000)}};
 $('#eval-list').onclick=async event=>{
   const call=event.target.closest('.eval-call');if(!call)return;
   const label=event.target.closest('.eval-label');if(label){const row=label.closest('.eval-labels');row.querySelectorAll('.eval-label').forEach(x=>x.classList.toggle('on',x===label));return}

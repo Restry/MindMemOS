@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from recall_evaluation import RecallReviewStore, build_recall_snapshot
+from recall_judge import JudgeEndpoint, RecallJudge
 
 
 MM_API = os.getenv("MINDMEMOS_API", "http://127.0.0.1:8000")
@@ -84,6 +85,13 @@ RECALL_REVIEWS_PATH = os.path.expanduser(
     os.getenv("MM_RECALL_REVIEWS", os.path.join(STATE_DIR, "mindmemos_recall_reviews.sqlite3"))
 )
 RECALL_REVIEWS = RecallReviewStore(RECALL_REVIEWS_PATH)
+RECALL_JUDGE_MODEL = os.getenv("MM_RECALL_JUDGE_MODEL", "hub-cloud/gpt-4.1").strip()
+RECALL_JUDGE_ENDPOINT_ID = os.getenv("MM_RECALL_JUDGE_ENDPOINT_ID", "ep_71055bd1daa7").strip()
+RECALL_JUDGE_RECENT_CALLS = int(os.getenv("MM_RECALL_JUDGE_RECENT_CALLS", "100"))
+RECALL_JUDGE_INTERVAL_SECONDS = float(os.getenv("MM_RECALL_JUDGE_INTERVAL_SECONDS", "1800"))
+RECALL_JUDGE_ENABLED = os.getenv("MM_RECALL_JUDGE_ENABLED", "1").strip().lower() not in {
+    "0", "false", "no", "off"
+}
 CLIENT_CONFIG_PATH = os.path.expanduser(
     os.getenv("MINDMEMOS_CLIENT_CONFIG", os.path.join(STATE_DIR, "mindmemos.json"))
 )
@@ -1028,6 +1036,41 @@ def clean_memories(points):
     return rows
 
 
+def _load_recall_judge_endpoint() -> JudgeEndpoint:
+    registry = _endpoint_registry()
+    endpoint = _find_registered_endpoint(registry, RECALL_JUDGE_ENDPOINT_ID)
+    models = {str(value) for value in endpoint.get("models", [])}
+    if RECALL_JUDGE_MODEL not in models:
+        raise ValueError(f"Judge 模型未出现在 Endpoint 目录：{RECALL_JUDGE_MODEL}")
+    api_key = str(endpoint.get("api_key") or "").strip()
+    if not api_key:
+        raise ValueError("Judge Endpoint 尚未配置凭据")
+    return JudgeEndpoint(
+        url=str(endpoint.get("endpoint") or "").strip(),
+        api_key=api_key,
+        model=RECALL_JUDGE_MODEL,
+    )
+
+
+def _judge_snapshot(points: list[dict], store: RecallReviewStore) -> dict:
+    return build_recall_snapshot(points, store, limit=RECALL_JUDGE_RECENT_CALLS)
+
+
+def _judge_points() -> list[dict]:
+    return scroll_all(SEARCH_COLL, limit=10_000)
+
+
+RECALL_JUDGE = RecallJudge(
+    store=RECALL_REVIEWS,
+    endpoint_loader=_load_recall_judge_endpoint,
+    point_loader=_judge_points,
+    normalizer=_judge_snapshot,
+    recent_calls=RECALL_JUDGE_RECENT_CALLS,
+    interval_seconds=RECALL_JUDGE_INTERVAL_SECONDS,
+    enabled=RECALL_JUDGE_ENABLED,
+)
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1296,7 +1339,15 @@ class H(BaseHTTPRequestHandler):
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
                 limit = min(max(int(query.get("limit", ["100"])[0]), 1), 500)
                 points = scroll_all(SEARCH_COLL, limit=10_000)
-                self._send(build_recall_snapshot(points, RECALL_REVIEWS, limit=limit))
+                snapshot = build_recall_snapshot(points, RECALL_REVIEWS, limit=limit)
+                snapshot["ai_judge"] = {
+                    "enabled": RECALL_JUDGE.enabled,
+                    "model": RECALL_JUDGE_MODEL,
+                    "recent_calls": RECALL_JUDGE_RECENT_CALLS,
+                    "interval_seconds": RECALL_JUDGE_INTERVAL_SECONDS,
+                    "last_run": RECALL_REVIEWS.ai_status(),
+                }
+                self._send(snapshot)
             except Exception as e:
                 self._send({"ok": False, "error": f"{type(e).__name__}: {str(e)[:240]}"}, 500)
             return
@@ -1396,6 +1447,15 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split('?')[0]
+
+        if path == '/api/recall-evaluations/judge':
+            if not _is_lan(self.client_address[0]):
+                self._send({"ok": False, "error": "LAN only"}, 403)
+                return
+            # Manual trigger is observation-only and returns immediately.
+            threading.Thread(target=RECALL_JUDGE.run_once, name="recall-ai-judge-manual", daemon=True).start()
+            self._send({"ok": True, "started": True})
+            return
 
         if path == '/api/recall-evaluations/review':
             if not _is_lan(self.client_address[0]):
@@ -1690,4 +1750,9 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     print(f"MindMemOS 面板  ->  http://{HOST}:{PORT}")
-    ThreadingHTTPServer((HOST, PORT), H).serve_forever()
+    RECALL_REVIEWS.mark_interrupted_ai_runs()
+    RECALL_JUDGE.start()
+    try:
+        ThreadingHTTPServer((HOST, PORT), H).serve_forever()
+    finally:
+        RECALL_JUDGE.stop()
