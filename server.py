@@ -32,6 +32,8 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
+from recall_evaluation import RecallReviewStore, build_recall_snapshot
+
 
 MM_API = os.getenv("MINDMEMOS_API", "http://127.0.0.1:8000")
 QDRANT = os.getenv("MINDMEMOS_QDRANT_URL", "http://127.0.0.1:6333")
@@ -42,6 +44,7 @@ NEO4J_AUTH = (
 )
 COLL = os.getenv("MINDMEMOS_MEMORY_COLLECTION", "memory_item_v1")
 ENT_COLL = os.getenv("MINDMEMOS_ENTITY_COLLECTION", "entity_item_v1")
+SEARCH_COLL = os.getenv("MINDMEMOS_SEARCH_RECORD_COLLECTION", "search_record_v1")
 KEYS_PATH = os.path.expanduser(os.getenv("MINDMEMOS_PANEL_KEYS", "/tmp/mm_keys.json"))
 PROVIDER_CONFIG_PATH = os.path.expanduser(
     os.getenv("MINDMEMOS_PROVIDER_CONFIG", "~/.hermes/mindmemos.json")
@@ -77,6 +80,10 @@ LEDGER_PATH = os.path.expanduser(os.getenv("MM_TURN_LEDGER", os.path.join(STATE_
 PANEL_VERSION_PATH = os.path.expanduser(
     os.getenv("MM_PANEL_VERSION_PATH", os.path.join(STATE_DIR, "mm_panel_data.version"))
 )
+RECALL_REVIEWS_PATH = os.path.expanduser(
+    os.getenv("MM_RECALL_REVIEWS", os.path.join(STATE_DIR, "mindmemos_recall_reviews.sqlite3"))
+)
+RECALL_REVIEWS = RecallReviewStore(RECALL_REVIEWS_PATH)
 CLIENT_CONFIG_PATH = os.path.expanduser(
     os.getenv("MINDMEMOS_CLIENT_CONFIG", os.path.join(STATE_DIR, "mindmemos.json"))
 )
@@ -1281,6 +1288,18 @@ class H(BaseHTTPRequestHandler):
             _WHO_CACHE = (_t.time(), _resp)
             self._send(_resp)
             return
+        if path == '/api/recall-evaluations':
+            if not _is_lan(self.client_address[0]):
+                self._send({"ok": False, "error": "LAN only"}, 403)
+                return
+            try:
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                limit = min(max(int(query.get("limit", ["100"])[0]), 1), 500)
+                points = scroll_all(SEARCH_COLL, limit=10_000)
+                self._send(build_recall_snapshot(points, RECALL_REVIEWS, limit=limit))
+            except Exception as e:
+                self._send({"ok": False, "error": f"{type(e).__name__}: {str(e)[:240]}"}, 500)
+            return
         if path == '/api/all':
             snapshot_version = _data_version()
             try:
@@ -1377,6 +1396,24 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split('?')[0]
+
+        if path == '/api/recall-evaluations/review':
+            if not _is_lan(self.client_address[0]):
+                self._send({"ok": False, "error": "LAN only"}, 403)
+                return
+            try:
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > 50_000:
+                    raise ValueError('请求体大小不正确')
+                body = json.loads(self.rfile.read(n))
+                RECALL_REVIEWS.save(body)
+                _bump_data_version()
+                self._send({"ok": True})
+            except (ValueError, json.JSONDecodeError) as e:
+                self._send({"ok": False, "error": str(e)}, 400)
+            except Exception as e:
+                self._send({"ok": False, "error": f'{type(e).__name__}: {str(e)[:240]}'}, 500)
+            return
 
         if path in ('/api/model-endpoints/save', '/api/model-endpoints/refresh', '/api/model-endpoints/delete'):
             if not _is_lan(self.client_address[0]):

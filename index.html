@@ -156,6 +156,7 @@ h1 .pt{color:var(--accent)}
 .floating-terminal{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:500;
   width:min(820px,calc(100vw - 32px));margin:0}
 .floating-terminal.compact{left:auto;right:22px;transform:none;width:min(430px,calc(100vw - 32px));margin:0}
+.floating-terminal.eval-docked{position:relative;left:auto;right:auto;bottom:auto;transform:none;width:min(430px,100%);margin:0 0 14px auto}
 .search-results-layer{display:none;position:fixed;z-index:480;left:50%;bottom:214px;
   transform:translateX(-50%);width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 270px);
   overflow:auto;border:1px solid var(--accent-dim);background:rgba(13,13,13,.98);
@@ -179,6 +180,16 @@ h1 .pt{color:var(--accent)}
   .curve-head{align-items:flex-start;flex-direction:column;gap:3px}.curve-summary{text-align:left}.top-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:520px){.terminal-body{grid-template-columns:1fr}.terminal-execute{height:38px}.memory-terminal.compact{max-width:none;margin-left:0}.top-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.search-results-layer{bottom:245px}}
 @media(prefers-reduced-motion:reduce){.terminal-live{animation:none}.chart-line{filter:none}.recent-bar{animation:none}}
+
+/* ---------- 召回评测 ---------- */
+.eval-intro{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:18px 20px;border:1px solid var(--line);background:linear-gradient(135deg,rgba(255,127,110,.08),transparent 52%),var(--panel);margin-bottom:14px}
+.eval-intro strong{display:block;font-size:17px;letter-spacing:.3px;margin:3px 0 7px}.eval-intro p{margin:0;color:var(--sub);max-width:780px;font-size:12px;line-height:1.65}.eval-kicker{color:var(--accent);font-size:9px;letter-spacing:2px}.eval-intro button{white-space:nowrap}
+.eval-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:14px}.eval-kpi{border:1px solid var(--line);background:var(--panel);padding:14px 15px}.eval-kpi b{display:block;color:var(--ink);font-size:22px;font-weight:550}.eval-kpi span{display:block;color:var(--dim);font-size:9px;letter-spacing:1.2px;margin-top:5px}.eval-kpi.warn b{color:var(--warn)}
+.eval-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:10px;color:var(--sub);font-size:11px}.eval-toolbar select{min-width:150px}.eval-boundary{margin-left:auto;color:var(--accent);letter-spacing:.6px}
+.eval-call{border:1px solid var(--line);background:var(--panel);margin-bottom:10px}.eval-call>summary{list-style:none;cursor:pointer;padding:14px 16px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}.eval-call>summary::-webkit-details-marker{display:none}.eval-query{font-size:13px;color:var(--ink);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.eval-full-query{padding:12px 0;color:var(--ink);font-size:12px;line-height:1.65;white-space:pre-wrap;border-bottom:1px solid var(--line)}.eval-meta{display:flex;gap:9px;align-items:center;color:var(--sub);font-size:10.5px;letter-spacing:.25px;margin-top:7px;flex-wrap:wrap}.eval-state{padding:4px 8px;border:1px solid var(--line2);font-size:9px;letter-spacing:.8px}.eval-state.useful{color:var(--ok);border-color:#3fb95066}.eval-state.poor{color:var(--bad);border-color:#f8514966}.eval-state.expected_empty{color:var(--accent);border-color:var(--accent-dim)}.eval-state.unreviewed{color:var(--warn);border-color:#d2992266}.eval-body{padding:0 16px 16px;border-top:1px solid var(--line)}
+.eval-memory{padding:12px 0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:42px minmax(0,1fr);gap:11px}.eval-rank{color:var(--accent);font-size:10px;padding-top:3px}.eval-memory-text{font-size:12px;line-height:1.55;color:var(--sub);white-space:pre-wrap}.eval-labels{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.eval-label{border:1px solid var(--line2);background:transparent;color:var(--dim);padding:4px 7px;font-size:9px;cursor:pointer}.eval-label.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.eval-call-review{display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding-top:13px}.eval-verdict{border:1px solid var(--line2);background:transparent;color:var(--sub);padding:6px 9px;cursor:pointer}.eval-verdict.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}.eval-note{flex:1;min-width:220px;background:var(--bg);border:1px solid var(--line);color:var(--ink);padding:7px 9px}.eval-save{border-color:var(--accent);color:var(--accent)}.eval-save-status{font-size:10px;color:var(--dim)}
+@media(max-width:900px){.eval-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.eval-intro{flex-direction:column}.eval-boundary{margin-left:0}.eval-toolbar{flex-wrap:wrap}}
 
 /* ---------- 搜索 ---------- */
 .searchbar{display:flex;gap:8px;margin-bottom:13px}
@@ -210,7 +221,7 @@ h1 .pt{color:var(--accent)}
 /* ---------- tabs ---------- */
 .tabs{display:flex;gap:0;border:1px solid var(--line);margin-bottom:18px;
   background:var(--panel);flex-wrap:wrap}
-.top-tabs{position:sticky;top:0;z-index:120;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));overflow:visible;
+.top-tabs{position:sticky;top:0;z-index:120;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));overflow:visible;
   scrollbar-width:thin;background:rgba(19,19,19,.96);backdrop-filter:blur(14px);
   box-shadow:0 8px 24px rgba(0,0,0,.32)}
 .top-tabs .tab{text-align:center;padding-left:8px;padding-right:8px}
@@ -357,6 +368,7 @@ button{font-family:var(--mono)}
   <div class="tab" data-t="graph">关系图谱</div>
   <div class="tab" data-t="who">我是谁</div>
   <div class="tab" data-t="recent">最近新增</div>
+  <div class="tab" data-t="eval">召回评测</div>
   <div class="tab" data-t="upload">上传文档</div>
   <div class="tab" data-t="tokens">访问令牌</div>
   <div class="tab" data-t="models">模型设置</div>
@@ -438,6 +450,21 @@ button{font-family:var(--mono)}
 
 <div id="pane-recent" style="display:none">
   <div id="recentres"><div class="empty">加载中…</div></div>
+</div>
+
+<div id="pane-eval" style="display:none">
+  <div class="eval-intro">
+    <div><div class="eval-kicker">RECALL QUALITY LAB</div><strong>召回观测与人工评价</strong>
+      <p>展示真实搜索审计记录。这里的评价只写入独立 sidecar，不修改记忆、阈值、排序或核心搜索逻辑。</p></div>
+    <button id="eval-refresh" type="button">刷新记录</button>
+  </div>
+  <div id="eval-kpis" class="eval-kpis"></div>
+  <div class="eval-toolbar">
+    <select id="eval-filter"><option value="all">全部记录</option><option value="unreviewed">待评价</option><option value="poor">质量失败</option><option value="useful">质量通过</option></select>
+    <span id="eval-count"></span>
+    <span class="eval-boundary">仅人工评价 · 不自动优化</span>
+  </div>
+  <div id="eval-list"><div class="empty">打开页面后加载最近召回记录…</div></div>
 </div>
 
 <div id="pane-graph" style="display:none">
@@ -999,6 +1026,66 @@ function setupRulesEditor(initial){
   };
 }
 
+/* ===== 召回评测：只读审计 + 独立人工标签，不触碰记忆和搜索配置 ===== */
+let EVAL={records:[],summary:{}},EVAL_LOADED=0;
+const EVAL_LABELS={relevant:'相关',partial:'部分相关',irrelevant:'无关',stale:'已过时',conflict:'冲突'};
+const EVAL_VERDICTS={useful:'质量通过',poor:'质量失败',expected_empty:'正确空召回'};
+function evalState(record){return record.review?.verdict||'unreviewed'}
+function evalRecordHtml(record){
+  const state=evalState(record),review=record.review||{};
+  const memories=(record.memories||[]).map(memory=>{
+    const selected=memory.review?.label||'';
+    return `<div class="eval-memory" data-mid="${esc(memory.memory_id)}"><div class="eval-rank">#${memory.rank}</div><div>
+      <div class="eval-memory-text">${esc(memory.content||'（空内容）')}</div>
+      <div class="eval-meta"><span>${memory.chars} 字</span><span>${esc(memory.memory_type)}</span>${memory.score!=null?`<span>SCORE ${Number(memory.score).toFixed(3)}</span>`:''}</div>
+      <div class="eval-labels">${Object.entries(EVAL_LABELS).map(([key,label])=>`<button type="button" class="eval-label ${selected===key?'on':''}" data-label="${key}">${label}</button>`).join('')}</div>
+    </div></div>`;
+  }).join('')||'<div class="empty">这次没有返回记忆。空结果可能是正确行为，请结合问题人工判断。</div>';
+  return `<details class="eval-call" data-rid="${esc(record.search_record_id)}">
+    <summary><div><div class="eval-query">${esc(record.query)}</div><div class="eval-meta">
+      <span>${esc(fmtBeijing(record.occurred_at))}</span><span>${esc(record.actor)}</span><span>${esc(record.algorithm||record.pipeline)}</span>
+      <span>${record.memory_count} 条</span><span>API 返回 ${record.context_chars.toLocaleString('zh-CN')} 字</span><span>${record.latency_ms==null?'—':record.latency_ms+' ms'}</span><span>RERANK ${record.rerank?'ON':'OFF'}</span>
+    </div></div><span class="eval-state ${state}">${esc(EVAL_VERDICTS[state]||'待评价')}</span></summary>
+    <div class="eval-body"><div class="eval-full-query"><strong>QUERY</strong><br>${esc(record.query)}</div>${memories}<div class="eval-call-review">
+      ${Object.entries(EVAL_VERDICTS).map(([key,label])=>`<button type="button" class="eval-verdict ${state===key?'on':''}" data-verdict="${key}">${label}</button>`).join('')}
+      <select class="eval-reason"><option value="">选择主要原因</option>${[
+        ['召回准确','召回准确'],['正确保持安静','正确保持安静'],['相关记忆未召回','相关记忆未召回'],['排序或阈值不合理','排序或阈值不合理'],['返回内容过泛或噪音','返回内容过泛或噪音'],['记忆过时或冲突','记忆过时或冲突'],['技术错误或超时','技术错误或超时']
+      ].map(([v,l])=>`<option value="${v}" ${review.reason===v?'selected':''}>${l}</option>`).join('')}</select>
+      <input class="eval-note" maxlength="1000" value="${esc(review.note||'')}" placeholder="可选备注，例如：第 3 条属于另一个项目">
+      <button type="button" class="eval-save">保存评价</button><span class="eval-save-status"></span>
+    </div></div></details>`;
+}
+function renderEvaluations(){
+  const filter=$('#eval-filter').value;
+  const rows=(EVAL.records||[]).filter(record=>filter==='all'||evalState(record)===filter);
+  $('#eval-count').textContent=`显示 ${rows.length} / ${(EVAL.records||[]).length} 次`;
+  $('#eval-list').innerHTML=rows.length?rows.map(evalRecordHtml).join(''):'<div class="empty">没有符合条件的召回记录</div>';
+  const s=EVAL.summary||{},pct=v=>v==null?'—':v+'%';
+  $('#eval-kpis').innerHTML=[
+    [s.calls??0,'RECENT CALLS',''],[pct(s.technical_success_rate),'TECHNICAL SUCCESS',''],[s.reviewed_calls??0,'HUMAN REVIEWED',''],[s.poor_calls??0,'QUALITY FAILURES',s.poor_calls?'warn':''],[pct(s.context_waste_rate),'LABELED CONTEXT WASTE',s.context_waste_rate>30?'warn':'']
+  ].map(([v,l,c])=>`<div class="eval-kpi ${c}"><b>${v}</b><span>${l}</span></div>`).join('');
+}
+async function loadEvaluations(){
+  const box=$('#eval-list'),button=$('#eval-refresh');button.disabled=true;box.innerHTML='<div class="empty">读取 search_record_v1 审计记录…</div>';
+  try{const response=await fetch('/api/recall-evaluations?limit=50'),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);EVAL=data;renderEvaluations()}
+  catch(e){box.innerHTML=`<div class="err">召回记录加载失败：${esc(e.message)}</div>`;throw e}
+  finally{button.disabled=false}
+}
+$('#eval-filter').onchange=renderEvaluations;$('#eval-refresh').onclick=()=>loadEvaluations();
+$('#eval-list').onclick=async event=>{
+  const call=event.target.closest('.eval-call');if(!call)return;
+  const label=event.target.closest('.eval-label');if(label){const row=label.closest('.eval-labels');row.querySelectorAll('.eval-label').forEach(x=>x.classList.toggle('on',x===label));return}
+  const verdict=event.target.closest('.eval-verdict');if(verdict){call.querySelectorAll('.eval-verdict').forEach(x=>x.classList.toggle('on',x===verdict));return}
+  const save=event.target.closest('.eval-save');if(!save)return;
+  const selected=call.querySelector('.eval-verdict.on'),status=call.querySelector('.eval-save-status');
+  if(!selected){status.style.color='var(--bad)';status.textContent='请先选择整体评价';return}
+  const memoryReviews=[...call.querySelectorAll('.eval-memory')].map(row=>{const active=row.querySelector('.eval-label.on');return active?{memory_id:row.dataset.mid,label:active.dataset.label}:null}).filter(Boolean);
+  save.disabled=true;status.style.color='var(--dim)';status.textContent='保存中…';
+  try{const response=await fetch('/api/recall-evaluations/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({search_record_id:call.dataset.rid,verdict:selected.dataset.verdict,reason:call.querySelector('.eval-reason').value,note:call.querySelector('.eval-note').value,memory_reviews:memoryReviews})}),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);status.style.color='var(--ok)';status.textContent='已保存';await loadEvaluations()}
+  catch(e){status.style.color='var(--bad)';status.textContent='保存失败：'+e.message}
+  finally{save.disabled=false}
+};
+
 /* ===== 最近新增：复用首页同一份快照，连续时间轴柱状图 ===== */
 let RECENT_LOADED=0;
 function bindRecentBarTooltips(){
@@ -1115,14 +1202,16 @@ function setTerminalCompact(compact){
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
   const k=t.dataset.t;
-  ['home','browse','graph','who','recent','upload','tokens','models'].forEach(p=>{
+  ['home','browse','graph','who','recent','eval','upload','tokens','models'].forEach(p=>{
     const el=$('#pane-'+p); if(el) el.style.display = p===k?'':'none';
   });
   $('#search-results-layer').classList.remove('open');
-  if(k==='recent')setTerminalCompact(true);
+  if(k==='recent'||k==='eval')setTerminalCompact(true);
+  $('#memory-terminal').classList.toggle('eval-docked',k==='eval');
   if(k==='graph'&&!GRAPH_LOADED){GRAPH_LOADED=1;drawGraph()}
   if(k==='who'&&!WHO_LOADED){WHO_LOADED=1;loadWho().catch(()=>{WHO_LOADED=0})}
   if(k==='recent'&&!RECENT_LOADED){RECENT_LOADED=1;renderRecent()}
+  if(k==='eval'&&!EVAL_LOADED){EVAL_LOADED=1;loadEvaluations().catch(()=>{EVAL_LOADED=0})}
   if(k==='tokens'){loadTokens()}
   if(k==='models'&&!MODELS_LOADED){loadModels()}
 });
@@ -1140,11 +1229,11 @@ async function runMemoryCommand(){
   button.disabled=true;
   try{
     if(raw==='/help'){
-      terminalState('COMMANDS · /search QUERY · /whoami · /browse · /recent · /upload · /graph · /tokens · /models · /refresh');
+      terminalState('COMMANDS · /search QUERY · /whoami · /browse · /recent · /eval · /upload · /graph · /tokens · /models · /refresh');
       return;
     }
     const command=raw.split(/\s+/,1)[0].toLowerCase();
-    const panes={'/whoami':'who','/rules':'who','/browse':'browse','/recent':'recent','/upload':'upload','/graph':'graph','/tokens':'tokens','/models':'models'};
+    const panes={'/whoami':'who','/rules':'who','/browse':'browse','/recent':'recent','/eval':'eval','/upload':'upload','/graph':'graph','/tokens':'tokens','/models':'models'};
     if(panes[command]){openPane(panes[command]);terminalState(`OPENED ${panes[command].toUpperCase()} PANEL`);return}
     if(command==='/refresh'){terminalState('REFRESHING MEMORY SNAPSHOT…');await refreshAll(true);terminalState('MEMORY SNAPSHOT REFRESHED');return}
     if(command.startsWith('/')&&command!=='/search'){
