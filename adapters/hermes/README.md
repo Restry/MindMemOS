@@ -23,14 +23,14 @@ $HERMES_HOME/plugins/mindmemos/
 
 `MindMemOSProvider` 实现 Hermes 的 `MemoryProvider` 接口：
 
-- `system_prompt_block()`：注入常驻身份、偏好和高权威规则；
-- `prefetch()`：每个 primary turn 前按用户真实问题自动语义召回；
-- `get_tool_schemas()` / `handle_tool_call()`：提供主动补查用的 `recall` 工具；
-- `sync_turn()`：primary turn 完成后写入本地 durable spool，再异步提交 `:8765`；
-- `on_memory_write()`：镜像 Hermes `memory` tool 的高价值显式写入；
+- `system_prompt_block()`：通过 MCP `whoami` 注入常驻身份、偏好和高权威规则；
+- `prefetch()`：每个 primary turn 前通过 MCP `recall` 自动语义召回；
+- MCP 工具：`whoami` / `recall` / `project_rules` / `remember` 供显式调用；
+- `sync_turn()`：primary turn 完成后写入本地 durable spool，再异步提交 ingest endpoint；
+- `on_memory_write()`：通过 MCP `remember` 镜像 Hermes `memory` tool 的高价值显式写入；
 - provenance 检查：拒绝递归捕获已经来自 MindMemOS 的内容。
 
-召回走 MindMemOS `:8000` API；自动写入走带实例身份的 `:8765` collector。后者在服务端 SQLite commit 后返回 202，短暂断网由本地 spool 重试。
+当前主路径的召回和写入均通过受认证的 MindMemOS MCP/ingest endpoint；短暂断网由本地 spool 重试。旧版 `base_url` 直连 API 配置仍作为 legacy 兼容路径保留。
 
 ## Install or update
 
@@ -74,24 +74,20 @@ python3 adapters/hermes/install.py --check
 $HERMES_HOME/mindmemos.json
 ```
 
-主要字段：
+主要字段（当前 MCP 主路径）：
 
-- `base_url` / `api_key`：`:8000` recall API；
-- `user_id`：记忆 owner；
-- `top_k` / `score_threshold`：自动召回数量与阈值；
-- `prefetch_rerank`：是否在每轮自动召回执行 rerank；关闭可显著降低首 token 延迟，手动 `recall` 不受影响；
-- `prefetch_timeout`：自动召回单请求硬超时，超时即跳过，不能阻塞主对话；
-- `prefetch_parallelism`：多问句并行检索数，最大 3，避免子问题串行累加；
-- `ingest_url` / `ingest_key`：`:8765` durable collector；
-- `ingest_spool`：本地失败重试 SQLite；
-- `ingest_client_module`：仓库内 dependency-free durable client；
-- `write_enabled` / `min_write_chars`：自动写入策略；
-- `pinned_file`：常驻身份与高权威规则。
+- `mcp_url` / `api_key`：受认证的 MindMemOS MCP endpoint；
+- `recall_limit`：每轮自动召回上限；
+- `ingest_url`：completed-turn ingest endpoint；
+- `auto_ingest` / `min_write_chars`：自动写入策略；
+- `background_flush`：后台重试本地 spool；
+- `request_timeout_seconds`：MCP/ingest 请求超时。
 
-每个 Agent + 机器实例必须使用独立 write Key。Key 不得进入源码、命令参数、聊天、日志或 hook payload。
+旧版 `base_url` / `score_threshold` / `prefetch_rerank` / `prefetch_timeout` /
+`prefetch_parallelism` 仅用于 legacy 直连 API 模式。legacy 模式下 `prefetch_rerank` 默认并推荐保持开启；
+性能保护应依靠并行、超时和注入预算，不应通过关闭 rerank 降低召回质量。
 
-对交互延迟敏感的本地 Hermes 推荐：`prefetch_rerank=false`、`prefetch_timeout=1.5`、
-`prefetch_parallelism=3`。这只影响每轮自动注入；主动调用 `recall` 仍使用 rerank 和 30 秒超时。
+每个 Agent + 机器实例必须使用独立 Key。Key 不得进入源码、命令参数、聊天、日志或 hook payload。
 
 ## Difference from MCP
 
