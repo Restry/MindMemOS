@@ -30,7 +30,7 @@ $HERMES_HOME/plugins/mindmemos/
 - `on_memory_write()`：通过 MCP `remember` 镜像 Hermes `memory` tool 的高价值显式写入；
 - provenance 检查：拒绝递归捕获已经来自 MindMemOS 的内容。
 
-当前主路径的召回和写入均通过受认证的 MindMemOS MCP/ingest endpoint；短暂断网由本地 spool 重试。旧版 `base_url` 直连 API 配置仍作为 legacy 兼容路径保留。
+Agent 召回统一通过受认证的 MindMemOS MCP；completed-turn 自动写入通过 ingest endpoint，短暂断网由本地 spool 重试。Provider 不支持直连 `/v1/memory/search`。
 
 ## Install or update
 
@@ -83,16 +83,12 @@ $HERMES_HOME/mindmemos.json
 - `background_flush`：后台重试本地 spool；
 - `request_timeout_seconds`：MCP/ingest 请求超时。
 
-旧版 `base_url` / `score_threshold` / `prefetch_rerank` / `prefetch_timeout` /
-`prefetch_parallelism` 仅用于 legacy 直连 API 模式。legacy 模式下 `prefetch_rerank` 默认并推荐保持开启；
-性能保护应依靠并行、超时和注入预算，不应通过关闭 rerank 降低召回质量。
-
 每个 Agent + 机器实例必须使用独立 Key。Key 不得进入源码、命令参数、聊天、日志或 hook payload。
 
 ## Difference from MCP
 
-- **Memory Provider**：Hermes 原生生命周期接管；自动召回、常驻块、自动写入和 `recall` tool。
-- **MCP**：跨 runtime 的显式 `whoami` / `recall` / `project_rules` / `remember` 工具。
+- **MCP**：所有 Agent 共用的唯一记忆工具协议，提供 `whoami` / `recall` / `project_rules` / `remember`。
+- **Memory Provider**：Hermes 专用生命周期适配器；仍调用同一个 MCP，只把 `whoami`、每轮 `recall` 和 completed-turn 写入自动化。
 - **Companion Skill**：行为建议，告诉不支持 Provider 的 Agent 何时调用工具。
 
 只配置 MCP 不等于 Hermes Memory Provider 已接管；只安装 Skill 也不保证 completed-turn 自动写入。

@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import logging
 import os
 import re
-import sys
 import threading
-import time
 import urllib.request
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Mapping, Optional
 
 from agent.memory_provider import MemoryProvider
@@ -26,9 +22,7 @@ _LOW_INFORMATION_RE = re.compile(
     re.IGNORECASE,
 )
 _COMMAND_PREFIXES = ("/", "!")
-_SPLIT_RE = re.compile(
-    r"(?:^|[\s，,；;。])\s*(?:\d+[)）.、]|[一二三四五六七八九十]+[)）.、])\s*"
-)
+_SPLIT_RE = re.compile(r"(?:^|[\s，,；;。])\s*(?:\d+[)）.、]|[一二三四五六七八九十]+[)）.、])\s*")
 
 
 def _is_low_information_input(text: str) -> bool:
@@ -62,7 +56,7 @@ class MindMemOSProvider(MemoryProvider):
         self._environ = environ if environ is not None else os.environ
         self._explicit_config = config is not None
         self._config = dict(config) if config is not None else _load_profile_config(self._environ)
-        self._cfg = self._config  # legacy adapter compatibility
+        self._cfg = self._config
         self._api_key = ""
         self._mcp_url = ""
         self._recall_limit = 6
@@ -70,9 +64,7 @@ class MindMemOSProvider(MemoryProvider):
         self._ingest_url = ""
         self._auto_ingest = True
         self._background_flush = True
-        self._legacy_mode = False
-        self._legacy_ingest_module = None
-        self._legacy_ingest_client = None
+
         self._enabled = False
         self._session_id = ""
         self._agent_context = "primary"
@@ -87,18 +79,14 @@ class MindMemOSProvider(MemoryProvider):
     def _apply_config(self, config: Dict[str, Any]) -> None:
         self._config = dict(config)
         self._cfg = self._config
-        self._api_key = str(
-            self._config.get("api_key")
-            or self._environ.get("MINDMEMOS_API_KEY", "")
-        ).strip()
+        self._api_key = str(self._config.get("api_key") or self._environ.get("MINDMEMOS_API_KEY", "")).strip()
         self._mcp_url = str(self._config.get("mcp_url", "")).rstrip("/")
-        self._recall_limit = int(self._config.get("recall_limit", self._config.get("top_k", 6)))
+        self._recall_limit = min(8, max(1, int(self._config.get("recall_limit", 8))))
         self._timeout = float(self._config.get("request_timeout_seconds", 20))
         self._ingest_url = str(self._config.get("ingest_url", "")).rstrip("/")
         self._auto_ingest = self._config.get("auto_ingest", True) is not False
         self._background_flush = self._config.get("background_flush", True) is not False
-        self._legacy_mode = bool(self._config.get("base_url") and not self._mcp_url)
-        self._enabled = bool(self._api_key and (self._mcp_url or self._legacy_mode))
+        self._enabled = bool(self._api_key and self._mcp_url)
 
     @property
     def name(self) -> str:
@@ -135,29 +123,14 @@ class MindMemOSProvider(MemoryProvider):
         if result.get("isError"):
             raise RuntimeError(f"MindMemOS tool failed: {name}")
         return "\n".join(
-            item.get("text", "")
-            for item in result.get("content", [])
-            if item.get("type") == "text"
+            item.get("text", "") for item in result.get("content", []) if item.get("type") == "text"
         ).strip()
-
-    def _load_legacy_ingest_module(self, path: str):
-        spec = importlib.util.spec_from_file_location(
-            "hermes_mindmemos_ingest_client", os.path.expanduser(path)
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError(path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        return module
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._session_id = session_id
         self._agent_context = str(kwargs.get("agent_context") or "primary")
         self._hermes_home = str(
-            kwargs.get("hermes_home")
-            or self._environ.get("HERMES_HOME")
-            or os.path.expanduser("~/.hermes")
+            kwargs.get("hermes_home") or self._environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
         )
         if not self._explicit_config:
             config_environ = dict(self._environ)
@@ -166,18 +139,7 @@ class MindMemOSProvider(MemoryProvider):
         self._platform = str(kwargs.get("platform") or "")
         self._profile = str(kwargs.get("agent_identity") or "default")
 
-        if self._legacy_mode:
-            if not self._enabled:
-                return
-            module_path = str(self._config.get("ingest_client_module") or "")
-            if module_path:
-                self._legacy_ingest_module = self._load_legacy_ingest_module(module_path)
-                self._legacy_ingest_client = self._legacy_ingest_module.DurableIngestClient(
-                    self._ingest_url,
-                    str(self._config.get("ingest_key") or ""),
-                    str(self._config.get("ingest_spool") or ""),
-                )
-                self._legacy_ingest_client.start_worker()
+        if not self._enabled:
             return
 
         self._spool_dir = os.path.join(self._hermes_home, "mindmemos-spool")
@@ -192,7 +154,7 @@ class MindMemOSProvider(MemoryProvider):
                 self._start_flush()
 
     def system_prompt_block(self) -> str:
-        if self._agent_context != "primary" or self._legacy_mode:
+        if self._agent_context != "primary":
             return ""
         identity = f"\n\n## 用户画像与高优先级规则\n{self._whoami}" if self._whoami else ""
         return (
@@ -201,64 +163,12 @@ class MindMemOSProvider(MemoryProvider):
             + identity
         )
 
-    @staticmethod
-    def _format_legacy(memories: List[Dict[str, Any]]) -> str:
-        if not memories:
-            return ""
-        lines = ["## 长期记忆（MindMemOS 自动召回）", ""]
-        for memory in memories:
-            lines.append(
-                f"- [{memory.get('memory_type') or ''}] {memory.get('memory', '')}"
-            )
-        return "\n".join(lines)
-
-    @staticmethod
-    def _subqueries(query: str) -> List[str]:
-        if len(query) < 30:
-            return [query]
-        parts = [part.strip(" ：:，,。；;？?") for part in _SPLIT_RE.split(query)]
-        parts = [part for part in parts if len(part) >= 4]
-        return parts if len(parts) >= 2 else [query]
-
-    def _search(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
-        return []
-
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         text = (query or "").strip()
         if self._agent_context != "primary" or not text or _is_low_information_input(text):
             return ""
-        if self._legacy_mode or (
-            self._cfg.get("score_threshold") is not None and not self._cfg.get("mcp_url")
-        ):
-            timeout = max(0.25, float(self._cfg.get("prefetch_timeout", 6.0)))
-            rerank = str(self._cfg.get("prefetch_rerank", True)).strip().lower() not in {
-                "0", "false", "no", "off"
-            }
-            subqueries = self._subqueries(text)
-            parallelism = max(1, min(int(self._cfg.get("prefetch_parallelism", 1)), 3))
-            if len(subqueries) > 1 and parallelism > 1:
-                with ThreadPoolExecutor(max_workers=min(parallelism, len(subqueries))) as pool:
-                    batches = list(
-                        pool.map(
-                            lambda item: self._search(item, timeout=timeout, rerank=rerank),
-                            subqueries,
-                        )
-                    )
-            else:
-                batches = [self._search(item, timeout=timeout, rerank=rerank) for item in subqueries]
-            merged: List[Dict[str, Any]] = []
-            seen = set()
-            for batch in batches:
-                for memory in batch:
-                    value = str(memory.get("memory") or "").strip()
-                    if value and value not in seen:
-                        seen.add(value)
-                        merged.append(memory)
-            return self._format_legacy(merged)
         try:
-            recalled = self._call_mcp(
-                "recall", {"query": text, "limit": self._recall_limit}
-            )
+            recalled = self._call_mcp("recall", {"query": text, "limit": self._recall_limit})
             return f"## MindMemOS 相关长期记忆\n{recalled}" if recalled else ""
         except Exception as exc:
             logger.debug("MindMemOS recall failed: %s", exc)
@@ -340,11 +250,7 @@ class MindMemOSProvider(MemoryProvider):
     def _worth_writing(self, user_content: str) -> bool:
         text = (user_content or "").strip()
         minimum = int(self._cfg.get("min_write_chars", 24))
-        return (
-            len(text) >= minimum
-            and not text.startswith(_COMMAND_PREFIXES)
-            and not _is_low_information_input(text)
-        )
+        return len(text) >= minimum and not text.startswith(_COMMAND_PREFIXES) and not _is_low_information_input(text)
 
     @staticmethod
     def _is_recursive_capture(messages: Optional[List[Dict[str, Any]]]) -> bool:
@@ -363,34 +269,7 @@ class MindMemOSProvider(MemoryProvider):
         session_id: str = "",
         messages: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
-        if self._legacy_mode:
-            if (
-                self._agent_context != "primary"
-                or not self._enabled
-                or self._legacy_ingest_client is None
-                or not self._worth_writing(user_content)
-                or not (assistant_content or "").strip()
-                or self._is_recursive_capture(messages)
-            ):
-                return
-            sid = session_id or self._session_id or "hermes"
-            legacy_module = self._legacy_ingest_module
-            assert legacy_module is not None
-            event_id = legacy_module.stable_event_id(
-                "hermes", sid, len(messages or []), user_content, assistant_content
-            )
-            self._legacy_ingest_client.enqueue(
-                "/ingest/turn",
-                {
-                    "event_id": event_id,
-                    "session_id": sid,
-                    "turn_id": f"turn-{len(messages or []) or event_id[-12:]}",
-                    "user_message": user_content[:6000],
-                    "assistant_message": assistant_content[:6000],
-                    "safe_context": {"runtime": "hermes", "platform": self._platform},
-                },
-            )
-            return
+
         if (
             self._agent_context != "primary"
             or not self._auto_ingest
@@ -434,36 +313,7 @@ class MindMemOSProvider(MemoryProvider):
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if self._legacy_mode:
-            if (
-                self._agent_context != "primary"
-                or not self._enabled
-                or self._legacy_ingest_client is None
-                or action == "remove"
-                or not (content or "").strip()
-                or self._has_mindmemos_provenance(content, metadata)
-            ):
-                return
-            sid = str((metadata or {}).get("session_id") or self._session_id or "hermes")
-            legacy_module = self._legacy_ingest_module
-            assert legacy_module is not None
-            event_id = legacy_module.stable_event_id(
-                "hermes-memory", sid, action, target, content
-            )
-            self._legacy_ingest_client.enqueue(
-                "/ingest/memory",
-                {
-                    "event_id": event_id,
-                    "session_id": f"hermes-builtin-{target}",
-                    "content": content[:6000],
-                    "safe_context": {
-                        "runtime": "hermes",
-                        "kind": target.upper(),
-                        "authority": "high",
-                    },
-                },
-            )
-            return
+
         if (
             self._agent_context != "primary"
             or action not in {"add", "replace"}
@@ -541,6 +391,7 @@ class MindMemOSProvider(MemoryProvider):
 
     def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
         from pathlib import Path
+
         from utils import atomic_json_write
 
         path = Path(hermes_home) / "mindmemos.json"
@@ -568,10 +419,7 @@ class MindMemOSProvider(MemoryProvider):
         self._session_id = new_session_id or self._session_id
 
     def shutdown(self) -> None:
-        if self._legacy_ingest_client is not None:
-            self._legacy_ingest_client.stop_worker(timeout=5.0)
-        else:
-            self._flush_spool_once()
+        self._flush_spool_once()
 
 
 def register(ctx: Any) -> None:

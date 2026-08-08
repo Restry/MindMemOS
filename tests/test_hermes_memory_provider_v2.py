@@ -5,13 +5,7 @@ import json
 import time
 from pathlib import Path
 
-PLUGIN = (
-    Path(__file__).resolve().parents[1]
-    / "adapters"
-    / "hermes"
-    / "mindmemos"
-    / "__init__.py"
-)
+PLUGIN = Path(__file__).resolve().parents[1] / "adapters" / "hermes" / "mindmemos" / "__init__.py"
 
 
 def load_plugin():
@@ -31,6 +25,17 @@ def test_provider_is_available_with_instance_key():
     assert provider.name == "mindmemos"
     assert provider.is_available() is True
     assert provider.get_tool_schemas() == []
+
+
+def test_provider_rejects_removed_direct_api_configuration():
+    module = load_plugin()
+    provider = module.MindMemOSProvider(
+        config={"base_url": "http://127.0.0.1:8000"},
+        environ={"MINDMEMOS_API_KEY": "test-key"},
+    )
+
+    assert provider.is_available() is False
+    assert not hasattr(provider, "_legacy_mode")
 
 
 def test_initialize_injects_whoami_and_prefetch_recalls(tmp_path):

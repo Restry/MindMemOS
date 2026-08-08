@@ -31,26 +31,19 @@ scp ~/Projects/MindMemOS/migrate_hermes_to_mm.py  另一台机器:~/
 scp ~/.hermes/mindmemos.json                      另一台机器:~/.hermes/
 ```
 
-`mindmemos.json` 的 :8000 `api_key` 用于 recall；把 `base_url` 改成内网地址。
-**不要复用原机器的 `ingest_key`**：先在 :8666「访问令牌」页为新机器的 Hermes
+Hermes Provider 的 recall 统一走 MCP。先在 :8666「访问令牌」页为新机器的 Hermes
 实例签发独立 write Key，再通过安全 secret channel 写入：
 
 ```json
 {
-  "base_url": "http://192.168.1.246:8000",
-  "api_key": "（保持原样）",
-  "ingest_url": "http://192.168.1.246:8765",
-  "ingest_key": "（新机器 Hermes 实例专属 write Key）",
-  "user_id": "leway",
-  "top_k": 6,
-  "score_threshold": 0.1,
-  "write_enabled": true,
-  "min_write_chars": 24
+  "mcp_url": "http://192.168.1.246:8765/mcp",
+  "api_key": "（新机器 Hermes 实例专属 Key）",
+  "ingest_url": "http://192.168.1.246:8765/ingest/turn",
+  "recall_limit": 8
 }
 ```
 
-`user_id` 两台机器必须都是 `leway` 才共享业务记忆；`ingest_key` 则必须一机一 Agent
-实例独立，credential rotation 时复用同一个 stable `client_id`。
+两台机器通过各自的实例 Key 访问同一 MCP 服务，即可共享业务记忆；credential rotation 时复用同一个 stable `client_id`。
 
 ---
 

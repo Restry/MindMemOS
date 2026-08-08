@@ -17,8 +17,8 @@
 
 这四层用途不同，不能互相冒充：
 
-1. **Hermes Memory Provider**：Hermes 原生生命周期集成，负责每轮自动召回、常驻身份/规则、`recall` 工具、completed-turn 自动写入。
-2. **MCP tools**：跨 Agent/runtime 的显式检索和写入工具。
+1. **MCP tools**：所有 Agent/runtime 共用的唯一记忆调用协议，负责检索和显式写入。
+2. **Hermes Memory Provider**：Hermes 生命周期适配器；仍调用同一个 MCP，只负责自动 `whoami`、每轮 `recall` 和 completed-turn 写入。
 3. **Companion Skill**：教 Agent 何时 `whoami` / `recall` / `project_rules` / `remember`；Skill 是行为建议，不保证自动执行。
 4. **Runtime adapters**：为不支持 Hermes Provider 的 runtime 提供 durable completed-turn 自动捕获。
 
@@ -72,13 +72,13 @@ $HERMES_HOME/mindmemos.json
 `MindMemOSProvider` 实现 Hermes `MemoryProvider` 接口：
 
 - `system_prompt_block()`：注入常驻身份、偏好和高权威规则；
-- `prefetch()`：每个 primary turn 前按当前问题自动语义召回；
-- `get_tool_schemas()` / `handle_tool_call()`：提供主动补查的 `recall` 工具；
+- `prefetch()`：每个 primary turn 前自动调用 MCP `recall`；
+- 主动补查继续使用宿主注册的 MCP 工具，不再维护第二套直连工具；
 - `sync_turn()`：完成 primary turn 后先写本地 durable spool，再提交 collector；
 - `on_memory_write()`：同步 Hermes `memory` tool 的显式高价值写入；
 - provenance guard：不递归捕获已经来自 MindMemOS 的内容。
 
-召回走配置中的 MindMemOS `:8000` API。自动写入走 `{{ORIGIN}}/ingest/turn`，并使用该 Hermes + 机器实例专属的 write Key。collector 在 SQLite commit 后才返回 HTTP 202；短暂断网由本地 spool 重试，不阻塞最终回复。
+Agent 召回统一走 `{{MCP_URL}}`。自动写入走 `{{ORIGIN}}/ingest/turn`，并使用该 Hermes + 机器实例专属的 Key。collector 在 SQLite commit 后才返回 HTTP 202；短暂断网由本地 spool 重试，不阻塞最终回复。
 
 安装或更新仓库版本：
 

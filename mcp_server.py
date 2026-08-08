@@ -36,10 +36,16 @@ QDRANT = os.getenv("MINDMEMOS_QDRANT_URL", "http://127.0.0.1:6333")
 
 
 def _key() -> str:
-    """从 ~/.hermes/mindmemos.json 或环境变量取 API key，不写死。"""
+    """Read the server-to-MM API key, separate from MCP client credentials."""
     k = os.getenv("MINDMEMOS_KEY", "")
     if k:
         return k
+    key_file = os.getenv("MINDMEMOS_SERVER_KEY_FILE", "")
+    if key_file:
+        try:
+            return open(os.path.expanduser(key_file), encoding="utf-8").read().strip()
+        except Exception:
+            return ""
     for p in (os.path.expanduser("~/.hermes/mindmemos.json"), "/tmp/mm_keys.json"):
         try:
             with open(p, encoding="utf-8") as f:
@@ -69,12 +75,14 @@ def t_recall(args: dict) -> str:
     q = (args.get("query") or "").strip()
     if not q:
         return "错误：query 不能为空"
+    requested = int(args.get("top_k") or args.get("limit") or 8)
+    limit = min(8, max(1, requested))
     d = _post(
         "/v1/memory/search",
         {
             "user_id": USER,
             "query": q,
-            "top_k": int(args.get("top_k") or 8),
+            "top_k": limit,
             "rerank": True,
             "score_threshold": 0.1,
         },
@@ -82,11 +90,22 @@ def t_recall(args: dict) -> str:
     mems = (d.get("data") or {}).get("memories") or []
     if not mems:
         return f"没有查到与「{q}」相关的记忆。"
-    lines = [f"查到 {len(mems)} 条相关记忆：\n"]
-    for i, m in enumerate(mems, 1):
+    records = []
+    used = 0
+    for m in mems[:limit]:
         txt = (m.get("memory") or "").strip()
         typ = m.get("memory_type") or m.get("type") or ""
-        lines.append(f"{i}. [{typ}] {txt}" if typ else f"{i}. {txt}")
+        record = f"[{typ}] {txt}" if typ else txt
+        # Reserve room for the dynamic heading and numbering. Never split a record.
+        projected = used + len(record) + 8
+        if projected > 3950:
+            continue
+        records.append(record)
+        used = projected
+    if not records:
+        return f"没有查到与「{q}」相关的记忆。"
+    lines = [f"查到 {len(records)} 条相关记忆：\n"]
+    lines.extend(f"{i}. {record}" for i, record in enumerate(records, 1))
     return "\n".join(lines)
 
 
