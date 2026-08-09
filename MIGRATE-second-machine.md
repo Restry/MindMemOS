@@ -39,7 +39,12 @@ Hermes Provider 的 recall 统一走 MCP。先在 :8666「访问令牌」页为�
   "mcp_url": "http://192.168.1.246:8765/mcp",
   "api_key": "（新机器 Hermes 实例专属 Key）",
   "ingest_url": "http://192.168.1.246:8765/ingest/turn",
-  "recall_limit": 8
+  "recall_limit": 8,
+  "auto_context_max_items": 3,
+  "auto_context_chars": 1800,
+  "auto_memory_chars": 560,
+  "session_context_chars": 6000,
+  "query_cache_seconds": 1800
 }
 ```
 
@@ -86,12 +91,13 @@ hermes config set memory.user_profile_enabled false
 
 ```bash
 cd /path/to/MindMemOS
-python3 adapters/hermes/install.py
-python3 adapters/hermes/install.py --check
+export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+python3 adapters/hermes/install.py --hermes-home "$HERMES_HOME"
+python3 adapters/hermes/install.py --hermes-home "$HERMES_HOME" --check
 ```
 
-插件的 `ingest_client_module` 必须指向随插件安装的 durable client，或新机器上
-MindMemOS 仓库里的 `adapters/python/mindmemos_ingest_client.py`。
+当前 Provider 自带 durable spool 与 HTTP ingest 客户端，不再配置旧的
+`ingest_client_module` / `ingest_spool` / `ingest_key` 字段。
 
 ---
 
