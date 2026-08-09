@@ -9,13 +9,14 @@
 启动：python3 /Users/leway/Projects/mm-panel/server.py
 访问：http://192.168.1.246:8666
 """
+
 import hashlib
 import ipaddress
 import json
 import os
 import re
-import shutil
 import shlex
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -31,10 +32,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import yaml
-
 from recall_evaluation import RecallReviewStore, build_recall_snapshot
 from recall_judge import JudgeEndpoint, RecallJudge
-
 
 MM_API = os.getenv("MINDMEMOS_API", "http://127.0.0.1:8000")
 QDRANT = os.getenv("MINDMEMOS_QDRANT_URL", "http://127.0.0.1:6333")
@@ -46,10 +45,9 @@ NEO4J_AUTH = (
 COLL = os.getenv("MINDMEMOS_MEMORY_COLLECTION", "memory_item_v1")
 ENT_COLL = os.getenv("MINDMEMOS_ENTITY_COLLECTION", "entity_item_v1")
 SEARCH_COLL = os.getenv("MINDMEMOS_SEARCH_RECORD_COLLECTION", "search_record_v1")
+ADD_COLL = os.getenv("MINDMEMOS_ADD_RECORD_COLLECTION", "add_record_v1")
 KEYS_PATH = os.path.expanduser(os.getenv("MINDMEMOS_PANEL_KEYS", "/tmp/mm_keys.json"))
-PROVIDER_CONFIG_PATH = os.path.expanduser(
-    os.getenv("MINDMEMOS_PROVIDER_CONFIG", "~/.hermes/mindmemos.json")
-)
+PROVIDER_CONFIG_PATH = os.path.expanduser(os.getenv("MINDMEMOS_PROVIDER_CONFIG", "~/.hermes/mindmemos.json"))
 
 
 def _load_memory_api_key() -> str:
@@ -74,7 +72,7 @@ USER_ID = os.getenv("MINDMEMOS_USER", "leway")
 HOST = os.getenv("MM_PANEL_HOST", "0.0.0.0")
 PORT = int(os.getenv("MM_PANEL_PORT", "8666"))
 HERE = os.path.dirname(os.path.abspath(__file__))
-BEIJING_TZ = ZoneInfo('Asia/Shanghai')
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 STATE_DIR = os.path.expanduser(os.getenv("MINDMEMOS_STATE_DIR", "~/.hermes"))
 PINNED_PATH = os.path.expanduser(os.getenv("MINDMEMOS_PINNED", os.path.join(STATE_DIR, "mindmemos_pinned.md")))
 LEDGER_PATH = os.path.expanduser(os.getenv("MM_TURN_LEDGER", os.path.join(STATE_DIR, "mindmemos_turn_ingest.sqlite3")))
@@ -89,15 +87,9 @@ RECALL_JUDGE_MODEL = os.getenv("MM_RECALL_JUDGE_MODEL", "hub-cloud/gpt-4.1").str
 RECALL_JUDGE_ENDPOINT_ID = os.getenv("MM_RECALL_JUDGE_ENDPOINT_ID", "ep_71055bd1daa7").strip()
 RECALL_JUDGE_RECENT_CALLS = int(os.getenv("MM_RECALL_JUDGE_RECENT_CALLS", "100"))
 RECALL_JUDGE_INTERVAL_SECONDS = float(os.getenv("MM_RECALL_JUDGE_INTERVAL_SECONDS", "1800"))
-RECALL_JUDGE_ENABLED = os.getenv("MM_RECALL_JUDGE_ENABLED", "1").strip().lower() not in {
-    "0", "false", "no", "off"
-}
-CLIENT_CONFIG_PATH = os.path.expanduser(
-    os.getenv("MINDMEMOS_CLIENT_CONFIG", os.path.join(STATE_DIR, "mindmemos.json"))
-)
-LEGACY_TOKEN_PATH = os.path.expanduser(
-    os.getenv("MM_MCP_LEGACY_TOKEN", os.path.join(STATE_DIR, "mindmemos_mcp_token"))
-)
+RECALL_JUDGE_ENABLED = os.getenv("MM_RECALL_JUDGE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+CLIENT_CONFIG_PATH = os.path.expanduser(os.getenv("MINDMEMOS_CLIENT_CONFIG", os.path.join(STATE_DIR, "mindmemos.json")))
+LEGACY_TOKEN_PATH = os.path.expanduser(os.getenv("MM_MCP_LEGACY_TOKEN", os.path.join(STATE_DIR, "mindmemos_mcp_token")))
 MODEL_CONFIG_PATH = os.path.expanduser(
     os.getenv(
         "MM_MODEL_CONFIG_PATH",
@@ -462,10 +454,7 @@ def _save_model_settings(payload: dict) -> dict:
 def _provider_model_ids(endpoint: str, api_key: str) -> set[str]:
     url = endpoint.rstrip("/") + "/models"
     escaped_key = api_key.replace("\\", "\\\\").replace('"', '\\"')
-    curl_config = (
-        f'header = "Authorization: Bearer {escaped_key}"\n'
-        'header = "Accept: application/json"\n'
-    )
+    curl_config = f'header = "Authorization: Bearer {escaped_key}"\nheader = "Accept: application/json"\n'
     fd, output_path = tempfile.mkstemp(prefix=".mindmemos-model-list.")
     os.close(fd)
     try:
@@ -640,18 +629,18 @@ def _test_model_settings(payload: dict) -> dict:
 def _beijing_day(value) -> str:
     """把存储层 UTC 时间归到北京时间自然日；无法解析时返回空串。"""
     if value is None:
-        return ''
+        return ""
     s = str(value).strip()
     if not s:
-        return ''
+        return ""
     try:
-        dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         # MindMemOS 历史数据里的无 offset 时间也是 UTC；明确补上，禁止按机器本地时区猜。
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(BEIJING_TZ).strftime('%Y-%m-%d')
+        return dt.astimezone(BEIJING_TZ).strftime("%Y-%m-%d")
     except (TypeError, ValueError):
-        return ''
+        return ""
 
 
 def _recent_snapshot(rows: list[dict], *, now: datetime | None = None, days: int = 30) -> dict:
@@ -660,13 +649,11 @@ def _recent_snapshot(rows: list[dict], *, now: datetime | None = None, days: int
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=BEIJING_TZ)
     today = reference.astimezone(BEIJING_TZ).date()
-    dated = [row for row in rows if row.get('created')]
-    dated.sort(key=lambda row: str(row['created']), reverse=True)
-    counts = Counter(day for day in (_beijing_day(row['created']) for row in dated) if day)
+    dated = [row for row in rows if row.get("created")]
+    dated.sort(key=lambda row: str(row["created"]), reverse=True)
+    counts = Counter(day for day in (_beijing_day(row["created"]) for row in dated) if day)
     by_day = {
-        (today - timedelta(days=offset)).isoformat(): counts.get(
-            (today - timedelta(days=offset)).isoformat(), 0
-        )
+        (today - timedelta(days=offset)).isoformat(): counts.get((today - timedelta(days=offset)).isoformat(), 0)
         for offset in range(max(1, days))
     }
     return {"today": today.isoformat(), "items": dated[:60], "by_day": by_day}
@@ -674,10 +661,10 @@ def _recent_snapshot(rows: list[dict], *, now: datetime | None = None, days: int
 
 def _read_rules() -> list[str]:
     try:
-        raw = open(PINNED_PATH, encoding='utf-8').read()
+        raw = open(PINNED_PATH, encoding="utf-8").read()
     except FileNotFoundError:
         return []
-    return [block.strip() for block in raw.split('\n§\n') if len(block.strip()) >= 8]
+    return [block.strip() for block in raw.split("\n§\n") if len(block.strip()) >= 8]
 
 
 def _write_rules(rules: list[str]) -> None:
@@ -688,21 +675,21 @@ def _write_rules(rules: list[str]) -> None:
         if not rule:
             continue
         if len(rule) < 8:
-            raise ValueError('每条准则至少 8 个字符')
+            raise ValueError("每条准则至少 8 个字符")
         if len(rule) > 2000:
-            raise ValueError('单条准则不要超过 2000 个字符')
-        if '\n§\n' in rule:
-            raise ValueError('准则内容不能包含分隔符 §')
+            raise ValueError("单条准则不要超过 2000 个字符")
+        if "\n§\n" in rule:
+            raise ValueError("准则内容不能包含分隔符 §")
         cleaned.append(rule)
     if len(cleaned) > 80:
-        raise ValueError('行为准则最多 80 条')
+        raise ValueError("行为准则最多 80 条")
     os.makedirs(os.path.dirname(PINNED_PATH), exist_ok=True)
     if os.path.exists(PINNED_PATH):
-        shutil.copy2(PINNED_PATH, PINNED_PATH + '.previous')
-    fd, tmp = tempfile.mkstemp(prefix='.mindmemos_pinned.', dir=os.path.dirname(PINNED_PATH), text=True)
+        shutil.copy2(PINNED_PATH, PINNED_PATH + ".previous")
+    fd, tmp = tempfile.mkstemp(prefix=".mindmemos_pinned.", dir=os.path.dirname(PINNED_PATH), text=True)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-            handle.write('\n§\n'.join(cleaned) + ('\n' if cleaned else ''))
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("\n§\n".join(cleaned) + ("\n" if cleaned else ""))
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(tmp, 0o600)
@@ -714,7 +701,7 @@ def _write_rules(rules: list[str]) -> None:
 
 def _bump_data_version() -> None:
     os.makedirs(os.path.dirname(PANEL_VERSION_PATH), exist_ok=True)
-    with open(PANEL_VERSION_PATH, 'w', encoding='ascii') as handle:
+    with open(PANEL_VERSION_PATH, "w", encoding="ascii") as handle:
         handle.write(str(datetime.now(timezone.utc).timestamp()))
     os.chmod(PANEL_VERSION_PATH, 0o600)
 
@@ -722,12 +709,10 @@ def _bump_data_version() -> None:
 def _data_version() -> dict:
     """Return revisions for successful memory commits and panel mutations only."""
     memory_revision = 0.0
-    ledger_path = getattr(provenance_ledger, 'path', LEDGER_PATH) if provenance_ledger else LEDGER_PATH
+    ledger_path = getattr(provenance_ledger, "path", LEDGER_PATH) if provenance_ledger else LEDGER_PATH
     try:
         with sqlite3.connect(ledger_path) as connection:
-            row = connection.execute(
-                'SELECT COALESCE(MAX(updated_at), 0) FROM memory_lineage'
-            ).fetchone()
+            row = connection.execute("SELECT COALESCE(MAX(updated_at), 0) FROM memory_lineage").fetchone()
             memory_revision = float(row[0] or 0)
     except (OSError, sqlite3.Error):
         pass
@@ -736,18 +721,19 @@ def _data_version() -> dict:
     except OSError:
         panel_revision = 0
     return {
-        'memory_revision': memory_revision,
-        'panel_revision': panel_revision,
-        'version': f'{memory_revision:.6f}:{panel_revision}',
+        "memory_revision": memory_revision,
+        "panel_revision": panel_revision,
+        "version": f"{memory_revision:.6f}:{panel_revision}",
     }
 
 
 def _lan_ip() -> str:
     """本机内网 IP，用于告诉另一台机器该连哪里。"""
     import socket
+
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(("192.168.1.1", 80))   # 不实际发包，只为拿到出口网卡地址
+        s.connect(("192.168.1.1", 80))  # 不实际发包，只为拿到出口网卡地址
         return s.getsockname()[0]
     except Exception:
         return "192.168.1.246"
@@ -759,12 +745,10 @@ LAN_IP = os.getenv("MINDMEMOS_LAN_IP") or _lan_ip()
 LLMS_URL = os.getenv("MM_LLMS_URL", f"http://{LAN_IP}:8765/llms.txt")
 
 
-
-
 # ---- token 与 provenance：共用 MindMemOS 实现，不在面板复制逻辑 ----
 import importlib.util as _ilu  # noqa: E402
 
-_MM_ROOT = os.path.expanduser(os.getenv('MINDMEMOS_ROOT', '~/Projects/MindMemOS'))
+_MM_ROOT = os.path.expanduser(os.getenv("MINDMEMOS_ROOT", "~/Projects/MindMemOS"))
 
 
 def _load_module(name: str, path: str):
@@ -778,47 +762,47 @@ def _load_module(name: str, path: str):
 
 
 try:
-    mcp_tokens = _load_module('mm_panel_tokens', os.path.join(_MM_ROOT, 'mcp_tokens.py'))
+    mcp_tokens = _load_module("mm_panel_tokens", os.path.join(_MM_ROOT, "mcp_tokens.py"))
 except Exception as _e:  # 面板不该因为这个起不来
     mcp_tokens = None
-    print(f'⚠️  token 模块加载失败（{_e}），令牌管理页不可用', file=sys.stderr)
+    print(f"⚠️  token 模块加载失败（{_e}），令牌管理页不可用", file=sys.stderr)
 
 try:
-    turn_ingest = _load_module('mm_panel_turn_ingest', os.path.join(_MM_ROOT, 'turn_ingest.py'))
+    turn_ingest = _load_module("mm_panel_turn_ingest", os.path.join(_MM_ROOT, "turn_ingest.py"))
     provenance_ledger = turn_ingest.TurnLedger()
 except Exception as _e:
     turn_ingest = None
     provenance_ledger = None
-    print(f'⚠️  provenance 模块加载失败（{_e}），来源标签不可用', file=sys.stderr)
+    print(f"⚠️  provenance 模块加载失败（{_e}），来源标签不可用", file=sys.stderr)
 
-_PANEL_INSTANCE = (os.getenv('MM_PANEL_INSTANCE') or socket.gethostname().split('.')[0]).lower()
+_PANEL_INSTANCE = (os.getenv("MM_PANEL_INSTANCE") or socket.gethostname().split(".")[0]).lower()
 PANEL_IMPORT_PRINCIPAL = {
-    'client_id': f'mm-panel-{_PANEL_INSTANCE}',
-    'agent_kind': 'operator',
-    'instance': _PANEL_INSTANCE,
-    'credential_id': 'local-panel',
-    'display_name': 'Panel import',
-    'scope': 'write',
-    'authority': 'local_panel',
+    "client_id": f"mm-panel-{_PANEL_INSTANCE}",
+    "agent_kind": "operator",
+    "instance": _PANEL_INSTANCE,
+    "credential_id": "local-panel",
+    "display_name": "Panel import",
+    "scope": "write",
+    "authority": "local_panel",
 }
 
 
 def _is_lan(addr: str) -> bool:
     """Allow direct localhost/RFC1918/ULA callers; never trust forwarding headers."""
 
-    if addr == 'localhost':
+    if addr == "localhost":
         return True
     try:
-        ip = ipaddress.ip_address(addr.split('%', 1)[0])
+        ip = ipaddress.ip_address(addr.split("%", 1)[0])
     except ValueError:
         return False
     if ip.is_loopback:
         return True
     networks = (
-        ipaddress.ip_network('10.0.0.0/8'),
-        ipaddress.ip_network('172.16.0.0/12'),
-        ipaddress.ip_network('192.168.0.0/16'),
-        ipaddress.ip_network('fc00::/7'),
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("fc00::/7"),
     )
     return any(ip in network for network in networks)
 
@@ -826,7 +810,7 @@ def _is_lan(addr: str) -> bool:
 def _install_script() -> str:
     """Generate a client-neutral preflight for one Agent instance."""
 
-    return f'''#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 # MindMemOS single-instance connection preflight.
 # This script never guesses or edits a client configuration path.
 set -euo pipefail
@@ -860,7 +844,8 @@ Companion Skill: http://{LAN_IP}:{PORT}/skills/mindmemos-memory.md
 No client configuration was modified. Register the endpoint and Skill through
 the current runtime's own configuration and extension mechanisms.
 EOF
-'''
+"""
+
 
 # whoami 结果缓存：(写入时间, 响应体)。5 次检索要几秒，没必要每次点都重算
 _WHO_CACHE = None
@@ -874,19 +859,19 @@ def _parse_multipart(body: bytes, content_type: str):
     为什么手写：Python 3.13 起标准库移除了 cgi 模块（PEP 594），
     而面板跑在 3.14 上。只需要文件+文本字段这点功能，不值得引依赖。
     """
-    m = re.search(r'boundary=("?)([^";]+)\1', content_type or '')
+    m = re.search(r'boundary=("?)([^";]+)\1', content_type or "")
     if not m:
-        raise ValueError('缺少 multipart boundary')
-    sep = b'--' + m.group(2).encode()
+        raise ValueError("缺少 multipart boundary")
+    sep = b"--" + m.group(2).encode()
     files, fields = [], {}
     for part in body.split(sep):
-        if not part.strip() or part.strip() == b'--':
+        if not part.strip() or part.strip() == b"--":
             continue
-        if b'\r\n\r\n' not in part:
+        if b"\r\n\r\n" not in part:
             continue
-        head, data = part.split(b'\r\n\r\n', 1)
-        data = data.rstrip(b'\r\n')
-        h = head.decode('utf-8', 'ignore')
+        head, data = part.split(b"\r\n\r\n", 1)
+        data = data.rstrip(b"\r\n")
+        h = head.decode("utf-8", "ignore")
         nm = re.search(r'name="([^"]*)"', h)
         fn = re.search(r'filename="([^"]*)"', h)
         if not nm:
@@ -894,7 +879,7 @@ def _parse_multipart(body: bytes, content_type: str):
         if fn and fn.group(1):
             files.append((fn.group(1), data))
         else:
-            fields[nm.group(1)] = data.decode('utf-8', 'ignore').strip()
+            fields[nm.group(1)] = data.decode("utf-8", "ignore").strip()
     return files, fields
 
 
@@ -910,41 +895,57 @@ def _load_extractor():
         return _EXTRACTOR
     import glob
     import importlib.util
+
     mm = _MM_ROOT
-    venv = os.path.expanduser(
-        os.getenv('MINDMEMOS_VENV', os.path.join(mm, '.venv'))
-    )
-    for sp in glob.glob(os.path.join(venv, 'lib/python*/site-packages')):
+    venv = os.path.expanduser(os.getenv("MINDMEMOS_VENV", os.path.join(mm, ".venv")))
+    for sp in glob.glob(os.path.join(venv, "lib/python*/site-packages")):
         if sp not in sys.path:
             sys.path.append(sp)
-    path = os.path.join(mm, 'scripts/ingest/extractor.py')
-    spec = importlib.util.spec_from_file_location('mm_extractor', path)
+    path = os.path.join(mm, "scripts/ingest/extractor.py")
+    spec = importlib.util.spec_from_file_location("mm_extractor", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f'找不到 {path}')
+        raise RuntimeError(f"找不到 {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     _EXTRACTOR = mod
     return mod
 
+
 # 实体来源有两路：LLM（vanilla_llm）和 spaCy NER。
 # LLM 用下面这套干净类型；spaCy 产出 cardinal/date/term/norp 等噪音
 # （"06"、"1"、"2026" 这种纯数字度数还最高），默认只画 LLM 类型。
-LLM_TYPES = {"person", "organization", "location", "project", "product",
-             "tool", "file", "model", "version", "other"}
-NOISY_TYPES = {"cardinal", "date", "ordinal", "time", "percent", "money",
-               "quantity", "term", "technical_term", "norp", "work",
-               "language", "code", "proper_noun", "acronym", "quoted_text"}
+LLM_TYPES = {"person", "organization", "location", "project", "product", "tool", "file", "model", "version", "other"}
+NOISY_TYPES = {
+    "cardinal",
+    "date",
+    "ordinal",
+    "time",
+    "percent",
+    "money",
+    "quantity",
+    "term",
+    "technical_term",
+    "norp",
+    "work",
+    "language",
+    "code",
+    "proper_noun",
+    "acronym",
+    "quoted_text",
+}
 
 
 def cypher(query, params=None):
     """跑一条 Cypher，返回 [{列名: 值}]。"""
     import base64
+
     body = {"statements": [{"statement": query, "parameters": params or {}}]}
     token = base64.b64encode(f"{NEO4J_AUTH[0]}:{NEO4J_AUTH[1]}".encode()).decode()
     req = urllib.request.Request(
-        NEO4J, data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Basic {token}"})
+        NEO4J,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Basic {token}"},
+    )
     with urllib.request.urlopen(req, timeout=60) as r:
         d = json.loads(r.read())
     if d.get("errors"):
@@ -968,40 +969,40 @@ def scroll_all(coll, limit=10000, with_payload=True):
     """拉全量点（分页直到取完）。"""
     out, offset = [], None
     while len(out) < limit:
-        body = {"limit": min(512, limit - len(out)), "with_payload": with_payload,
-                "with_vector": False}
+        body = {"limit": min(512, limit - len(out)), "with_payload": with_payload, "with_vector": False}
         if offset is not None:
             body["offset"] = offset
-        r = http_json(f"{QDRANT}/collections/{coll}/points/scroll", body)['result']
-        pts = r.get('points', [])
+        r = http_json(f"{QDRANT}/collections/{coll}/points/scroll", body)["result"]
+        pts = r.get("points", [])
         out.extend(pts)
-        offset = r.get('next_page_offset')
+        offset = r.get("next_page_offset")
         if not offset or not pts:
             break
     return out
 
+
 def _attach_provenance(rows):
-    memory_ids = [str(row.get('id') or row.get('memory_id') or '') for row in rows]
+    memory_ids = [str(row.get("id") or row.get("memory_id") or "") for row in rows]
     found = provenance_ledger.provenance_for(memory_ids) if provenance_ledger else {}
     for row, memory_id in zip(rows, memory_ids):
         provenance = found.get(memory_id)
-        if provenance is None and row.get('app_id'):
-            agent_kind, _, instance = str(row.get('agent_id') or 'legacy:unknown').partition(':')
+        if provenance is None and row.get("app_id"):
+            agent_kind, _, instance = str(row.get("agent_id") or "legacy:unknown").partition(":")
             contributor = {
-                'client_id': row['app_id'],
-                'agent_kind': agent_kind or 'legacy',
-                'instance': instance or 'unknown',
-                'display_name': instance or row['app_id'],
-                'authority': 'historical_payload',
-                'last_capture_mode': 'unknown',
-                'capture_modes': ['unknown'],
+                "client_id": row["app_id"],
+                "agent_kind": agent_kind or "legacy",
+                "instance": instance or "unknown",
+                "display_name": instance or row["app_id"],
+                "authority": "historical_payload",
+                "last_capture_mode": "unknown",
+                "capture_modes": ["unknown"],
             }
             provenance = {
-                'origin': {**contributor, 'capture_mode': 'unknown'},
-                'last_source': {**contributor, 'capture_mode': 'unknown'},
-                'contributors': [contributor],
+                "origin": {**contributor, "capture_mode": "unknown"},
+                "last_source": {**contributor, "capture_mode": "unknown"},
+                "contributors": [contributor],
             }
-        row['provenance'] = provenance
+        row["provenance"] = provenance
     return rows
 
 
@@ -1009,30 +1010,34 @@ def clean_memories(points):
     """只保留真正的记忆条目（有 content 的），并标注噪音。"""
     rows = []
     for p in points:
-        pl = p.get('payload', {})
-        c = pl.get('content')
+        pl = p.get("payload", {})
+        c = pl.get("content")
         if not c:
             continue
-        md = pl.get('metadata', {}) or {}
-        doc = md.get('doc') or '(未标注)'
+        md = pl.get("metadata", {}) or {}
+        doc = md.get("doc") or "(未标注)"
         # 噪音判定：内容主要在描述文档路径/分片位置本身，而非真实知识
-        noise = ('长期档案' in c and ('路径' in c or '文档' in c or '/' in c)) \
-            or ('部分' in c and ('第' in c[:40] or '/' in c[:40])) \
-            or c.strip().startswith('以下是')
-        rows.append({
-            "id": pl.get('memory_id'),
-            "content": c,
-            "type": pl.get('mem_type') or 'unknown',
-            "doc": doc,
-            # 保留完整 ISO 时区；前端统一格式化为 Asia/Shanghai。
-            "created": str(pl.get('created_at') or ''),
-            "entities": (md.get('entities') or [])[:6],
-            "noise": bool(noise),
-            "app_id": pl.get('app_id'),
-            "agent_id": pl.get('agent_id'),
-        })
+        noise = (
+            ("长期档案" in c and ("路径" in c or "文档" in c or "/" in c))
+            or ("部分" in c and ("第" in c[:40] or "/" in c[:40]))
+            or c.strip().startswith("以下是")
+        )
+        rows.append(
+            {
+                "id": pl.get("memory_id"),
+                "content": c,
+                "type": pl.get("mem_type") or "unknown",
+                "doc": doc,
+                # 保留完整 ISO 时区；前端统一格式化为 Asia/Shanghai。
+                "created": str(pl.get("created_at") or ""),
+                "entities": (md.get("entities") or [])[:6],
+                "noise": bool(noise),
+                "app_id": pl.get("app_id"),
+                "agent_id": pl.get("agent_id"),
+            }
+        )
     _attach_provenance(rows)
-    rows.sort(key=lambda r: r['created'], reverse=True)
+    rows.sort(key=lambda r: r["created"], reverse=True)
     return rows
 
 
@@ -1078,129 +1083,127 @@ class H(BaseHTTPRequestHandler):
     def _send(self, obj, code=200):
         b = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Content-Length', str(len(b)))
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
 
     def do_GET(self):
-        path = self.path.split('?')[0]
-        if path in ('/', '/index.html'):
-            b = open(os.path.join(HERE, 'index.html'), 'rb').read()
+        path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            b = open(os.path.join(HERE, "index.html"), "rb").read()
             self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.send_header('Cache-Control', 'no-cache')
-            self.send_header('Content-Length', str(len(b)))
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
             return
-        if path == '/model-registry.js':
-            b = open(os.path.join(HERE, 'model-registry.js'), 'rb').read()
+        if path == "/model-registry.js":
+            b = open(os.path.join(HERE, "model-registry.js"), "rb").read()
             self.send_response(200)
-            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
-            self.send_header('Cache-Control', 'no-cache')
-            self.send_header('Content-Length', str(len(b)))
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
             return
-        if path == '/lucide.js':
+        if path == "/lucide.js":
             # 本地托管，不依赖外网 CDN（内网机器可能上不了外网）
             try:
-                b = open(os.path.join(HERE, 'lucide.js'), 'rb').read()
+                b = open(os.path.join(HERE, "lucide.js"), "rb").read()
             except FileNotFoundError:
                 self.send_error(404)
                 return
             self.send_response(200)
-            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
-            self.send_header('Cache-Control', 'public, max-age=86400')
-            self.send_header('Content-Length', str(len(b)))
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
             return
-        if path == '/bootstrap.json':
+        if path == "/bootstrap.json":
             # 只对内网直连返回凭据；经 223 反代进来的外网请求一律 403。
             # 外网机器接入的正确路径是：人工在面板生成 token → 手动填进客户端。
             if not _is_lan(self.client_address[0]):
-                self._send({"ok": False,
-                            "error": "bootstrap 只在内网可用；请在面板「访问令牌」页生成 token"}, 403)
+                self._send({"ok": False, "error": "bootstrap 只在内网可用；请在面板「访问令牌」页生成 token"}, 403)
                 return
             try:
-                cfg = json.load(open(CLIENT_CONFIG_PATH, encoding='utf-8'))
+                cfg = json.load(open(CLIENT_CONFIG_PATH, encoding="utf-8"))
             except Exception as e:
                 self._send({"ok": False, "error": str(e)}, 500)
                 return
             try:
-                mcp_token = open(LEGACY_TOKEN_PATH, encoding='utf-8').read().strip()
+                mcp_token = open(LEGACY_TOKEN_PATH, encoding="utf-8").read().strip()
             except Exception:
-                mcp_token = ''
-            self._send({
-                "ok": True,
-                "base_url": f"http://{LAN_IP}:8000",
-                "api_key": cfg.get("api_key", ""),
-                "user_id": cfg.get("user_id", USER_ID),
-                "top_k": cfg.get("top_k", 6),
-                "score_threshold": cfg.get("score_threshold", 0.1),
-                "write_enabled": cfg.get("write_enabled", True),
-                "min_write_chars": cfg.get("min_write_chars", 24),
-                # 远程 MCP（HTTP transport）：别的电脑不用装脚本，填 URL 即可
-                "mcp_url": f"http://{LAN_IP}:8765/mcp",
-                "mcp_token": mcp_token,
-            })
+                mcp_token = ""
+            self._send(
+                {
+                    "ok": True,
+                    "base_url": f"http://{LAN_IP}:8000",
+                    "api_key": cfg.get("api_key", ""),
+                    "user_id": cfg.get("user_id", USER_ID),
+                    "top_k": cfg.get("top_k", 6),
+                    "score_threshold": cfg.get("score_threshold", 0.1),
+                    "write_enabled": cfg.get("write_enabled", True),
+                    "min_write_chars": cfg.get("min_write_chars", 24),
+                    # 远程 MCP（HTTP transport）：别的电脑不用装脚本，填 URL 即可
+                    "mcp_url": f"http://{LAN_IP}:8765/mcp",
+                    "mcp_token": mcp_token,
+                }
+            )
             return
-        if path in ('/migrate.py', '/mcp_server.py', '/ingest.py'):
+        if path in ("/migrate.py", "/mcp_server.py", "/ingest.py"):
             # 让另一台机器能直接 curl 下载，不用 scp
             src = {
-                '/migrate.py': os.path.expanduser(
-                    '~/Projects/MindMemOS/migrate_hermes_to_mm.py'),
-                '/mcp_server.py': os.path.expanduser(
-                    '~/Projects/MindMemOS/mcp_server.py'),
-                '/ingest.py': os.path.expanduser(
-                    '~/Projects/MindMemOS/scripts/ingest/cli.py'),
+                "/migrate.py": os.path.expanduser("~/Projects/MindMemOS/migrate_hermes_to_mm.py"),
+                "/mcp_server.py": os.path.expanduser("~/Projects/MindMemOS/mcp_server.py"),
+                "/ingest.py": os.path.expanduser("~/Projects/MindMemOS/scripts/ingest/cli.py"),
             }[path]
             try:
-                b = open(src, 'rb').read()
+                b = open(src, "rb").read()
             except FileNotFoundError:
                 self.send_error(404)
                 return
             self.send_response(200)
-            self.send_header('Content-Type', 'text/plain; charset=utf-8')
-            self.send_header('Content-Length', str(len(b)))
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
             return
-        if path.startswith('/skills/'):
+        if path.startswith("/skills/"):
             # 对外分发 skill，跟 llms.txt 同级。别的机器不用 clone 仓库。
-            name = os.path.basename(path[len('/skills/'):])
-            if not name.endswith('.md') or '/' in name or '..' in name:
+            name = os.path.basename(path[len("/skills/") :])
+            if not name.endswith(".md") or "/" in name or ".." in name:
                 self.send_error(404)
                 return
             try:
-                b = open(os.path.join(HERE, 'skills', name), 'rb').read()
+                b = open(os.path.join(HERE, "skills", name), "rb").read()
             except FileNotFoundError:
                 self.send_error(404)
                 return
             self.send_response(200)
-            self.send_header('Content-Type', 'text/markdown; charset=utf-8')
-            self.send_header('Content-Length', str(len(b)))
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
             return
 
-        if path == '/install.sh':
+        if path == "/install.sh":
             # 内嵌 token，因此跟 bootstrap.json 同级：只在内网发。
             if not _is_lan(self.client_address[0]):
-                self.send_error(403, 'install.sh is LAN-only')
+                self.send_error(403, "install.sh is LAN-only")
                 return
             b = _install_script().encode()
             self.send_response(200)
-            self.send_header('Content-Type', 'text/x-shellscript; charset=utf-8')
-            self.send_header('Content-Length', str(len(b)))
+            self.send_header("Content-Type", "text/x-shellscript; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
             return
 
-        if path == '/api/tokens':
+        if path == "/api/tokens":
             # 列出已签发的 token（只有元数据，没有明文也没有 hash）
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
@@ -1208,11 +1211,10 @@ class H(BaseHTTPRequestHandler):
             if mcp_tokens is None:
                 self._send({"ok": False, "error": "token 模块未加载"}, 500)
                 return
-            self._send({"ok": True, "tokens": mcp_tokens.listing(),
-                        "mcp_url": f"http://{LAN_IP}:8765/mcp"})
+            self._send({"ok": True, "tokens": mcp_tokens.listing(), "mcp_url": f"http://{LAN_IP}:8765/mcp"})
             return
 
-        if path == '/api/model-endpoints':
+        if path == "/api/model-endpoints":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
@@ -1224,7 +1226,7 @@ class H(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
-        if path == '/api/models':
+        if path == "/api/models":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
@@ -1236,38 +1238,47 @@ class H(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
-        if path == '/llms.txt':
+        if path == "/llms.txt":
             # 8765 的仓库根 llms.txt 是唯一真源；8666 不再维护第二份副本。
             self.send_response(302)
-            self.send_header('Location', LLMS_URL)
-            self.send_header('Cache-Control', 'no-store')
-            self.send_header('Content-Length', '0')
+            self.send_header("Location", LLMS_URL)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        if path == '/api/suggest':
+        if path == "/api/suggest":
             # 建议问题动态生成：从图谱取高频实体 + 最近活跃实体，
             # 拼成自然问句。写死的示例会随着项目演进过期。
             import random
+
             try:
                 hot = cypher(
                     "MATCH (e:Entity)<-[:MENTIONS]-(m:Memory) "
                     "WHERE e.entity_type IN ['project','tool','product'] "
                     "AND size(e.entity_name) < 24 "
                     "RETURN e.entity_name AS n, count(m) AS c "
-                    "ORDER BY c DESC LIMIT 24")
+                    "ORDER BY c DESC LIMIT 24"
+                )
                 fresh = cypher(
                     "MATCH (e:Entity)<-[:MENTIONS]-(m:Memory) "
                     "WHERE e.entity_type IN ['project','tool'] "
                     "AND size(e.entity_name) < 24 AND m.created_at IS NOT NULL "
                     "RETURN e.entity_name AS n, max(m.created_at) AS last "
-                    "ORDER BY last DESC LIMIT 12")
+                    "ORDER BY last DESC LIMIT 12"
+                )
             except Exception as e:
                 self._send({"ok": False, "error": str(e)}, 500)
                 return
 
             # 问句模板：覆盖"是什么/限制/决策/踩坑"几类真实会问的角度
-            tpl = ["{n} 是什么", "{n} 有什么已知限制", "{n} 的架构是怎样的",
-                   "{n} 有什么约束和铁律", "{n} 踩过什么坑", "{n} 用了哪些技术"]
+            tpl = [
+                "{n} 是什么",
+                "{n} 有什么已知限制",
+                "{n} 的架构是怎样的",
+                "{n} 有什么约束和铁律",
+                "{n} 踩过什么坑",
+                "{n} 用了哪些技术",
+            ]
             names_hot = [r["n"] for r in hot if r.get("n")]
             names_new = [r["n"] for r in fresh if r.get("n")]
 
@@ -1283,16 +1294,16 @@ class H(BaseHTTPRequestHandler):
                 if len(picked) >= 8:
                     break
             random.shuffle(picked)
-            self._send({"ok": True, "suggestions": picked,
-                        "pool": len(set(names_hot) | set(names_new))})
+            self._send({"ok": True, "suggestions": picked, "pool": len(set(names_hot) | set(names_new))})
             return
-        if path == '/api/whoami':
+        if path == "/api/whoami":
             # 用户画像：把散在各处的身份信息按维度聚合。
             # 跟 MCP 的 whoami 工具同一套逻辑，面板上也能直接看。
             # 走 5 次检索要几秒，加个 10 分钟缓存（?fresh=1 强制刷新）
             import time as _t
+
             global _WHO_CACHE
-            fresh = 'fresh=1' in (self.path.split('?', 1)[1] if '?' in self.path else '')
+            fresh = "fresh=1" in (self.path.split("?", 1)[1] if "?" in self.path else "")
             if not fresh and _WHO_CACHE and _t.time() - _WHO_CACHE[0] < 600:
                 self._send(_WHO_CACHE[1])
                 return
@@ -1306,11 +1317,18 @@ class H(BaseHTTPRequestHandler):
             out, seen = [], set()
             for title, q in dims:
                 try:
-                    d = http_json(f"{MM_API}/v1/memory/search", {
-                        "user_id": USER_ID, "query": q, "top_k": 4,
-                        # 身份类查询开 rerank 反而把技术记忆排前面
-                        "rerank": False, "score_threshold": 0.05,
-                    }, headers={"Authorization": f"Bearer {MM_KEY}"})
+                    d = http_json(
+                        f"{MM_API}/v1/memory/search",
+                        {
+                            "user_id": USER_ID,
+                            "query": q,
+                            "top_k": 4,
+                            # 身份类查询开 rerank 反而把技术记忆排前面
+                            "rerank": False,
+                            "score_threshold": 0.05,
+                        },
+                        headers={"Authorization": f"Bearer {MM_KEY}"},
+                    )
                     mems = (d.get("data") or {}).get("memories") or []
                 except Exception as e:
                     out.append({"title": title, "items": [f"（检索失败：{e}）"]})
@@ -1331,7 +1349,7 @@ class H(BaseHTTPRequestHandler):
             _WHO_CACHE = (_t.time(), _resp)
             self._send(_resp)
             return
-        if path == '/api/recall-evaluations':
+        if path == "/api/recall-evaluations":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
@@ -1351,29 +1369,32 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send({"ok": False, "error": f"{type(e).__name__}: {str(e)[:240]}"}, 500)
             return
-        if path == '/api/all':
+        if path == "/api/all":
             snapshot_version = _data_version()
             try:
                 pts = scroll_all(COLL)
                 rows = clean_memories(pts)
-                ents = http_json(f"{QDRANT}/collections/{ENT_COLL}", None)['result']
+                ents = http_json(f"{QDRANT}/collections/{ENT_COLL}", None)["result"]
                 stats = {
                     "memories": len(rows),
-                    "noise": sum(1 for r in rows if r['noise']),
-                    "entities": ents.get('points_count', 0),
-                    "by_type": dict(Counter(r['type'] for r in rows).most_common()),
-                    "by_doc": dict(Counter(r['doc'] for r in rows).most_common()),
+                    "noise": sum(1 for r in rows if r["noise"]),
+                    "entities": ents.get("points_count", 0),
+                    "by_type": dict(Counter(r["type"] for r in rows).most_common()),
+                    "by_doc": dict(Counter(r["doc"] for r in rows).most_common()),
                 }
-                self._send({"ok": True, "rows": rows, "stats": stats,
-                            "recent": _recent_snapshot(rows), **snapshot_version})
+                self._send(
+                    {"ok": True, "rows": rows, "stats": stats, "recent": _recent_snapshot(rows), **snapshot_version}
+                )
             except Exception as e:
                 self._send({"ok": False, "error": str(e)[:300]}, 500)
             return
-        if path == '/api/health':
+        if path == "/api/health":
             out = {}
-            for name, url in [("mindmemos", f"{MM_API}/healthz"),
-                              ("qdrant", f"{QDRANT}/healthz"),
-                              ("neo4j", "http://127.0.0.1:7474")]:
+            for name, url in [
+                ("mindmemos", f"{MM_API}/healthz"),
+                ("qdrant", f"{QDRANT}/healthz"),
+                ("neo4j", "http://127.0.0.1:7474"),
+            ]:
                 try:
                     urllib.request.urlopen(url, timeout=3)
                     out[name] = True
@@ -1381,11 +1402,45 @@ class H(BaseHTTPRequestHandler):
                     out[name] = False
             self._send(out)
             return
-        if path == '/api/version':
+        if path == "/api/quality-alerts":
+            try:
+                points = scroll_all(ADD_COLL, limit=2000)
+                failures = []
+                for point in points:
+                    payload = point.get("payload") or {}
+                    if payload.get("status") != "error" or payload.get("retry_resolved_at"):
+                        continue
+                    failure = payload.get("failure") or {}
+                    failures.append(
+                        {
+                            "add_record_id": str(point.get("id") or ""),
+                            "error_code": failure.get("error_code") or "add_failed",
+                            "error_stage": failure.get("error_stage"),
+                            "chunk_index": failure.get("chunk_index"),
+                            "boundary": failure.get("boundary"),
+                            "attempts": failure.get("attempts"),
+                            "retryable": bool(failure.get("retryable")),
+                            "completed_at": payload.get("task_completed_at"),
+                            "error": str(payload.get("error") or "")[:300],
+                        }
+                    )
+                failures.sort(key=lambda item: str(item.get("completed_at") or ""), reverse=True)
+                self._send(
+                    {
+                        "ok": True,
+                        "count": len(failures),
+                        "retryable": sum(1 for item in failures if item["retryable"]),
+                        "items": failures[:50],
+                    }
+                )
+            except Exception as exc:
+                self._send({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:240]}"}, 500)
+            return
+        if path == "/api/version":
             # Cheap local revision check; no Qdrant scan and no queue-state mtime noise.
             self._send({"ok": True, **_data_version()})
             return
-        if self.path.startswith('/api/graph'):
+        if self.path.startswith("/api/graph"):
             self._graph()
             return
         self._send({"error": "not found"}, 404)
@@ -1399,15 +1454,17 @@ class H(BaseHTTPRequestHandler):
           noisy=1         包含数字/日期类噪音实体
         """
         from urllib.parse import parse_qs, urlparse
+
         q = parse_qs(urlparse(self.path).query)
-        focus = (q.get('focus', [''])[0] or '').strip().lower()
-        limit = min(int(q.get('limit', ['60'])[0] or 60), 200)
-        noisy = list(NOISY_TYPES) if q.get('noisy', ['0'])[0] != '1' else ['\x00']
+        focus = (q.get("focus", [""])[0] or "").strip().lower()
+        limit = min(int(q.get("limit", ["60"])[0] or 60), 200)
+        noisy = list(NOISY_TYPES) if q.get("noisy", ["0"])[0] != "1" else ["\x00"]
 
         try:
             if focus:
                 # 以某实体为中心，抓它相关的记忆及这些记忆提到的其它实体
-                rows = cypher("""
+                rows = cypher(
+                    """
                     MATCH (c:Entity) WHERE toLower(c.entity_name) CONTAINS $focus
                     WITH c LIMIT 3
                     MATCH (c)<-[:MENTIONS]-(m:Memory)-[:MENTIONS]->(e:Entity)
@@ -1416,10 +1473,13 @@ class H(BaseHTTPRequestHandler):
                            e.entity_name AS dst, e.entity_type AS dtype,
                            count(DISTINCT m) AS w
                     ORDER BY w DESC LIMIT $lim
-                """, {"focus": focus, "noisy": noisy, "lim": limit * 3})
+                """,
+                    {"focus": focus, "noisy": noisy, "lim": limit * 3},
+                )
             else:
                 # 全局主干：取共现最强的实体对
-                rows = cypher("""
+                rows = cypher(
+                    """
                     MATCH (a:Entity)<-[:MENTIONS]-(m:Memory)-[:MENTIONS]->(b:Entity)
                     WHERE NOT a.entity_type IN $noisy AND NOT b.entity_type IN $noisy
                       AND a.entity_name < b.entity_name
@@ -1428,27 +1488,35 @@ class H(BaseHTTPRequestHandler):
                     RETURN a.entity_name AS src, a.entity_type AS stype,
                            b.entity_name AS dst, b.entity_type AS dtype, w
                     ORDER BY w DESC LIMIT $lim
-                """, {"noisy": noisy, "lim": limit * 3})
+                """,
+                    {"noisy": noisy, "lim": limit * 3},
+                )
         except Exception as e:
             self._send({"ok": False, "error": str(e)[:300]}, 502)
             return
 
         nodes, links = {}, []
         for r in rows:
-            for nm, tp in ((r['src'], r['stype']), (r['dst'], r['dtype'])):
+            for nm, tp in ((r["src"], r["stype"]), (r["dst"], r["dtype"])):
                 if nm not in nodes:
                     nodes[nm] = {"id": nm, "type": tp or "term", "deg": 0}
-                nodes[nm]["deg"] += r['w']
-            links.append({"source": r['src'], "target": r['dst'], "w": r['w']})
+                nodes[nm]["deg"] += r["w"]
+            links.append({"source": r["src"], "target": r["dst"], "w": r["w"]})
 
-        self._send({"ok": True, "nodes": list(nodes.values()), "links": links,
-                    "types": sorted({n['type'] for n in nodes.values()}),
-                    "focus": focus})
+        self._send(
+            {
+                "ok": True,
+                "nodes": list(nodes.values()),
+                "links": links,
+                "types": sorted({n["type"] for n in nodes.values()}),
+                "focus": focus,
+            }
+        )
 
     def do_POST(self):
-        path = self.path.split('?')[0]
+        path = self.path.split("?")[0]
 
-        if path == '/api/recall-evaluations/judge':
+        if path == "/api/recall-evaluations/judge":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
@@ -1457,14 +1525,14 @@ class H(BaseHTTPRequestHandler):
             self._send({"ok": True, "started": True})
             return
 
-        if path == '/api/recall-evaluations/review':
+        if path == "/api/recall-evaluations/review":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
             try:
-                n = int(self.headers.get('Content-Length') or 0)
+                n = int(self.headers.get("Content-Length") or 0)
                 if n <= 0 or n > 50_000:
-                    raise ValueError('请求体大小不正确')
+                    raise ValueError("请求体大小不正确")
                 body = json.loads(self.rfile.read(n))
                 RECALL_REVIEWS.save(body)
                 _bump_data_version()
@@ -1472,21 +1540,21 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError) as e:
                 self._send({"ok": False, "error": str(e)}, 400)
             except Exception as e:
-                self._send({"ok": False, "error": f'{type(e).__name__}: {str(e)[:240]}'}, 500)
+                self._send({"ok": False, "error": f"{type(e).__name__}: {str(e)[:240]}"}, 500)
             return
 
-        if path in ('/api/model-endpoints/save', '/api/model-endpoints/refresh', '/api/model-endpoints/delete'):
+        if path in ("/api/model-endpoints/save", "/api/model-endpoints/refresh", "/api/model-endpoints/delete"):
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
             try:
-                n = int(self.headers.get('Content-Length') or 0)
+                n = int(self.headers.get("Content-Length") or 0)
                 if n < 0 or n > 20_000:
-                    raise ValueError('请求体过大')
-                body = json.loads(self.rfile.read(n) or b'{}')
-                if path.endswith('/save'):
+                    raise ValueError("请求体过大")
+                body = json.loads(self.rfile.read(n) or b"{}")
+                if path.endswith("/save"):
                     result = _save_registered_endpoint(body)
-                elif path.endswith('/refresh'):
+                elif path.endswith("/refresh"):
                     result = _refresh_registered_endpoints(body)
                 else:
                     result = _delete_registered_endpoint(body)
@@ -1494,53 +1562,53 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError) as e:
                 self._send({"ok": False, "error": str(e)}, 400)
             except Exception as e:
-                self._send({"ok": False, "error": f'{type(e).__name__}: {e}'}, 500)
+                self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
-        if path == '/api/models/test':
+        if path == "/api/models/test":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
             try:
-                n = int(self.headers.get('Content-Length') or 0)
+                n = int(self.headers.get("Content-Length") or 0)
                 if n <= 0 or n > 100_000:
-                    raise ValueError('请求体为空或过大')
+                    raise ValueError("请求体为空或过大")
                 body = json.loads(self.rfile.read(n))
                 self._send(_test_model_settings(body))
             except (ValueError, json.JSONDecodeError) as e:
                 self._send({"ok": False, "error": str(e)}, 400)
             except Exception as e:
-                self._send({"ok": False, "error": f'{type(e).__name__}: {e}'}, 500)
+                self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
-        if path == '/api/models':
+        if path == "/api/models":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
             try:
-                n = int(self.headers.get('Content-Length') or 0)
+                n = int(self.headers.get("Content-Length") or 0)
                 if n <= 0 or n > 100_000:
-                    raise ValueError('请求体为空或过大')
+                    raise ValueError("请求体为空或过大")
                 body = json.loads(self.rfile.read(n))
                 self._send(_save_model_settings(body))
             except (ValueError, json.JSONDecodeError) as e:
                 self._send({"ok": False, "error": str(e)}, 400)
             except Exception as e:
-                self._send({"ok": False, "error": f'{type(e).__name__}: {e}'}, 500)
+                self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
-        if path == '/api/rules':
+        if path == "/api/rules":
             if not _is_lan(self.client_address[0]):
                 self._send({"ok": False, "error": "LAN only"}, 403)
                 return
             try:
-                n = int(self.headers.get('Content-Length') or 0)
+                n = int(self.headers.get("Content-Length") or 0)
                 if n <= 0 or n > 200_000:
-                    raise ValueError('请求体为空或过大')
+                    raise ValueError("请求体为空或过大")
                 body = json.loads(self.rfile.read(n))
-                rules = body.get('rules')
+                rules = body.get("rules")
                 if not isinstance(rules, list):
-                    raise ValueError('rules 必须是数组')
+                    raise ValueError("rules 必须是数组")
                 _write_rules(rules)
                 _bump_data_version()
                 global _WHO_CACHE
@@ -1549,10 +1617,10 @@ class H(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._send({"ok": False, "error": str(e)}, 400)
             except Exception as e:
-                self._send({"ok": False, "error": f'{type(e).__name__}: {e}'}, 500)
+                self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
-        if path in ('/api/tokens/issue', '/api/tokens/revoke'):
+        if path in ("/api/tokens/issue", "/api/tokens/revoke"):
             # 签发 / 撤销 MCP token。只允许内网直连——
             # 外网经 223 反代进来的请求源地址不在白名单，天然被挡。
             if not _is_lan(self.client_address[0]):
@@ -1562,51 +1630,48 @@ class H(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": "token 模块未加载"}, 500)
                 return
             try:
-                n = int(self.headers.get('Content-Length') or 0)
-                body = json.loads(self.rfile.read(n) or b'{}')
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
             except Exception as e:
-                self._send({"ok": False, "error": f'请求体解析失败: {e}'}, 400)
+                self._send({"ok": False, "error": f"请求体解析失败: {e}"}, 400)
                 return
             try:
-                if path.endswith('/issue'):
-                    ttl = body.get('ttl_days')
+                if path.endswith("/issue"):
+                    ttl = body.get("ttl_days")
                     rec = mcp_tokens.issue(
-                        body.get('name') or 'unnamed',
-                        body.get('scope') or 'read',
+                        body.get("name") or "unnamed",
+                        body.get("scope") or "read",
                         int(ttl) if ttl else None,
-                        client_id=body.get('client_id') or None,
-                        agent_kind=body.get('agent_kind') or None,
-                        instance=body.get('instance') or None,
-                        display_name=body.get('display_name') or None)
+                        client_id=body.get("client_id") or None,
+                        agent_kind=body.get("agent_kind") or None,
+                        instance=body.get("instance") or None,
+                        display_name=body.get("display_name") or None,
+                    )
                     # token 明文只在这里出现一次，之后库里只有 sha256
-                    self._send({"ok": True, "token": rec,
-                                "mcp_url": f"http://{LAN_IP}:8765/mcp"})
+                    self._send({"ok": True, "token": rec, "mcp_url": f"http://{LAN_IP}:8765/mcp"})
                 else:
-                    ok = mcp_tokens.revoke(body.get('id') or '')
-                    self._send({"ok": ok,
-                                "error": None if ok else "找不到该 token 或已撤销"},
-                               200 if ok else 404)
+                    ok = mcp_tokens.revoke(body.get("id") or "")
+                    self._send({"ok": ok, "error": None if ok else "找不到该 token 或已撤销"}, 200 if ok else 404)
             except Exception as e:
-                self._send({"ok": False, "error": f'{type(e).__name__}: {e}'}, 500)
+                self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
             return
 
-        if path == '/api/upload':
+        if path == "/api/upload":
             # 界面上传文档。解析复用 MindMemOS/scripts/ingest/extractor.py，
             # 跟 CLI 是同一份实现，不会两边行为不一致。
             try:
-                n = int(self.headers.get('Content-Length') or 0)
+                n = int(self.headers.get("Content-Length") or 0)
                 if n <= 0:
-                    raise ValueError('空请求体')
+                    raise ValueError("空请求体")
                 if n > 200 * 1024 * 1024:
-                    raise ValueError('单次上传不要超过 200MB')
+                    raise ValueError("单次上传不要超过 200MB")
                 body = self.rfile.read(n)
-                items, fields = _parse_multipart(
-                    body, self.headers.get('Content-Type', ''))
+                items, fields = _parse_multipart(body, self.headers.get("Content-Type", ""))
             except Exception as e:
                 self._send({"ok": False, "error": f"表单解析失败：{e}"}, 400)
                 return
 
-            tag = (fields.get('tag') or '').strip()
+            tag = (fields.get("tag") or "").strip()
             if not items:
                 self._send({"ok": False, "error": "没有收到文件"}, 400)
                 return
@@ -1614,107 +1679,217 @@ class H(BaseHTTPRequestHandler):
             try:
                 ext_mod = _load_extractor()
             except Exception as e:
-                self._send({"ok": False,
-                            "error": f"抽取模块加载失败：{e}"}, 500)
+                self._send({"ok": False, "error": f"抽取模块加载失败：{e}"}, 500)
                 return
 
             results = []
             for fname, raw in items:
-                name = os.path.basename(fname or '')
+                name = os.path.basename(fname or "")
                 if not name:
                     continue
                 suffix = os.path.splitext(name)[1].lower()
                 if suffix not in ext_mod.EXTS:
-                    results.append({"file": name, "ok": False,
-                                    "detail": f"不支持的格式 {suffix}"})
+                    results.append({"file": name, "ok": False, "detail": f"不支持的格式 {suffix}"})
                     continue
-                tmp = ''
+                tmp = ""
                 try:
-                    with tempfile.NamedTemporaryFile(
-                            suffix=suffix, delete=False) as tf:
+                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
                         tf.write(raw)
                         tmp = tf.name
                     text = ext_mod.extract(tmp)
                     cs = ext_mod.chunks(text)
                 except Exception as e:
-                    results.append({"file": name, "ok": False,
-                                    "detail": f"抽取失败：{type(e).__name__}"})
+                    results.append({"file": name, "ok": False, "detail": f"抽取失败：{type(e).__name__}"})
                     continue
                 finally:
                     if tmp and os.path.exists(tmp):
                         os.unlink(tmp)
 
                 if not cs:
-                    results.append({"file": name, "ok": False,
-                                    "detail": "内容太少，已跳过"})
+                    results.append({"file": name, "ok": False, "detail": "内容太少，已跳过"})
                     continue
 
                 label = f"[文档：{name}]" + (f"[{tag}]" if tag else "")
+                file_hash = hashlib.sha256(raw).hexdigest()
                 good = 0
+                failed_chunks = []
                 for chunk_index, ch in enumerate(cs):
                     try:
-                        event_id = 'import-' + hashlib.sha256(
-                            f'{name}\0{tag}\0{chunk_index}\0{ch}'.encode()
-                        ).hexdigest()
-                        d = http_json(f"{MM_API}/v1/memory/add", {
-                            "user_id": USER_ID,
-                            "app_id": PANEL_IMPORT_PRINCIPAL['client_id'],
-                            "agent_id": (
-                                f"{PANEL_IMPORT_PRINCIPAL['agent_kind']}:"
-                                f"{PANEL_IMPORT_PRINCIPAL['instance']}"
-                            ),
-                            "session_id": f"upload-{hashlib.sha256(name.encode()).hexdigest()[:12]}",
-                            "messages": [{"role": "user",
-                                          "content": f"{label}\n{ch}"}],
-                            "mode": "sync",
-                            "metadata": {"provenance": {
-                                **PANEL_IMPORT_PRINCIPAL,
-                                "capture_mode": "import",
-                                "event_id": event_id,
-                            }},
-                        }, headers={"Authorization": f"Bearer {MM_KEY}"})
-                        if str(d.get("code", "")).lower() in ("ok", "0"):
+                        event_id = (
+                            "import-" + hashlib.sha256(f"{name}\0{tag}\0{chunk_index}\0{ch}".encode()).hexdigest()
+                        )
+                        d = http_json(
+                            f"{MM_API}/v1/memory/add",
+                            {
+                                "user_id": USER_ID,
+                                "app_id": PANEL_IMPORT_PRINCIPAL["client_id"],
+                                "agent_id": (
+                                    f"{PANEL_IMPORT_PRINCIPAL['agent_kind']}:{PANEL_IMPORT_PRINCIPAL['instance']}"
+                                ),
+                                "session_id": f"upload-{hashlib.sha256(name.encode()).hexdigest()[:12]}",
+                                "messages": [{"role": "user", "content": f"{label}\n{ch}"}],
+                                "sources": [
+                                    {
+                                        "source_type": "file",
+                                        "file_path": f"upload://sha256/{file_hash}",
+                                        "file_name": name,
+                                        "is_parsed": True,
+                                        "content_hash": file_hash,
+                                        "chunk_id": f"{file_hash}:{chunk_index}",
+                                        "start_offset": chunk_index,
+                                        "metadata": {
+                                            "message_index": 0,
+                                            "tag": tag,
+                                            "chunk_index": chunk_index,
+                                            "chunk_count": len(cs),
+                                            "capture_mode": "import",
+                                        },
+                                    }
+                                ],
+                                "mode": "sync",
+                                "metadata": {
+                                    "provenance": {
+                                        **PANEL_IMPORT_PRINCIPAL,
+                                        "capture_mode": "import",
+                                        "event_id": event_id,
+                                    },
+                                    "document": {
+                                        "name": name,
+                                        "tag": tag,
+                                        "chunk_index": chunk_index,
+                                        "chunk_count": len(cs),
+                                    },
+                                },
+                            },
+                            headers={"Authorization": f"Bearer {MM_KEY}"},
+                        )
+                        response_ok = str(d.get("code", "")).lower() in ("ok", "0")
+                        memories = (d.get("data") or {}).get("memories") or []
+                        if response_ok and memories:
                             if provenance_ledger:
                                 provenance_ledger.record_response(
                                     d,
                                     PANEL_IMPORT_PRINCIPAL,
-                                    capture_mode='import',
+                                    capture_mode="import",
                                     event_id=event_id,
                                 )
                             good += 1
-                    except Exception:
-                        pass
-                results.append({"file": name, "ok": good > 0,
-                                "detail": f"{len(text)} 字符 → 入库 {good}/{len(cs)} 片"})
-            if any(result.get('ok') for result in results):
+                        else:
+                            failed_chunks.append(
+                                {
+                                    "chunk_index": chunk_index,
+                                    "code": d.get("code") or "empty_extraction",
+                                    "detail": d.get("message") or "该分块未提取出任何可持久化记忆",
+                                }
+                            )
+                    except Exception as exc:
+                        failed_chunks.append(
+                            {
+                                "chunk_index": chunk_index,
+                                "code": type(exc).__name__,
+                                "detail": str(exc)[:300],
+                            }
+                        )
+                results.append(
+                    {
+                        "file": name,
+                        "ok": good == len(cs),
+                        "detail": f"{len(text)} 字符 → 入库 {good}/{len(cs)} 片",
+                        "successful_chunks": good,
+                        "total_chunks": len(cs),
+                        "failed_chunks": failed_chunks,
+                    }
+                )
+            if any(result.get("successful_chunks", 0) for result in results):
                 _bump_data_version()
-            self._send({"ok": True, "results": results})
+            self._send({"ok": bool(results) and all(result.get("ok") for result in results), "results": results})
             return
-        if path in ('/api/delete', '/api/update'):
+        if path == "/api/quality-retry":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                req = json.loads(self.rfile.read(n) or b"{}")
+            except Exception as exc:
+                self._send({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            record_id = str(req.get("add_record_id") or "").strip()
+            if not record_id:
+                self._send({"ok": False, "error": "缺少 add_record_id"}, 400)
+                return
+            try:
+                retrieved = http_json(
+                    f"{QDRANT}/collections/{ADD_COLL}/points",
+                    {"ids": [record_id], "with_payload": True, "with_vector": False},
+                )
+                points = (retrieved.get("result") or {}).get("points") or []
+                if not points:
+                    self._send({"ok": False, "error": "失败记录不存在"}, 404)
+                    return
+                original = points[0].get("payload") or {}
+                messages = original.get("messages") or []
+                sources = original.get("sources") or []
+                if not messages:
+                    self._send({"ok": False, "error": "失败记录没有可重试的原始输入"}, 409)
+                    return
+                metadata = dict(original.get("metadata") or {})
+                metadata["retry_of_add_record_id"] = record_id
+                d = http_json(
+                    f"{MM_API}/v1/memory/add",
+                    {
+                        "user_id": original.get("user_id") or USER_ID,
+                        "app_id": original.get("app_id"),
+                        "agent_id": original.get("agent_id"),
+                        "session_id": original.get("session_id"),
+                        "messages": messages,
+                        "sources": sources,
+                        "mode": "sync",
+                        "metadata": metadata,
+                    },
+                    headers={"Authorization": f"Bearer {MM_KEY}"},
+                )
+                ok = str(d.get("code", "")).lower() in ("ok", "0") and bool((d.get("data") or {}).get("memories"))
+                if ok:
+                    http_json(
+                        f"{QDRANT}/collections/{ADD_COLL}/points/payload",
+                        {
+                            "payload": {
+                                "retry_resolved_at": datetime.now(timezone.utc).isoformat(),
+                                "retry_request_id": d.get("request_id"),
+                            },
+                            "points": [record_id],
+                        },
+                    )
+                    _bump_data_version()
+                self._send(
+                    {"ok": ok, "detail": d.get("message") or d.get("code"), "request_id": d.get("request_id")},
+                    200 if ok else 502,
+                )
+            except Exception as exc:
+                self._send({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}, 500)
+            return
+        if path in ("/api/delete", "/api/update"):
             # 编辑/删除走 MM 官方接口，不直接动 Qdrant——
             # 直接删向量库会漏掉 Neo4j 里的实体和边。
             # delete 是**软删除**（status 置 archived），数据仍在但不再被召回。
             try:
-                n = int(self.headers.get('Content-Length') or 0)
-                req = json.loads(self.rfile.read(n) or b'{}')
+                n = int(self.headers.get("Content-Length") or 0)
+                req = json.loads(self.rfile.read(n) or b"{}")
             except Exception as e:
                 self._send({"ok": False, "error": f"bad json: {e}"}, 400)
                 return
-            mid = (req.get('memory_id') or '').strip()
+            mid = (req.get("memory_id") or "").strip()
             if not mid:
                 self._send({"ok": False, "error": "缺少 memory_id"}, 400)
                 return
             body = {"memory_id": mid}
-            if path == '/api/update':
-                c = (req.get('content') or '').strip()
+            if path == "/api/update":
+                c = (req.get("content") or "").strip()
                 if not c:
                     self._send({"ok": False, "error": "内容不能为空"}, 400)
                     return
                 body["content"] = c
-            ep = '/v1/memory/delete' if path == '/api/delete' else '/v1/memory/update'
+            ep = "/v1/memory/delete" if path == "/api/delete" else "/v1/memory/update"
             try:
-                d = http_json(f"{MM_API}{ep}", body,
-                              headers={"Authorization": f"Bearer {MM_KEY}"})
+                d = http_json(f"{MM_API}{ep}", body, headers={"Authorization": f"Bearer {MM_KEY}"})
             except Exception as e:
                 self._send({"ok": False, "error": str(e)}, 500)
                 return
@@ -1723,23 +1898,24 @@ class H(BaseHTTPRequestHandler):
                 _bump_data_version()
             self._send({"ok": ok, "detail": d.get("message") or d.get("code")})
             return
-        if path != '/api/search':
+        if path != "/api/search":
             self._send({"error": "not found"}, 404)
             return
-        n = int(self.headers.get('Content-Length', 0))
+        n = int(self.headers.get("Content-Length", 0))
         try:
-            req = json.loads(self.rfile.read(n) or b'{}')
+            req = json.loads(self.rfile.read(n) or b"{}")
         except Exception:
             req = {}
-        payload = {"user_id": req.get('user_id') or USER_ID,
-                   "query": req.get('query', ''),
-                   "top_k": int(req.get('top_k') or 10),
-                   "rerank": True,
-                   "score_threshold": float(req.get('score_threshold', 0.1))}
+        payload = {
+            "user_id": req.get("user_id") or USER_ID,
+            "query": req.get("query", ""),
+            "top_k": int(req.get("top_k") or 10),
+            "rerank": True,
+            "score_threshold": float(req.get("score_threshold", 0.1)),
+        }
         try:
-            r = http_json(f"{MM_API}/v1/memory/search", payload,
-                          {"Authorization": f"Bearer {MM_KEY}"})
-            mems = r.get('data', {}).get('memories', []) or []
+            r = http_json(f"{MM_API}/v1/memory/search", payload, {"Authorization": f"Bearer {MM_KEY}"})
+            mems = r.get("data", {}).get("memories", []) or []
             _attach_provenance(mems)
             self._send({"ok": True, "memories": mems})
         except urllib.error.HTTPError as e:
@@ -1748,7 +1924,7 @@ class H(BaseHTTPRequestHandler):
             self._send({"ok": False, "error": str(e)[:300]}, 502)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(f"MindMemOS 面板  ->  http://{HOST}:{PORT}")
     RECALL_REVIEWS.mark_interrupted_ai_runs()
     RECALL_JUDGE.start()

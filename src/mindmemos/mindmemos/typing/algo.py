@@ -447,6 +447,10 @@ class ExtractionEnvelope(BaseModel):
         default_factory=list,
         description="Non-extractable: related memory recall results for dedup/action decisions.",
     )
+    source_context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Safe source classification metadata, such as document provenance.",
+    )
     boundary: ChunkBoundary = Field(
         description="Chunk boundary metadata for extraction conservatism.",
     )

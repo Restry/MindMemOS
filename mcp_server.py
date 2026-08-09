@@ -88,6 +88,7 @@ def t_recall(args: dict) -> str:
         },
     )
     mems = (d.get("data") or {}).get("memories") or []
+    quality_trace = (d.get("data") or {}).get("quality_trace") or {}
     if args.get("response_format") == "json":
         structured = []
         for memory in mems[:limit]:
@@ -108,7 +109,12 @@ def t_recall(args: dict) -> str:
                 }
             )
         return json.dumps(
-            {"query": q, "memories": structured},
+            {
+                "query": q,
+                "intent": quality_trace.get("intent", "fact"),
+                "quality_trace": quality_trace,
+                "memories": structured,
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         )

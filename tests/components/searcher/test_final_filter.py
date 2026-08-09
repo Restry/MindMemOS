@@ -1,7 +1,9 @@
+import asyncio
+
 import pytest
 from mindmemos.components.searcher.final_filter import SearchFinalFilter
 from mindmemos.typing.llm import RerankHit, RerankResponse
-from mindmemos.typing.service import MemorySearchItem
+from mindmemos.typing.service import MemoryLineage, MemorySearchItem
 
 
 class FakeRerankClient:
@@ -129,7 +131,11 @@ async def test_score_threshold_filters_low_score_results() -> None:
     candidates = [item("a", "high"), item("b", "medium"), item("c", "low")]
 
     result = await final_filter.apply(
-        query="q", candidates=candidates, top_k=10, rerank=True, score_threshold=0.6,
+        query="q",
+        candidates=candidates,
+        top_k=10,
+        rerank=True,
+        score_threshold=0.6,
     )
 
     assert [entry.id for entry in result] == ["a"]
@@ -141,7 +147,11 @@ async def test_score_threshold_ignored_when_rerank_false() -> None:
     candidates = [item("a", "A"), item("b", "B"), item("c", "C")]
 
     result = await final_filter.apply(
-        query="q", candidates=candidates, top_k=10, rerank=False, score_threshold=0.99,
+        query="q",
+        candidates=candidates,
+        top_k=10,
+        rerank=False,
+        score_threshold=0.99,
     )
 
     assert [entry.id for entry in result] == ["a", "b", "c"]
@@ -154,8 +164,81 @@ async def test_score_threshold_none_uses_indices_only_rerank() -> None:
     candidates = [item("a", "A"), item("b", "B"), item("c", "C")]
 
     result = await final_filter.apply(
-        query="q", candidates=candidates, top_k=3, rerank=True, score_threshold=None,
+        query="q",
+        candidates=candidates,
+        top_k=3,
+        rerank=True,
+        score_threshold=None,
     )
 
     assert [entry.id for entry in result] == ["c", "a", "b"]
     assert reranker.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_current_state_filters_archived_and_prefers_latest_direct_answer() -> None:
+    final_filter = SearchFinalFilter()
+    candidates = [
+        MemorySearchItem(
+            id="archived",
+            memory="Panel 当前端口是 8000。",
+            last_update_at="2026-08-01 10:00:00",
+            lineage=MemoryLineage(role="archived"),
+        ),
+        MemorySearchItem(id="older", memory="Panel 当前端口是 8665。", last_update_at="2026-08-07 10:00:00"),
+        MemorySearchItem(id="latest", memory="Panel 当前端口是 8666。", last_update_at="2026-08-09 10:00:00"),
+        MemorySearchItem(id="topic", memory="Panel 使用 Python。", last_update_at="2026-08-09 11:00:00"),
+    ]
+    trace = {}
+
+    result = await final_filter.apply(
+        query="Panel 当前端口是什么？",
+        candidates=candidates,
+        top_k=3,
+        rerank=False,
+        quality_trace=trace,
+    )
+
+    assert [entry.id for entry in result][:2] == ["latest", "older"]
+    assert "archived" not in [entry.id for entry in result]
+    assert trace["intent"] == "current_state"
+    assert {entry["reason"] for entry in trace["filtered"]} >= {"superseded_or_archived"}
+
+
+@pytest.mark.asyncio
+async def test_final_filter_dedups_ids_and_records_trace() -> None:
+    final_filter = SearchFinalFilter()
+    trace = {}
+    result = await final_filter.apply(
+        query="deployment path",
+        candidates=[item("same", "deployment path /opt/app"), item("same", "deployment path /tmp/app")],
+        top_k=3,
+        rerank=False,
+        quality_trace=trace,
+    )
+    assert [entry.id for entry in result] == ["same"]
+    assert trace["filtered"] == [{"id": "same", "reason": "duplicate_memory_id"}]
+    assert trace["final_ids"] == ["same"]
+
+
+@pytest.mark.asyncio
+async def test_final_filter_fast_degrades_on_rerank_timeout() -> None:
+    async def slow_rerank(_client, _query, _docs, _top_n):
+        await asyncio.sleep(0.05)
+        return [1, 0]
+
+    final_filter = SearchFinalFilter(
+        rerank_client=FakeRerankClient(),
+        rerank_fn=slow_rerank,
+        rerank_timeout_seconds=0.01,
+    )
+    trace = {}
+    result = await final_filter.apply(
+        query="q",
+        candidates=[item("a", "A"), item("b", "B")],
+        top_k=2,
+        rerank=True,
+        quality_trace=trace,
+    )
+    assert [entry.id for entry in result] == ["a", "b"]
+    assert trace["degraded_reason"] == "rerank_timeout"

@@ -157,8 +157,15 @@ class MemoryOperationRecorder:
             {"status": "ok", "task_completed_at": utcnow(), "memories": memories},
         )
 
-    async def mark_add_failed(self, ctx: MemoryRequestContext, add_record_id: str, error: str) -> None:
-        """Patch an async add record with worker failure details."""
+    async def mark_add_failed(
+        self,
+        ctx: MemoryRequestContext,
+        add_record_id: str,
+        error: str,
+        *,
+        failure: dict | None = None,
+    ) -> None:
+        """Patch an add record with structured failure details."""
 
         await self._add_records.patch(
             ctx.project_id,
@@ -166,6 +173,7 @@ class MemoryOperationRecorder:
             {
                 "status": "error",
                 "error": error,
+                "failure": failure or {},
                 "task_completed_at": utcnow(),
             },
         )

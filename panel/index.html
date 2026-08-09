@@ -423,6 +423,8 @@ button{font-family:var(--mono)}
 </div>
 
 <div id="pane-upload" style="display:none">
+  <div id="quality-alerts" style="display:none;margin-bottom:13px;padding:12px 14px;
+       border:1px solid #ef4444;border-radius:8px;background:rgba(239,68,68,.08);color:#f87171"></div>
   <div id="drop" style="border:2px dashed var(--line);border-radius:10px;
        padding:34px 20px;text-align:center;cursor:pointer;transition:all .15s">
     <div style="font-size:15px;color:var(--fg);margin-bottom:6px">
@@ -1148,6 +1150,25 @@ function renderRecent(){
    跟命令行 cli.py 同一份实现）。 */
 let UP_FILES=[];
 const drop=$('#drop'), fi=$('#fileinput');
+async function loadQualityAlerts(){
+  const box=$('#quality-alerts');
+  try{
+    const data=await (await fetch('/api/quality-alerts')).json();
+    if(!data.ok||!data.count){box.style.display='none';box.innerHTML='';return}
+    const items=(data.items||[]).slice(0,5);
+    box.innerHTML=`<strong>记忆提取失败 ${data.count} 条（可重试 ${data.retryable} 条）</strong>`+
+      items.map(x=>`<div style="margin-top:6px;font-size:12px">${esc(x.error_code)} · 分块 ${x.chunk_index==null?'未知':Number(x.chunk_index)+1} · ${esc(x.error||'等待重试')} ${x.retryable?`<button class="quality-retry" data-id="${esc(x.add_record_id)}" style="margin-left:8px">重试</button>`:''}</div>`).join('');
+    box.querySelectorAll('.quality-retry').forEach(button=>button.onclick=async()=>{
+      button.disabled=true;button.textContent='重试中…';
+      try{
+        const result=await (await fetch('/api/quality-retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({add_record_id:button.dataset.id})})).json();
+        if(!result.ok)throw new Error(result.error||result.detail||'重试失败');
+        await loadQualityAlerts();
+      }catch(error){button.disabled=false;button.textContent='重试';alert(error.message)}
+    });
+    box.style.display='block';
+  }catch(_){box.style.display='none'}
+}
 function renderUpList(){
   $('#up-list').innerHTML = UP_FILES.length
     ? UP_FILES.map((f,i)=>`<div class="card" style="padding:9px 13px;display:flex;
@@ -1185,18 +1206,23 @@ $('#up-go').onclick=async()=>{
   fd.append('tag',$('#up-tag').value.trim());
   try{
     const r=await (await fetch('/api/upload',{method:'POST',body:fd})).json();
-    if(!r.ok) throw new Error(r.error||'导入失败');
+    if(!r.ok && !(r.results||[]).length) throw new Error(r.error||'导入失败');
     const byName={}; (r.results||[]).forEach(x=>byName[x.file]=x);
     document.querySelectorAll('#up-list .card').forEach(c=>{
       const nm=c.querySelector('span').textContent;
       const res=byName[nm], st=c.querySelector('.up-state');
       if(!res){st.textContent='未处理';return}
-      st.textContent=res.detail||(res.ok?'完成':'失败');
+      const failed=(res.failed_chunks||[]);
+      st.textContent=(res.detail||(res.ok?'完成':'失败'))+
+        (failed.length?`；失败分块 ${failed.map(x=>Number(x.chunk_index)+1).join('、')}`:'');
+      st.title=failed.map(x=>`分块 ${Number(x.chunk_index)+1}: ${x.code} ${x.detail}`).join('\n');
       st.style.color=res.ok?'#34d399':'#f87171';
     });
     const ok=(r.results||[]).filter(x=>x.ok).length;
-    btn.textContent=`完成：${ok}/${(r.results||[]).length} 个成功`;
+    btn.textContent=`${r.ok?'完成':'存在失败'}：${ok}/${(r.results||[]).length} 个完整成功`;
+    btn.style.color=r.ok?'':'#f87171';
     RECENT_LOADED=0;   // 让"最近新增"下次进去时重新拉
+    loadQualityAlerts();
   }catch(e){
     btn.textContent='导入失败';
     document.querySelectorAll('#up-list .up-state').forEach(s=>{
@@ -1222,6 +1248,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   });
   $('#search-results-layer').classList.remove('open');
   if(k==='recent'||k==='eval')setTerminalCompact(true);
+  if(k==='upload')loadQualityAlerts();
   $('#memory-terminal').classList.toggle('eval-docked',k==='eval');
   if(k==='graph'&&!GRAPH_LOADED){GRAPH_LOADED=1;drawGraph()}
   if(k==='who'&&!WHO_LOADED){WHO_LOADED=1;loadWho().catch(()=>{WHO_LOADED=0})}

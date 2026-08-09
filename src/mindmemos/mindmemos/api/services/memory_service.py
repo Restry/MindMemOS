@@ -4,6 +4,7 @@ from typing import Literal
 from uuid import uuid4
 
 from ...config import get_config
+from ...errors import MemoryExtractionError
 from ...logging import get_logger, traced
 from ...pipelines import create_pipeline
 from ...pipelines.add import AddPipeline
@@ -160,18 +161,15 @@ class MemoryService:
                     "score": request.score,
                     "task_id": request.task_id,
                 }
-                await suppress_recording_errors(
-                    self._recorder.record_add_input(
-                        payload,
-                        ctx=ctx,
-                        request_submitted_at=request_submitted_at,
-                        add_record_id=add_record_id,
-                        status="queued",
-                        skill_bindings=skill_bindings,
-                        score=request.score,
-                        task_id=request.task_id,
-                    ),
-                    operation="add",
+                await self._recorder.record_add_input(
+                    payload,
+                    ctx=ctx,
+                    request_submitted_at=request_submitted_at,
+                    add_record_id=add_record_id,
+                    status="queued",
+                    skill_bindings=skill_bindings,
+                    score=request.score,
+                    task_id=request.task_id,
                 )
                 return await pipeline.add_async(
                     payload,
@@ -179,23 +177,26 @@ class MemoryService:
                     add_record_id=add_record_id,
                     record_metadata=record_metadata,
                 )
-            await suppress_recording_errors(
-                self._recorder.record_add_input(
-                    payload,
-                    ctx=ctx,
-                    request_submitted_at=request_submitted_at,
-                    add_record_id=add_record_id,
-                    status="processing",
-                    skill_bindings=skill_bindings,
-                    score=request.score,
-                    task_id=request.task_id,
-                ),
-                operation="add",
+            await self._recorder.record_add_input(
+                payload,
+                ctx=ctx,
+                request_submitted_at=request_submitted_at,
+                add_record_id=add_record_id,
+                status="processing",
+                skill_bindings=skill_bindings,
+                score=request.score,
+                task_id=request.task_id,
             )
             return await pipeline.add_sync(payload, ctx, add_record_id=add_record_id)
         except Exception as exc:
+            failure = exc.details() if isinstance(exc, MemoryExtractionError) else {}
+            mark_failed = (
+                self._recorder.mark_add_failed(ctx, add_record_id, str(exc), failure=failure)
+                if failure
+                else self._recorder.mark_add_failed(ctx, add_record_id, str(exc))
+            )
             await suppress_recording_errors(
-                self._recorder.mark_add_failed(ctx, add_record_id, str(exc)),
+                mark_failed,
                 operation="add",
             )
             raise
@@ -277,7 +278,6 @@ class MemoryService:
         if pipeline is None:
             raise NotImplementedError("get pipeline implementation is not wired yet")
         return await pipeline.get(to_get_pipeline_input(request), to_memory_request_context(auth))
-
 
     @traced("memory_service.delete")
     async def delete(self, auth: AuthContext, request: DeleteRequest) -> DeletePipelineResult:

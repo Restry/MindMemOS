@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -71,3 +72,22 @@ async def test_search_pipeline_rejects_unknown_strategy_with_available_names() -
 
     with pytest.raises(ValueError, match="Available strategies: default"):
         await pipeline.search(SearchPipelineInput(query="Qdrant", search_pipeline="schema"), make_context())
+
+
+@pytest.mark.asyncio
+async def test_search_pipeline_total_deadline_degrades_to_empty_trace() -> None:
+    class SlowEngine(FakeEngine):
+        async def search_candidates(self, inp, context, *, options=None):
+            await asyncio.sleep(0.05)
+            return await super().search_candidates(inp, context, options=options)
+
+    pipeline = SearchPipelineImpl(
+        engines={"default": SlowEngine()},
+        final_filter=SearchFinalFilter(),
+        search_timeout_seconds=0.01,
+        db_reader=SimpleNamespace(),
+        db_writer=SimpleNamespace(),
+    )
+    result = await pipeline.search(SearchPipelineInput(query="Qdrant"), make_context())
+    assert result.memories == []
+    assert result.quality_trace["degraded_reason"] == "search_deadline_exceeded"

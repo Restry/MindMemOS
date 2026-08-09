@@ -178,6 +178,7 @@ def to_add_record_point(
             "request_submitted_at": request_submitted_at,
             "task_completed_at": task_completed_at,
             "messages": _model_list_dump(inp.messages),
+            "sources": _model_list_dump(inp.sources),
             "mode": inp.mode,
             "feedback_processed": False,
             "metadata": dict(inp.metadata),
@@ -228,6 +229,7 @@ def to_schema_add_buffer_point(
             "request_submitted_at": request_submitted_at,
             "task_completed_at": task_completed_at,
             "messages": _model_list_dump(inp.messages),
+            "sources": _model_list_dump(inp.sources),
             "mode": inp.mode,
             "force_generation": force_generation,
             "metadata": dict(inp.metadata),
@@ -266,6 +268,8 @@ def to_search_record_point(
     if result is not None:
         payload["status"] = result.status
         payload["memories"] = _model_list_dump(result.memories)
+        if result.quality_trace:
+            payload["quality_trace"] = dict(result.quality_trace)
     return db.SearchRecordPoint(search_record_id=search_record_id or str(uuid4()), payload=payload)
 
 

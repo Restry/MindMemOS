@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from ...components.searcher import SearchFinalFilter
@@ -30,12 +31,14 @@ class SearchPipelineImpl(MemoryDbPipelineMixin):
         agentic_wrapper: AgenticSearchWrapper | None = None,
         final_filter: SearchFinalFilter | None = None,
         rerank_client: RerankClient | None = None,
+        search_timeout_seconds: float = 8.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._engines = dict(engines or {})
         self._use_default_engines = engines is None
         self._agentic = agentic_wrapper
+        self._search_timeout_seconds = max(0.01, float(search_timeout_seconds))
         if final_filter is not None:
             self._final_filter = final_filter
         else:
@@ -45,7 +48,26 @@ class SearchPipelineImpl(MemoryDbPipelineMixin):
             )
 
     async def search(self, inp: SearchPipelineInput, context: MemoryRequestContext) -> SearchPipelineResult:
-        """Run search according to the request controls."""
+        """Run search under a total deadline; timeout degrades to no injection."""
+
+        try:
+            return await asyncio.wait_for(self._search(inp, context), timeout=self._search_timeout_seconds)
+        except TimeoutError:
+            return SearchPipelineResult(
+                status="ok",
+                memories=[],
+                quality_trace={
+                    "intent": "unknown",
+                    "candidate_ids": [],
+                    "filtered": [],
+                    "final_ids": [],
+                    "degraded_reason": "search_deadline_exceeded",
+                    "elapsed_ms": round(self._search_timeout_seconds * 1000, 2),
+                },
+            )
+
+    async def _search(self, inp: SearchPipelineInput, context: MemoryRequestContext) -> SearchPipelineResult:
+        """Run the selected engine and final decision layer."""
 
         strategy = inp.search_pipeline
         engine = self._engine(strategy)
@@ -57,14 +79,16 @@ class SearchPipelineImpl(MemoryDbPipelineMixin):
             candidates = await self._agentic_wrapper().run(inp, context, engine)
         else:
             candidates = await engine.search_candidates(inp, context)
+        quality_trace: dict[str, Any] = {}
         memories = await self._final_filter.apply(
             query=inp.query,
             candidates=candidates,
             top_k=inp.top_k,
             rerank=inp.rerank and _strategy_allows_rerank(strategy),
             score_threshold=inp.score_threshold,
+            quality_trace=quality_trace,
         )
-        return SearchPipelineResult(status="ok", memories=memories)
+        return SearchPipelineResult(status="ok", memories=memories, quality_trace=quality_trace)
 
     def _engine(self, name: str) -> SearchEngine | None:
         engine = self._engines.get(name)

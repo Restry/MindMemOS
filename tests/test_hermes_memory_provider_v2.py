@@ -94,6 +94,31 @@ def test_initialize_injects_whoami_and_prefetch_recalls(tmp_path):
             },
         ),
     ]
+    audit_path = tmp_path / "mindmemos-recall-audit.jsonl"
+    audit = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert audit["provider"]["candidate_ids"] == ["hallmark-erpnext"]
+    assert audit["provider"]["injected_ids"] == ["hallmark-erpnext"]
+    assert audit["injected_chars"] == len(recalled)
+    assert audit["elapsed_ms"] >= 0
+    assert audit_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_prefetch_skips_slash_commands_without_calling_mcp(tmp_path):
+    module = load_plugin()
+    provider = module.MindMemOSProvider(
+        config={"mcp_url": "https://memory.example/mcp", "auto_ingest": False},
+        environ={"MINDMEMOS_API_KEY": "test-key"},
+    )
+    calls = []
+
+    def fake_call(name, arguments):
+        calls.append((name, arguments))
+        return "profile"
+
+    provider._call_mcp = fake_call
+    provider.initialize("slash-session", hermes_home=str(tmp_path), agent_context="primary")
+    assert provider.prefetch("/help", session_id="slash-session") == ""
+    assert calls == [("whoami", {})]
 
 
 def test_auto_capsule_is_short_deduplicated_and_persistent(tmp_path):

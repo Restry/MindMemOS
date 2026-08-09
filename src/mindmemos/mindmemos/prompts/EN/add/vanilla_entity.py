@@ -35,6 +35,14 @@ Factual fidelity and subject attribution > evidence boundaries > preserving key 
 Prioritize information that may be reused in the future: stable identity/preferences/long-term constraints; projects, tools, files, configurations, versions, requirements, decisions, and task states; reproducible tool calls, parameters, errors, and verification results; explicitly stated or verified lessons, failure causes, methods, workflows, and recovery strategies; clear plans, concerns, reactions, and adopted suggestions that affect future decisions or collaboration.
 Skip greetings, generic evaluations, empty confirmations without an entity, one-off low-value process details, unconfirmed guesses, pure repetition, unclear subjects, and fragments that cannot be self-contained.
 
+[Durable Value Gate]
+- Every candidate must still be useful seven days later; otherwise skip it.
+- Skip commit SHAs, PR/issue numbers, test counts, build logs, file inventories, process status, one-off deployment progress, temporary URLs, orchestration wrappers, and Agent completion narratives by default.
+- From tools/Agent reports, retain only reproducible causes, stable interfaces/paths/constraints, user-confirmed decisions, and still-valid final state. Never transcribe logs item by item.
+- Assistant-only completed/deployed/verified claims are not durable facts without direct tool evidence or user confirmation in the same evidence.
+- Each content item expresses one atomic proposition and normally stays below 300 characters; prohibit file lists and execution diaries.
+- File/URL knowledge must use file_knowledge and retain document, section, page, or URL source anchors.
+
 [mem_type: choose only the most specific one for each memory]
 - profile: Stable identity, preference, habit, long-term goal, or long-term constraint.
 - fact: Entity, project, requirement, decision, state, or objective fact related to the user.

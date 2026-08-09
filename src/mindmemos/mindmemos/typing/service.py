@@ -13,6 +13,7 @@ from .memory import (
     FileMessage,
     MemoryOperation,
     MemoryType,
+    SourceRef,
     TextMessage,
     UrlMessage,
 )
@@ -122,6 +123,9 @@ class AddPipelineInput(BaseModel):
     messages: list[DialogueMessage | UrlMessage | FileMessage | TextMessage] = Field(default_factory=list)
     """Input messages; dialogue, URL, file, and plain text messages may be mixed."""
 
+    sources: list[SourceRef] = Field(default_factory=list)
+    """Structured sources bound to messages by metadata.message_index."""
+
     event_timestamp_ms: int = Field(
         default_factory=_utc_millis,
         validation_alias=AliasChoices("event_timestamp_ms", "event_timestamp", "timestamp"),
@@ -214,6 +218,9 @@ class SearchPipelineResult(BaseModel):
 
     memories: list[MemorySearchItem]
     """Returned memories."""
+
+    quality_trace: dict[str, Any] = Field(default_factory=dict)
+    """Candidate/filter/final-result audit data persisted with the search record."""
 
 
 class GetPipelineInput(BaseModel):
