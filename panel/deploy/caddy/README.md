@@ -10,11 +10,23 @@ Internet
   -> 192.168.1.235:8666
 ```
 
-Production URL:
+Production URLs:
 
 ```text
-https://mindmemos.nexora.restry.cn
+https://mindmemos.nexora.restry.cn        -> host 235 Panel
+https://mindmemos-local.nexora.restry.cn  -> local Mac Panel (192.168.1.246)
 ```
+
+The two endpoints use independent Basic Auth credentials. Their plaintext
+credential files on 235 are respectively:
+
+```text
+/home/claw/.hermes/mindmemos_panel_access.json
+/home/claw/.hermes/mindmemos_local_panel_access.json
+```
+
+Both files must remain mode `0600`; never reuse one instance's password for the
+other endpoint.
 
 Security controls:
 
@@ -25,7 +37,7 @@ Security controls:
 - production credential file: `/home/claw/.hermes/mindmemos_panel_access.json`, mode `0600`;
 - Caddy stores only a bcrypt password hash.
 
-Install the Caddy snippet from `mindmemos-panel.caddy.example`, replacing
+Install the relevant Caddy snippets from `mindmemos-panel.caddy.example`, replacing
 `<BCRYPT_HASH>` with the output of `caddy hash-password`. Add the domain to both
 the HTTP and HTTPS `customDomains` arrays in `/etc/frp/frpc.toml`, validate both
 configurations, restart frpc, then reload Caddy.
