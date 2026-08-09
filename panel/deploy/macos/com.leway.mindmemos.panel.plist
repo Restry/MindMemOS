@@ -12,15 +12,15 @@
     <key>MM_MODEL_CONFIG_BACKUP_DIR</key>
     <string>/Users/leway/.hermes/model-config-backups</string>
     <key>MM_MODEL_RELOAD_COMMAND</key>
-    <string>/Users/leway/Projects/mm-panel/reload_models.sh</string>
+    <string>/Users/leway/Projects/MindMemOS/panel/reload_models.sh</string>
   </dict>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python</string>
-    <string>/Users/leway/Projects/mm-panel/server.py</string>
+    <string>/Users/leway/Projects/MindMemOS/panel/server.py</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/leway/Projects/mm-panel</string>
+  <string>/Users/leway/Projects/MindMemOS/panel</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

@@ -2,6 +2,27 @@
 
 MindMemOS 的内网管理面板，默认监听 `8666`。提供记忆浏览、关系图谱、行为准则、文档导入、访问令牌和模型路由设置。
 
+## Source of truth
+
+面板源码属于主仓库 `Restry/MindMemOS`：
+
+```text
+panel/
+```
+
+本机运行目录是 `/Users/leway/Projects/MindMemOS/panel`；235 生产部署目录是
+`/opt/mindmemos-company/panel`。旧的独立 `/Users/leway/Projects/mm-panel` 只保留历史，
+不再作为源码或运行真源。
+
+“召回评测”模块位于：
+
+```text
+panel/recall_evaluation.py
+panel/recall_judge.py
+panel/test_recall_evaluation.py
+panel/test_recall_judge.py
+```
+
 ## MINDMEM·OS dashboard
 
 首页使用真实 `/api/all` 快照绘制最近 30 天累计写入 SVG：北京时间空缺日期由服务端补零，

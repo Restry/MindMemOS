@@ -95,6 +95,10 @@ Capture mode 与 Agent identity / authority 分离：
 
 Panel 对 memory ids 做批量 SQLite 查询，不逐卡查询。卡片显示 `HERMES · FRIES · AUTO` 这类 chip；浏览页可按 client/instance 与 capture mode 过滤。时间继续统一按 `Asia/Shanghai` 渲染。
 
+Panel 与召回评测源码统一位于本仓库 `panel/`。本机从
+`/Users/leway/Projects/MindMemOS/panel` 运行，235 部署至
+`/opt/mindmemos-company/panel`；旧的独立 `mm-panel` 目录不再是源码真源。
+
 ## Runtime adapters
 
 ### Hermes
