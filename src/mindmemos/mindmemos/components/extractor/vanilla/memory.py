@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from ....errors import MemoryExtractionError
 from ....logging import get_logger
 from ....typing import (
     ChunkBoundary,
@@ -20,6 +21,7 @@ from ....typing import (
 )
 
 logger = get_logger(__name__)
+MAX_ATOMIC_MEMORY_CHARS = 600
 
 
 def _message_time_payload(timestamp_ms: int | None) -> dict[str, Any]:
@@ -105,7 +107,7 @@ class MemoryExtractor(Protocol):
 
 
 class VanillaMemoryExtractor:
-    """Extract vanilla-mode memories with optional LLM and deterministic fallback."""
+    """Extract semantic memories without persisting raw-message fallbacks."""
 
     def __init__(self, *, llm_client=None, enable_entities: bool = False) -> None:
         self._llm_client = llm_client
@@ -132,10 +134,7 @@ class VanillaMemoryExtractor:
             MemoryExtractionResult with candidates extracted from evidence only.
         """
         if self._llm_client is None:
-            return self._envelope_fallback(envelope, preprocessed_texts)
-        # 本地补丁：原实现一次失败就走 _envelope_fallback，把整段原文当记忆入库
-        # （实测 ~2% 概率触发，库里会出现「# 2026-07-27 复盘 ## 聊了什么…」这类
-        # 未抽取的大段原文，还会被检索命中）。改为先重试 2 次，全失败才兜底。
+            raise MemoryExtractionError("memory extraction unavailable: no chat model configured")
         last_exc = None
         for attempt in range(3):
             try:
@@ -145,6 +144,7 @@ class VanillaMemoryExtractor:
                         envelope, preprocessed_texts, context, enable_entities=self._enable_entities
                     ),
                     format_parser=parse_memory_extraction_json,
+                    feedback_on_parse_error=True,
                 )
                 result = MemoryExtractionResult.model_validate(_normalize_extraction_payload(response.parsed))
                 if attempt:
@@ -154,7 +154,12 @@ class VanillaMemoryExtractor:
                         chunk_index=envelope.chunk_index,
                         attempt=attempt + 1,
                     )
-                return _mark_extractor(result, "vanilla_llm_chunked")
+                return _quality_gate(
+                    _mark_extractor(result, "vanilla_llm_chunked"),
+                    request_id=context.request_id,
+                    chunk_index=envelope.chunk_index,
+                    source_context=envelope.source_context,
+                )
             except Exception as exc:
                 last_exc = exc
                 logger.warning(
@@ -171,63 +176,14 @@ class VanillaMemoryExtractor:
             boundary=envelope.boundary,
             error=str(last_exc)[:300],
         )
-        result = self._envelope_fallback(envelope, preprocessed_texts)
-        return _mark_extractor(result, "fallback_chunked")
-
-    def _envelope_fallback(
-        self,
-        envelope: ExtractionEnvelope,
-        preprocessed_texts: list[PreprocessedText],
-    ) -> MemoryExtractionResult:
-        """Deterministic fallback for chunked extraction."""
-        memories: list[ExtractedMemoryCandidate] = []
-        entities: list[ExtractedEntityCandidate] = []
-        sources: list[ExtractedSourceCandidate] = []
-
-        base_confidence = _boundary_confidence(envelope.boundary)
-
-        for i, (msg_ref, preprocessed) in enumerate(
-            zip(envelope.extractable_messages, preprocessed_texts, strict=False)
-        ):
-            if not msg_ref.is_extractable:
-                continue
-            if not preprocessed.normalized_text.strip():
-                continue
-
-            seg_tag = f"chunk{envelope.chunk_index}_msg{i}"
-            memory_ref_id = f"m_{seg_tag}"
-            source_ref_id = f"s_{seg_tag}"
-
-            memories.append(
-                ExtractedMemoryCandidate(
-                    ref_id=memory_ref_id,
-                    content=preprocessed.normalized_text,
-                    mem_type="fact",
-                    confidence=base_confidence,
-                    source_refs=[source_ref_id],
-                    reason="fallback_chunked_memory",
-                    segment_id=seg_tag,
-                    metadata={
-                        "extractor": "fallback_chunked",
-                        "chunk_index": envelope.chunk_index,
-                        "boundary": envelope.boundary,
-                    },
-                )
-            )
-            sources.append(
-                ExtractedSourceCandidate(
-                    ref_id=source_ref_id,
-                    source_type="message",
-                    message_index=msg_ref.message_index,
-                    metadata={"evidence_index": i},
-                )
-            )
-
-        return MemoryExtractionResult(
-            memories=memories,
-            entities=entities,
-            sources=sources,
-        )
+        raise MemoryExtractionError(
+            "memory extraction failed after 3 attempts; raw source retained for audit and retry",
+            cause=last_exc,
+            chunk_index=envelope.chunk_index,
+            boundary=envelope.boundary,
+            attempts=3,
+            retryable=True,
+        ) from last_exc
 
 
 def parse_memory_extraction_json(content: str) -> dict[str, Any]:
@@ -237,7 +193,69 @@ def parse_memory_extraction_json(content: str) -> dict[str, Any]:
     if text.startswith("```"):
         text = text.removeprefix("```json").removeprefix("```").strip()
         text = text.removesuffix("```").strip()
-    return json.loads(text)
+    payload = json.loads(text)
+    for memory in payload.get("memories", []) if isinstance(payload, dict) else []:
+        if isinstance(memory, dict) and len(str(memory.get("content") or "").strip()) > MAX_ATOMIC_MEMORY_CHARS:
+            raise ValueError(
+                f"memory candidate exceeds {MAX_ATOMIC_MEMORY_CHARS} characters; split it into atomic facts"
+            )
+    return payload
+
+
+def _quality_gate(
+    result: MemoryExtractionResult,
+    *,
+    request_id: str,
+    chunk_index: int,
+    source_context: dict[str, Any] | None = None,
+) -> MemoryExtractionResult:
+    """Deterministically block whole-message and non-atomic candidates."""
+
+    kept: list[ExtractedMemoryCandidate] = []
+    for candidate in result.memories:
+        content = candidate.content.strip()
+        reject_reason = None
+        if not content:
+            reject_reason = "empty"
+        elif len(content) > MAX_ATOMIC_MEMORY_CHARS:
+            raise MemoryExtractionError(
+                "non-atomic memory candidate rejected",
+                chunk_index=chunk_index,
+                attempts=1,
+                retryable=True,
+            )
+        elif candidate.metadata.get("extractor") == "fallback_chunked":
+            raise MemoryExtractionError(
+                "raw fallback memory rejected",
+                chunk_index=chunk_index,
+                attempts=1,
+                retryable=False,
+            )
+        if reject_reason:
+            logger.warning(
+                "memory_candidate_quality_rejected",
+                request_id=request_id,
+                chunk_index=chunk_index,
+                ref_id=candidate.ref_id,
+                chars=len(content),
+                reason=reject_reason,
+            )
+            continue
+        updates: dict[str, Any] = {"content": content}
+        if (source_context or {}).get("content_kind") == "document":
+            document = (source_context or {}).get("document")
+            source_metadata = dict(candidate.metadata)
+            if isinstance(document, dict):
+                source_metadata.update(
+                    {
+                        f"document_{key}": value
+                        for key, value in document.items()
+                        if key in {"name", "tag", "chunk_index", "chunk_count", "section", "page"}
+                    }
+                )
+            updates.update({"mem_type": "file_knowledge", "metadata": source_metadata})
+        kept.append(candidate.model_copy(update=updates))
+    return result.model_copy(update={"memories": kept})
 
 
 def _normalize_extraction_payload(payload: Any) -> Any:
@@ -322,22 +340,6 @@ def _dominant_lang(preprocessed_texts: list[PreprocessedText]) -> str:
     return "en"
 
 
-def _boundary_confidence(boundary: ChunkBoundary) -> float:
-    """Map chunk boundary to a base confidence for fallback extraction.
-
-    COMPLETE: full confidence. OPEN_HEAD / OPEN_TAIL: moderate.
-    ORPHAN: conservative. COMPACTED: full (head+tail preserved).
-    """
-    mapping: dict[str, float] = {
-        "complete": 1.0,
-        "compacted": 0.9,
-        "open_head": 0.7,
-        "open_tail": 0.7,
-        "orphan": 0.5,
-    }
-    return mapping.get(boundary, 0.7)
-
-
 def _envelope_prompt_messages(
     envelope: ExtractionEnvelope,
     preprocessed_texts: list[PreprocessedText],
@@ -400,6 +402,7 @@ def _envelope_prompt_messages(
         "project_id": context.project_id,
         "chunk_index": envelope.chunk_index,
         "boundary": envelope.boundary,
+        "source_context": envelope.source_context,
         "instruction": (
             "EXTRACT memories ONLY from the 'extractable' section below. "
             "The 'context' section is provided for reference resolution and "

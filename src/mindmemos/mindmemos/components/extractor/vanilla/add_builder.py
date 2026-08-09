@@ -70,6 +70,26 @@ from .memory import (
 logger = get_logger(__name__)
 
 
+def _extraction_source_context(metadata: dict) -> dict[str, object]:
+    """Pass only source-classification metadata into the extraction prompt."""
+
+    context: dict[str, object] = {}
+    document = metadata.get("document")
+    if isinstance(document, dict):
+        safe_document = {
+            key: document[key]
+            for key in ("name", "tag", "chunk_index", "chunk_count", "section", "page")
+            if key in document and isinstance(document[key], (str, int))
+        }
+        if safe_document:
+            context["content_kind"] = "document"
+            context["document"] = safe_document
+    provenance = metadata.get("provenance")
+    if isinstance(provenance, dict) and isinstance(provenance.get("capture_mode"), str):
+        context["capture_mode"] = provenance["capture_mode"]
+    return context
+
+
 def _source_time_metadata(segment: SourceAwareSegment) -> dict[str, object]:
     metadata: dict[str, object] = {}
     if segment.timestamp is not None:
@@ -115,7 +135,7 @@ def _extract_file_url_source_refs(inp: AddPipelineInput) -> list[SourceRef]:
     """
     from ....typing import FileMessage, UrlMessage
 
-    source_refs: list[SourceRef] = []
+    source_refs: list[SourceRef] = [source.model_copy(deep=True) for source in inp.sources]
     for index, message in enumerate(inp.messages):
         if isinstance(message, FileMessage):
             source_refs.append(
@@ -507,9 +527,16 @@ class AddCoreBuilder:
                 chunk.boundary = "compacted"
 
         file_url_source_refs = _extract_file_url_source_refs(inp)
+        resolved_source_refs: list[SourceRef] = []
         for source_ref in file_url_source_refs:
             source_ref = generate_source_id(source_ref, context)
+            resolved_source_refs.append(source_ref)
             sources_by_id.setdefault(source_ref.source_id or "", build_source_write(source_ref, context, now))
+        provided_sources_by_message = {
+            source.metadata.get("message_index"): source
+            for source in resolved_source_refs
+            if isinstance(source.metadata.get("message_index"), int)
+        }
 
         active_memories = await self._related_memory_recall.list_active_memories(context)
 
@@ -562,15 +589,28 @@ class AddCoreBuilder:
             original_message_contexts_by_index: dict[int, list[_MessageExtractionContext]] = {}
             pending_message_contexts: list[tuple[int, TurnMessageRef, SourceRef, SourceAwareSegment]] = []
             for evidence_index, msg_ref in enumerate(extractable_refs):
-                source_ref = SourceRef(
-                    source_type="message",
-                    message_id=f"chunk{chunk.chunk_index}-evidence-{evidence_index}-message-{msg_ref.message_index}",
-                    is_parsed=True,
-                    metadata={
-                        **_message_source_metadata(msg_ref),
-                        "evidence_index": evidence_index,
-                    },
-                )
+                provided_source = provided_sources_by_message.get(msg_ref.message_index)
+                if provided_source is not None:
+                    source_ref = provided_source.model_copy(
+                        deep=True,
+                        update={
+                            "metadata": {
+                                **dict(provided_source.metadata),
+                                **_message_source_metadata(msg_ref),
+                                "evidence_index": evidence_index,
+                            }
+                        },
+                    )
+                else:
+                    source_ref = SourceRef(
+                        source_type="message",
+                        message_id=f"chunk{chunk.chunk_index}-evidence-{evidence_index}-message-{msg_ref.message_index}",
+                        is_parsed=True,
+                        metadata={
+                            **_message_source_metadata(msg_ref),
+                            "evidence_index": evidence_index,
+                        },
+                    )
                 source_ref = generate_source_id(source_ref, context)
                 segment = _ref_to_segment(msg_ref, inp)
                 segment = segment.model_copy(
@@ -649,6 +689,7 @@ class AddCoreBuilder:
                 current_context_messages=current_context_refs,
                 history=history_pack,
                 recalled_memories=recalled_memories,
+                source_context=_extraction_source_context(dict(inp.metadata)),
                 boundary=chunk.boundary,
                 chunk_index=chunk.chunk_index,
             )

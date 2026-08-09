@@ -45,6 +45,7 @@ NEO4J_AUTH = (
 COLL = os.getenv("MINDMEMOS_MEMORY_COLLECTION", "memory_item_v1")
 ENT_COLL = os.getenv("MINDMEMOS_ENTITY_COLLECTION", "entity_item_v1")
 SEARCH_COLL = os.getenv("MINDMEMOS_SEARCH_RECORD_COLLECTION", "search_record_v1")
+ADD_COLL = os.getenv("MINDMEMOS_ADD_RECORD_COLLECTION", "add_record_v1")
 KEYS_PATH = os.path.expanduser(os.getenv("MINDMEMOS_PANEL_KEYS", "/tmp/mm_keys.json"))
 PROVIDER_CONFIG_PATH = os.path.expanduser(os.getenv("MINDMEMOS_PROVIDER_CONFIG", "~/.hermes/mindmemos.json"))
 RUNTIME_CONFIG_PATH = os.path.expanduser(
@@ -1461,6 +1462,40 @@ class H(BaseHTTPRequestHandler):
                     out[name] = False
             self._send(out)
             return
+        if path == "/api/quality-alerts":
+            try:
+                points = scroll_all(ADD_COLL, limit=2000)
+                failures = []
+                for point in points:
+                    payload = point.get("payload") or {}
+                    if payload.get("status") != "error" or payload.get("retry_resolved_at"):
+                        continue
+                    failure = payload.get("failure") or {}
+                    failures.append(
+                        {
+                            "add_record_id": str(point.get("id") or ""),
+                            "error_code": failure.get("error_code") or "add_failed",
+                            "error_stage": failure.get("error_stage"),
+                            "chunk_index": failure.get("chunk_index"),
+                            "boundary": failure.get("boundary"),
+                            "attempts": failure.get("attempts"),
+                            "retryable": bool(failure.get("retryable")),
+                            "completed_at": payload.get("task_completed_at"),
+                            "error": str(payload.get("error") or "")[:300],
+                        }
+                    )
+                failures.sort(key=lambda item: str(item.get("completed_at") or ""), reverse=True)
+                self._send(
+                    {
+                        "ok": True,
+                        "count": len(failures),
+                        "retryable": sum(1 for item in failures if item["retryable"]),
+                        "items": failures[:50],
+                    }
+                )
+            except Exception as exc:
+                self._send({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:240]}"}, 500)
+            return
         if path == "/api/version":
             # Cheap local revision check; no Qdrant scan and no queue-state mtime noise.
             self._send({"ok": True, **_data_version()})
@@ -1735,7 +1770,9 @@ class H(BaseHTTPRequestHandler):
                     continue
 
                 label = f"[文档：{name}]" + (f"[{tag}]" if tag else "")
+                file_hash = hashlib.sha256(raw).hexdigest()
                 good = 0
+                failed_chunks = []
                 for chunk_index, ch in enumerate(cs):
                     try:
                         event_id = (
@@ -1751,18 +1788,44 @@ class H(BaseHTTPRequestHandler):
                                 ),
                                 "session_id": f"upload-{hashlib.sha256(name.encode()).hexdigest()[:12]}",
                                 "messages": [{"role": "user", "content": f"{label}\n{ch}"}],
+                                "sources": [
+                                    {
+                                        "source_type": "file",
+                                        "file_path": f"upload://sha256/{file_hash}",
+                                        "file_name": name,
+                                        "is_parsed": True,
+                                        "content_hash": file_hash,
+                                        "chunk_id": f"{file_hash}:{chunk_index}",
+                                        "start_offset": chunk_index,
+                                        "metadata": {
+                                            "message_index": 0,
+                                            "tag": tag,
+                                            "chunk_index": chunk_index,
+                                            "chunk_count": len(cs),
+                                            "capture_mode": "import",
+                                        },
+                                    }
+                                ],
                                 "mode": "sync",
                                 "metadata": {
                                     "provenance": {
                                         **PANEL_IMPORT_PRINCIPAL,
                                         "capture_mode": "import",
                                         "event_id": event_id,
-                                    }
+                                    },
+                                    "document": {
+                                        "name": name,
+                                        "tag": tag,
+                                        "chunk_index": chunk_index,
+                                        "chunk_count": len(cs),
+                                    },
                                 },
                             },
                             headers={"Authorization": f"Bearer {MM_KEY}"},
                         )
-                        if str(d.get("code", "")).lower() in ("ok", "0"):
+                        response_ok = str(d.get("code", "")).lower() in ("ok", "0")
+                        memories = (d.get("data") or {}).get("memories") or []
+                        if response_ok and memories:
                             if provenance_ledger:
                                 provenance_ledger.record_response(
                                     d,
@@ -1771,12 +1834,97 @@ class H(BaseHTTPRequestHandler):
                                     event_id=event_id,
                                 )
                             good += 1
-                    except Exception:
-                        pass
-                results.append({"file": name, "ok": good > 0, "detail": f"{len(text)} 字符 → 入库 {good}/{len(cs)} 片"})
-            if any(result.get("ok") for result in results):
+                        else:
+                            failed_chunks.append(
+                                {
+                                    "chunk_index": chunk_index,
+                                    "code": d.get("code") or "empty_extraction",
+                                    "detail": d.get("message") or "该分块未提取出任何可持久化记忆",
+                                }
+                            )
+                    except Exception as exc:
+                        failed_chunks.append(
+                            {
+                                "chunk_index": chunk_index,
+                                "code": type(exc).__name__,
+                                "detail": str(exc)[:300],
+                            }
+                        )
+                results.append(
+                    {
+                        "file": name,
+                        "ok": good == len(cs),
+                        "detail": f"{len(text)} 字符 → 入库 {good}/{len(cs)} 片",
+                        "successful_chunks": good,
+                        "total_chunks": len(cs),
+                        "failed_chunks": failed_chunks,
+                    }
+                )
+            if any(result.get("successful_chunks", 0) for result in results):
                 _bump_data_version()
-            self._send({"ok": True, "results": results})
+            self._send({"ok": bool(results) and all(result.get("ok") for result in results), "results": results})
+            return
+        if path == "/api/quality-retry":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                req = json.loads(self.rfile.read(n) or b"{}")
+            except Exception as exc:
+                self._send({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            record_id = str(req.get("add_record_id") or "").strip()
+            if not record_id:
+                self._send({"ok": False, "error": "缺少 add_record_id"}, 400)
+                return
+            try:
+                retrieved = http_json(
+                    f"{QDRANT}/collections/{ADD_COLL}/points",
+                    {"ids": [record_id], "with_payload": True, "with_vector": False},
+                )
+                points = (retrieved.get("result") or {}).get("points") or []
+                if not points:
+                    self._send({"ok": False, "error": "失败记录不存在"}, 404)
+                    return
+                original = points[0].get("payload") or {}
+                messages = original.get("messages") or []
+                sources = original.get("sources") or []
+                if not messages:
+                    self._send({"ok": False, "error": "失败记录没有可重试的原始输入"}, 409)
+                    return
+                metadata = dict(original.get("metadata") or {})
+                metadata["retry_of_add_record_id"] = record_id
+                d = http_json(
+                    f"{MM_API}/v1/memory/add",
+                    {
+                        "user_id": original.get("user_id") or USER_ID,
+                        "app_id": original.get("app_id"),
+                        "agent_id": original.get("agent_id"),
+                        "session_id": original.get("session_id"),
+                        "messages": messages,
+                        "sources": sources,
+                        "mode": "sync",
+                        "metadata": metadata,
+                    },
+                    headers={"Authorization": f"Bearer {MM_KEY}"},
+                )
+                ok = str(d.get("code", "")).lower() in ("ok", "0") and bool((d.get("data") or {}).get("memories"))
+                if ok:
+                    http_json(
+                        f"{QDRANT}/collections/{ADD_COLL}/points/payload",
+                        {
+                            "payload": {
+                                "retry_resolved_at": datetime.now(timezone.utc).isoformat(),
+                                "retry_request_id": d.get("request_id"),
+                            },
+                            "points": [record_id],
+                        },
+                    )
+                    _bump_data_version()
+                self._send(
+                    {"ok": ok, "detail": d.get("message") or d.get("code"), "request_id": d.get("request_id")},
+                    200 if ok else 502,
+                )
+            except Exception as exc:
+                self._send({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}, 500)
             return
         if path in ("/api/delete", "/api/update"):
             # 编辑/删除走 MM 官方接口，不直接动 Qdrant——

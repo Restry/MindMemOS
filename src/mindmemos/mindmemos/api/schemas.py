@@ -33,6 +33,7 @@ from ..typing import (
     MemoryAddEventItem,
     MemorySearchItem,
     SkillContext,
+    SourceRef,
     TextMessage,
     UrlMessage,
 )
@@ -107,6 +108,9 @@ class AddRequest(ActorIdentityRequest):
     messages: list[DialogueMessage | UrlMessage | FileMessage | TextMessage] = Field(min_length=1)
     """Message list supporting dialogue, URL, file, and plain text messages."""
 
+    sources: list[SourceRef] = Field(default_factory=list)
+    """Structured file/URL/message provenance bound by metadata.message_index."""
+
     mode: AddMode = Field(default="sync")
     """Add mode: sync or async."""
 
@@ -141,6 +145,16 @@ class AddRequest(ActorIdentityRequest):
     def _messages_have_content(cls, messages):
         validate_messages_have_content(messages)
         return messages
+
+    @field_validator("sources")
+    @classmethod
+    def _sources_reference_existing_messages(cls, sources, info):
+        message_count = len(info.data.get("messages") or [])
+        for source in sources:
+            index = source.metadata.get("message_index")
+            if not isinstance(index, int) or not 0 <= index < message_count:
+                raise ValueError("each source requires a valid metadata.message_index")
+        return sources
 
 
 class SearchRequest(ActorIdentityRequest):
@@ -280,6 +294,8 @@ class MemoryListData(BaseModel):
     """
 
     memories: list[MemorySearchItem] = Field(default_factory=list)
+    quality_trace: dict[str, Any] = Field(default_factory=dict)
+    """Search quality trace; empty for non-search list responses."""
 
 
 class ApiResponse(BaseModel, Generic[T]):

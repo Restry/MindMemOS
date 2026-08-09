@@ -115,9 +115,7 @@ def to_update_pipeline_input(req: UpdateRequest) -> UpdatePipelineInput:
 def to_feedback_pipeline_input(req: FeedbackRequest) -> FeedbackPipelineInput:
     """Build feedback pipeline input from a public feedback request."""
 
-    return FeedbackPipelineInput.model_validate(
-        req.model_dump(by_alias=True, exclude=set(_ACTOR_FIELDS))
-    )
+    return FeedbackPipelineInput.model_validate(req.model_dump(by_alias=True, exclude=set(_ACTOR_FIELDS)))
 
 
 def to_dreaming_pipeline_input(req: DreamingRequest) -> DreamingPipelineInput:
@@ -185,7 +183,10 @@ def to_memory_list_api_response(
         code=result.status,
         message=getattr(result, "message", None) or "",
         request_id=request_id,
-        data=MemoryListData(memories=result.memories),
+        data=MemoryListData(
+            memories=result.memories,
+            quality_trace=getattr(result, "quality_trace", {}),
+        ),
     )
 
 

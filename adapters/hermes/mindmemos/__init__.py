@@ -70,7 +70,8 @@ def _extractive_excerpt(query: str, content: str, max_chars: int) -> str:
 
 
 def _is_low_information_input(text: str) -> bool:
-    return bool(_LOW_INFORMATION_RE.fullmatch((text or "").strip()))
+    cleaned = (text or "").strip()
+    return cleaned.startswith("/") or bool(_LOW_INFORMATION_RE.fullmatch(cleaned))
 
 
 def _load_profile_config(environ: Mapping[str, str]) -> Dict[str, Any]:
@@ -124,7 +125,9 @@ class MindMemOSProvider(MemoryProvider):
         self._profile = ""
         self._flush_lock = threading.Lock()
         self._capsule_lock = threading.RLock()
+        self._audit_lock = threading.Lock()
         self._capsule_dir = ""
+        self._audit_path = ""
         self._capsule_sessions: Dict[str, Dict[str, Any]] = {}
         self._apply_config(self._config)
 
@@ -286,7 +289,13 @@ class MindMemOSProvider(MemoryProvider):
             state = self._load_capsule_session(session_id)
             return int(state.get("chars", 0)) < self._session_context_chars
 
-    def _build_capsule(self, query: str, memories: List[Dict[str, Any]], session_id: str) -> str:
+    def _build_capsule(
+        self,
+        query: str,
+        memories: List[Dict[str, Any]],
+        session_id: str,
+        audit: Optional[Dict[str, Any]] = None,
+    ) -> str:
         heading = "## MindMemOS 记忆胶囊\n"
         note = "\n（仅含与当前问题相关的原文摘录；需要完整证据时请手动 recall。）"
         with self._capsule_lock:
@@ -307,30 +316,42 @@ class MindMemOSProvider(MemoryProvider):
             lines: list[str] = []
             fingerprints: list[str] = []
             candidate_fingerprints: set[str] = set()
+            injected_ids: list[str] = []
+            filtered: list[Dict[str, str]] = []
+            if audit is not None:
+                audit["candidate_ids"] = [str(memory.get("id") or "unknown") for memory in memories]
             used = len(heading) + len(note)
             for memory in memories:
                 content = str(memory.get("memory") or "").strip()
+                memory_id_full = str(memory.get("id") or "unknown")
                 if not content:
+                    filtered.append({"id": memory_id_full, "reason": "empty"})
                     continue
                 fingerprint = self._memory_fingerprint(memory)
                 candidate_fingerprints.add(fingerprint)
                 if fingerprint in seen or fingerprint in query_seen:
+                    filtered.append({"id": memory_id_full, "reason": "session_duplicate"})
                     continue
                 if len(lines) >= self._auto_context_max_items:
+                    filtered.append({"id": memory_id_full, "reason": "item_budget"})
                     continue
                 excerpt = _extractive_excerpt(query, content, self._auto_memory_chars)
                 if not excerpt:
+                    filtered.append({"id": memory_id_full, "reason": "no_query_excerpt"})
                     continue
-                memory_id = str(memory.get("id") or "unknown")[:12]
+                memory_id = memory_id_full[:12]
                 memory_type = str(memory.get("memory_type") or "fact")
                 line = f"- [{memory_type}] {excerpt}（来源 {memory_id}）"
                 projected = used + len(line) + 1
                 if projected > self._auto_context_chars:
+                    filtered.append({"id": memory_id_full, "reason": "turn_char_budget"})
                     continue
                 if len(line) + 1 > session_remaining:
+                    filtered.append({"id": memory_id_full, "reason": "session_char_budget"})
                     continue
                 lines.append(line)
                 fingerprints.append(fingerprint)
+                injected_ids.append(memory_id_full)
                 used = projected
                 session_remaining -= len(line) + 1
 
@@ -338,6 +359,8 @@ class MindMemOSProvider(MemoryProvider):
                 "fingerprints": candidate_fingerprints,
                 "updated_at": time.time(),
             }
+            if audit is not None:
+                audit.update({"filtered": filtered, "injected_ids": injected_ids})
             if not lines:
                 state["updated_at"] = time.time()
                 try:
@@ -354,6 +377,22 @@ class MindMemOSProvider(MemoryProvider):
             except Exception as exc:
                 logger.warning("MindMemOS capsule state could not be persisted: %s", exc)
             return heading + "\n".join(lines) + note
+
+    def _record_recall_audit(self, payload: Dict[str, Any]) -> None:
+        if not self._audit_path:
+            return
+        record = {"timestamp": time.time(), **payload}
+        line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        try:
+            with self._audit_lock:
+                fd = os.open(self._audit_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                try:
+                    os.write(fd, line.encode("utf-8"))
+                finally:
+                    os.close(fd)
+                os.chmod(self._audit_path, 0o600)
+        except Exception as exc:
+            logger.warning("MindMemOS recall audit could not be persisted: %s", exc)
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._session_id = session_id
@@ -377,6 +416,7 @@ class MindMemOSProvider(MemoryProvider):
         self._capsule_dir = os.path.join(self._hermes_home, "mindmemos-capsules")
         os.makedirs(self._capsule_dir, mode=0o700, exist_ok=True)
         os.chmod(self._capsule_dir, 0o700)
+        self._audit_path = os.path.join(self._hermes_home, "mindmemos-recall-audit.jsonl")
         with self._capsule_lock:
             self._load_capsule_session(self._session_id)
         if self._agent_context == "primary":
@@ -401,8 +441,9 @@ class MindMemOSProvider(MemoryProvider):
         text = (query or "").strip()
         if self._agent_context != "primary" or not text or _is_low_information_input(text):
             return ""
+        started = time.perf_counter()
+        sid = session_id or self._session_id or "unknown"
         try:
-            sid = session_id or self._session_id or "unknown"
             if not self._session_has_capsule_budget(sid) or self._query_already_processed(sid, text):
                 return ""
             recalled = self._call_mcp(
@@ -417,9 +458,29 @@ class MindMemOSProvider(MemoryProvider):
             memories = payload.get("memories") if isinstance(payload, dict) else None
             if not isinstance(memories, list):
                 return ""
-            return self._build_capsule(text, memories, sid)
+            provider_trace: Dict[str, Any] = {}
+            capsule = self._build_capsule(text, memories, sid, provider_trace)
+            self._record_recall_audit(
+                {
+                    "session_id": sid,
+                    "query_fingerprint": self._query_fingerprint(text),
+                    "core": payload.get("quality_trace") or {},
+                    "provider": provider_trace,
+                    "injected_chars": len(capsule),
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                }
+            )
+            return capsule
         except Exception as exc:
-            logger.debug("MindMemOS recall failed: %s", exc)
+            self._record_recall_audit(
+                {
+                    "session_id": sid,
+                    "query_fingerprint": self._query_fingerprint(text),
+                    "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                }
+            )
+            logger.warning("MindMemOS automatic recall failed; continuing without context: %s", exc)
             return ""
 
     def _write_spool_record(self, record: Dict[str, Any], event_id: str) -> str:

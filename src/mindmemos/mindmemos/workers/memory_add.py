@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..api.algorithm import binding_for_memory_algorithm
+from ..errors import MemoryExtractionError
 from ..infra.kafka import ConsumedMessage
 from ..logging import get_logger
 from ..pipelines import create_pipeline
@@ -52,8 +53,14 @@ async def handle_memory_add(msg: ConsumedMessage) -> None:
         )
     except Exception as exc:
         if recorder is not None:
+            failure = exc.details() if isinstance(exc, MemoryExtractionError) else {}
+            mark_failed = (
+                recorder.mark_add_failed(context, add_record_id, str(exc), failure=failure)
+                if failure
+                else recorder.mark_add_failed(context, add_record_id, str(exc))
+            )
             await suppress_recording_errors(
-                recorder.mark_add_failed(context, add_record_id, str(exc)),
+                mark_failed,
                 operation="add",
             )
         logger.exception(

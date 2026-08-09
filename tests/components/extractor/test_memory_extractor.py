@@ -12,6 +12,7 @@ from mindmemos.components.extractor.vanilla.memory import (
 )
 from mindmemos.components.text import TextPreprocessor
 from mindmemos.config import TextProcessingConfig
+from mindmemos.errors import MemoryExtractionError
 from mindmemos.typing.algo import ExtractionEnvelope, TurnMessageRef
 from mindmemos.typing.llm import ChatResponse
 from mindmemos.typing.memory import MemoryRequestContext
@@ -51,7 +52,7 @@ def make_segment_and_preprocessed(message: dict):
     return segment, preprocessed
 
 
-def make_envelope(segments, *, recalled_memories=None) -> ExtractionEnvelope:
+def make_envelope(segments, *, recalled_memories=None, source_context=None) -> ExtractionEnvelope:
     return ExtractionEnvelope(
         extractable_messages=[
             TurnMessageRef(
@@ -64,6 +65,7 @@ def make_envelope(segments, *, recalled_memories=None) -> ExtractionEnvelope:
             for index, segment in enumerate(segments)
         ],
         recalled_memories=recalled_memories or [],
+        source_context=source_context or {},
         boundary="complete",
         chunk_index=0,
     )
@@ -136,21 +138,84 @@ async def test_vanilla_memory_extractor_parses_llm_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vanilla_memory_extractor_falls_back_when_llm_fails() -> None:
+async def test_vanilla_memory_extractor_rejects_raw_fallback_when_llm_fails() -> None:
     segment, preprocessed = make_segment_and_preprocessed(
         {"role": "user", "content": "Remember that Kai uses Qdrant.", "timestamp": 1770000000000}
     )
 
-    result = await VanillaMemoryExtractor(llm_client=FakeLlmClient(fail=True)).extract_from_envelope(
-        make_envelope([segment]),
+    with pytest.raises(MemoryExtractionError, match="raw source retained"):
+        await VanillaMemoryExtractor(llm_client=FakeLlmClient(fail=True)).extract_from_envelope(
+            make_envelope([segment]),
+            [preprocessed],
+            make_context(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_vanilla_memory_extractor_requires_configured_llm() -> None:
+    segment, preprocessed = make_segment_and_preprocessed({"role": "user", "content": "Remember this."})
+    with pytest.raises(MemoryExtractionError, match="no chat model configured"):
+        await VanillaMemoryExtractor(llm_client=None).extract_from_envelope(
+            make_envelope([segment]), [preprocessed], make_context()
+        )
+
+
+@pytest.mark.asyncio
+async def test_vanilla_memory_extractor_retries_then_fails_non_atomic_long_candidate() -> None:
+    segment, preprocessed = make_segment_and_preprocessed({"role": "user", "content": "A durable source."})
+    fake_llm = FakeLlmClient(
+        parsed={
+            "memories": [
+                {
+                    "ref_id": "m1",
+                    "content": "x" * 601,
+                    "mem_type": "fact",
+                    "confidence": 0.95,
+                    "source_refs": ["s0"],
+                    "action_hint": "add",
+                }
+            ]
+        }
+    )
+    with pytest.raises(MemoryExtractionError, match="failed after 3 attempts") as exc_info:
+        await VanillaMemoryExtractor(llm_client=fake_llm).extract_from_envelope(
+            make_envelope([segment]), [preprocessed], make_context()
+        )
+    assert exc_info.value.retryable is True
+    assert exc_info.value.chunk_index == 0
+
+
+@pytest.mark.asyncio
+async def test_document_source_forces_file_knowledge_and_provenance() -> None:
+    segment, preprocessed = make_segment_and_preprocessed({"role": "user", "content": "退款期限为七天。"})
+    fake_llm = FakeLlmClient(
+        parsed={
+            "memories": [
+                {
+                    "ref_id": "m1",
+                    "content": "退款期限为七天。",
+                    "mem_type": "fact",
+                    "confidence": 0.95,
+                    "source_refs": ["s0"],
+                    "action_hint": "add",
+                }
+            ]
+        }
+    )
+    result = await VanillaMemoryExtractor(llm_client=fake_llm).extract_from_envelope(
+        make_envelope(
+            [segment],
+            source_context={
+                "content_kind": "document",
+                "document": {"name": "policy.pdf", "chunk_index": 2, "chunk_count": 9},
+            },
+        ),
         [preprocessed],
         make_context(),
     )
-
-    assert result.memories[0].content == "Remember that Kai uses Qdrant."
-    assert result.memories[0].mem_type == "fact"
-    assert result.memories[0].metadata["extractor"] == "fallback_chunked"
-    assert result.sources[0].message_index == 0
+    assert result.memories[0].mem_type == "file_knowledge"
+    assert result.memories[0].metadata["document_name"] == "policy.pdf"
+    assert result.memories[0].metadata["document_chunk_index"] == 2
 
 
 @pytest.mark.asyncio

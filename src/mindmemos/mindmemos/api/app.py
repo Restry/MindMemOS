@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ..config import get_config, init_config_from_env
-from ..errors import ApiError
+from ..errors import ApiError, MemoryExtractionError
 from ..infra import shutdown_tracer_provider
 from ..infra.db import close_database_clients, ensure_database_schema
 from ..infra.kafka import start_kafka, stop_kafka
@@ -95,6 +95,17 @@ def create_app() -> FastAPI:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(MemoryExtractionError)
+    async def _handle_memory_extraction_error(_request: Request, exc: MemoryExtractionError) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": exc.error_code,
+                "message": exc.message,
+                "data": {"failure": exc.details()},
+            },
+        )
+
     @app.exception_handler(ApiError)
     async def _handle_api_error(_request: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse(

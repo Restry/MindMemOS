@@ -358,7 +358,7 @@ def test_panel_frontend_exposes_one_latest_view_with_full_browse_capability() ->
 
     server = PANEL_SERVER.read_text(encoding="utf-8")
     assert 'LLMS_URL = os.getenv("MM_LLMS_URL"' in server
-    assert "self.send_header('Location', LLMS_URL)" in server
+    assert 'self.send_header("Location", LLMS_URL)' in server
     assert "open(os.path.join(HERE, 'llms.txt')" not in server
 
 
