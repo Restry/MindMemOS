@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+systemctl restart mindmemos-company-api.service
+for _ in $(seq 1 120); do
+  if /usr/bin/curl -fsS --max-time 2 http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:8000/healthz >/dev/null
+
+systemctl restart mindmemos-company-mcp.service
+for _ in $(seq 1 45); do
+  if /usr/bin/curl -fsS --max-time 2 http://127.0.0.1:8765/health >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:8765/health >/dev/null
+printf 'api=ok mcp=ok\n'
