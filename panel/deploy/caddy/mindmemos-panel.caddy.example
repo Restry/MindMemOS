@@ -1,0 +1,14 @@
+# Replace <BCRYPT_HASH> at deployment time. Never commit the production hash.
+mindmemos.nexora.restry.cn {
+    encode zstd gzip
+    header {
+        X-Robots-Tag "noindex, nofollow, noarchive"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+    basic_auth {
+        leway <BCRYPT_HASH>
+    }
+    reverse_proxy 192.168.1.235:8666
+}
