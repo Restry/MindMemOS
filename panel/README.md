@@ -26,11 +26,13 @@ panel/test_recall_judge.py
 ## MINDMEM·OS dashboard
 
 首页使用真实 `/api/all` 快照绘制最近 30 天累计写入 SVG：北京时间空缺日期由服务端补零，
-折线首次加载时绘制一次，白色 runner 每 6 秒沿真实路径巡航；`prefers-reduced-motion`
-会关闭循环动画。实现不依赖 React/Recharts。
+30 个日期点覆盖完整绘图区并随容器宽度重算；白色 runner 每 6 秒沿真实路径巡航，
+`prefers-reduced-motion` 会关闭循环动画。点击日期点会打开唯一的“最新新增”视图，按
+`Asia/Shanghai` 自然日过滤完整记忆列表；该视图保留来源、类型、Agent、捕获方式、噪音
+筛选和连续加载能力，并提供清除日期筛选。实现不依赖 React/Recharts。
 
 Memory Command Terminal 只提供安全的面板操作：普通文本和 `/search` 执行语义检索，
-`/whoami`、`/browse`、`/recent`、`/upload`、`/graph`、`/tokens`、`/models` 切换页面，
+`/whoami`、`/recent`、`/upload`、`/graph`、`/tokens`、`/models` 切换页面，
 `/refresh` 刷新快照。它不接受 shell 或任意服务器命令。功能 Tabs 固定在页面内容顶部，默认打开首页；语义搜索不占用 Tab，Memory Command Terminal 固定浮动在页面底部，动态建议问题显示在 READY 状态下方，搜索结果在 Terminal 上方的可关闭浮层展示。
 
 ## 模型设置
@@ -52,12 +54,15 @@ MM_MODEL_CONFIG_BACKUP_DIR
 MM_MODEL_ENDPOINTS_PATH
 MM_MODEL_RELOAD_COMMAND
 MINDMEMOS_API_KEY
+MINDMEMOS_CONFIG_PATH
+MINDMEMOS_PANEL_API_KEY_ID
+MINDMEMOS_PANEL_MEMORY_ALGORITHM
 MINDMEMOS_PANEL_KEYS
 MINDMEMOS_PROVIDER_CONFIG
 ```
 
-记忆 API credential 的读取顺序是环境变量、legacy panel keys 文件、标准
-`~/.hermes/mindmemos.json`。运行配置和 API Key 不进入本仓库。
+记忆 API credential 的读取顺序是显式环境变量、API 运行配置 `auth.api_key_file`、legacy
+panel keys 文件、标准 `~/.hermes/mindmemos.json`。运行配置中的密钥和 API Key 文件保持未跟踪，不进入提交。
 
 ## 本地运行
 

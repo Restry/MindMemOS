@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MindMemOS · 记忆面板</title>
 <script src="/lucide.js"></script>
+<script src="/dashboard.js"></script>
 <style>
 /* ===== RESLEY·OS 风格：等宽 / 深色 / 橙色强调 / 直角硬边 ===== */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
@@ -93,8 +94,8 @@ h1 .pt{color:var(--accent)}
 .recent-today-band{fill:rgba(229,90,63,.045);stroke:rgba(229,90,63,.2);stroke-width:1;stroke-dasharray:3 4}
 .recent-bar{fill:var(--accent);filter:drop-shadow(0 0 5px rgba(229,90,63,.22));transform-box:fill-box;
   transform-origin:center bottom;animation:recentBarGrow .56s cubic-bezier(.18,.78,.25,1) both}
-.recent-bar-group{outline:none;cursor:crosshair}.recent-bar-group:hover .recent-bar,.recent-bar-group:focus .recent-bar{fill:#ff795d;filter:drop-shadow(0 0 8px rgba(229,90,63,.65))}
-.recent-bar-group:focus .recent-focus-ring{stroke:#fff;stroke-width:1.5;opacity:1}
+.recent-bar-group{outline:none;cursor:pointer}.recent-bar-group:hover .recent-bar,.recent-bar-group:focus .recent-bar{fill:#ff795d;filter:drop-shadow(0 0 8px rgba(229,90,63,.65))}
+.recent-bar-group:focus .recent-focus-ring,.recent-bar-group.selected .recent-focus-ring{stroke:#fff;stroke-width:1.5;opacity:1}
 .recent-focus-ring{fill:none;stroke:transparent;opacity:0;vector-effect:non-scaling-stroke}
 .recent-positive-marker{fill:#fff;stroke:var(--accent);stroke-width:1.5;vector-effect:non-scaling-stroke}
 .recent-value{fill:var(--ink);font:600 9px var(--mono)}.recent-peak{fill:var(--accent);font:700 8px var(--mono);letter-spacing:1px}
@@ -122,9 +123,12 @@ h1 .pt{color:var(--accent)}
 .chart-area{fill:url(#memory-area-gradient)}
 .chart-line{fill:none;stroke:var(--accent);stroke-width:2;vector-effect:non-scaling-stroke;
   filter:drop-shadow(0 0 4px rgba(229,90,63,.38))}
-.chart-point{fill:var(--accent);opacity:.5}.chart-point:hover{fill:#fff;opacity:1}
+.chart-point{fill:var(--accent);opacity:.5;cursor:pointer;outline:none;vector-effect:non-scaling-stroke}
+.chart-point:hover,.chart-point:focus{fill:#fff;opacity:1}.chart-point.selected{fill:#fff;stroke:var(--accent);stroke-width:2;opacity:1}
 .chart-runner{fill:#fff;filter:drop-shadow(0 0 5px #fff) drop-shadow(0 0 9px var(--accent))}
 .chart-axis{fill:var(--sub);font:10px var(--mono);letter-spacing:.7px}.chart-axis-y{fill:var(--dim);font:9px var(--mono)}
+.latest-filter-state{display:flex;align-items:center;gap:9px;min-height:30px;margin:0 0 10px;color:var(--sub);font-size:10px;letter-spacing:.6px}
+.latest-filter-state strong{color:var(--accent);font-weight:600}.latest-filter-state button{border:1px solid var(--line2);background:transparent;color:var(--sub);padding:4px 8px;font:9px var(--mono);cursor:pointer}.latest-filter-state button:hover{border-color:var(--accent);color:var(--accent)}
 .integration-strip{grid-column:1/-1;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
   min-height:42px;padding:9px 14px;border:1px solid var(--line);background:var(--panel);
   color:var(--sub);font-size:9.5px;letter-spacing:1.1px;text-transform:uppercase}
@@ -222,7 +226,7 @@ h1 .pt{color:var(--accent)}
 /* ---------- tabs ---------- */
 .tabs{display:flex;gap:0;border:1px solid var(--line);margin-bottom:18px;
   background:var(--panel);flex-wrap:wrap}
-.top-tabs{position:sticky;top:0;z-index:120;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));overflow:visible;
+.top-tabs{position:sticky;top:0;z-index:120;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));overflow:visible;
   scrollbar-width:thin;background:rgba(19,19,19,.96);backdrop-filter:blur(14px);
   box-shadow:0 8px 24px rgba(0,0,0,.32)}
 .top-tabs .tab{text-align:center;padding-left:8px;padding-right:8px}
@@ -365,10 +369,9 @@ button{font-family:var(--mono)}
 
 <div class="tabs top-tabs">
   <div class="tab on" data-t="home">首页</div>
-  <div class="tab" data-t="browse">浏览全部</div>
   <div class="tab" data-t="graph">关系图谱</div>
   <div class="tab" data-t="who">我是谁</div>
-  <div class="tab" data-t="recent">最近新增</div>
+  <div class="tab" data-t="recent">最新新增</div>
   <div class="tab" data-t="eval">召回评测</div>
   <div class="tab" data-t="upload">上传文档</div>
   <div class="tab" data-t="tokens">访问令牌</div>
@@ -406,7 +409,8 @@ button{font-family:var(--mono)}
   </div>
 </section>
 
-<div id="pane-browse" style="display:none">
+<div id="pane-recent" style="display:none">
+  <div id="recent-summary"></div>
   <div class="filters">
     <select id="f-doc"><option value="">全部来源</option></select>
     <select id="f-type"><option value="">全部类型</option></select>
@@ -415,6 +419,7 @@ button{font-family:var(--mono)}
     <label><input type="checkbox" id="f-noise"> 隐藏噪音条目</label>
     <span id="f-count" style="color:var(--sub);margin-left:auto"></span>
   </div>
+  <div class="latest-filter-state"><span>日期：<strong id="latest-day-filter">全部日期</strong></span><button id="latest-day-clear" type="button" hidden>清除日期筛选</button></div>
   <div id="bres"><div class="empty">加载中…</div></div>
 </div>
 
@@ -449,9 +454,6 @@ button{font-family:var(--mono)}
   </div>
 </div>
 
-<div id="pane-recent" style="display:none">
-  <div id="recentres"><div class="empty">加载中…</div></div>
-</div>
 
 <div id="pane-eval" style="display:none">
   <div class="eval-intro">
@@ -610,8 +612,9 @@ button{font-family:var(--mono)}
 </div>
 <script>
 /* 建议问题已改为 /api/suggest 动态生成，不再写死 */
-let ALL=[], SHOWN=60;
+let ALL=[], SHOWN=60, SELECTED_DAY='';
 let RECENT={today:'',items:[],by_day:{}};
+const {filterLatestRows,memoryChartGeometry}=window.MindMemDashboard;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -755,21 +758,30 @@ async function search(){
   b.disabled=false; b.textContent='EXECUTE →';
 }
 
-function renderBrowse(){
+function renderLatestList(){
   const d=$('#f-doc').value, t=$('#f-type').value, agent=$('#f-agent').value;
   const mode=$('#f-mode').value, hn=$('#f-noise').checked;
-  const rows=ALL.filter(r=>{
+  const rows=filterLatestRows(ALL,SELECTED_DAY).filter(r=>{
     const contributors=(r.provenance&&r.provenance.contributors)||[];
     const agentMatch=!agent||contributors.some(c=>c.client_id===agent);
     const modeMatch=!mode||contributors.some(c=>(c.capture_modes||[]).includes(mode));
     return (!d||r.doc===d)&&(!t||r.type===t)&&agentMatch&&modeMatch&&(!hn||!r.noise);
   });
+  $('#latest-day-filter').textContent=SELECTED_DAY?`${SELECTED_DAY} · 北京时间`:'全部日期';
+  $('#latest-day-clear').hidden=!SELECTED_DAY;
   $('#f-count').textContent=`${rows.length} 条`;
   $('#bres').innerHTML = rows.length
     ? rows.slice(0,SHOWN).map(r=>card(r,r.noise)).join('')
       + (rows.length>SHOWN?'<button class="more" id="more">继续显示</button>':'')
     : '<div class="empty">没有符合条件的记忆</div>';
-  const mb=$('#more'); if(mb) mb.onclick=()=>{SHOWN+=60;renderBrowse()};
+  const mb=$('#more'); if(mb) mb.onclick=()=>{SHOWN+=60;renderLatestList()};
+}
+
+function setSelectedDay(day){
+  SELECTED_DAY=String(day||'');
+  SHOWN=60;
+  renderLatestView();
+  updateMemoryChartSelection();
 }
 
 async function load(){
@@ -795,8 +807,7 @@ async function load(){
   fillSelect('#f-agent','全部 Agent / 实例',[...agents.entries()].sort((a,b)=>a[1].localeCompare(b[1])));
   fillSelect('#f-mode','全部捕获方式',[...modes].sort().map(mode=>[mode,MODE_LABEL[mode]||mode]));
   renderDashboard(s,RECENT);
-  if(RECENT_LOADED)renderRecent();
-  renderBrowse();
+  renderLatestView();
   return r;
 }
 
@@ -839,7 +850,7 @@ function recentBarsSvg(days,today){
     const previous=i?rows[i-1].day:'';
     const showDate=i===0||i===rows.length-1||i%5===0||(previous&&previous.slice(5,7)!==row.day.slice(5,7));
     return `${isToday?`<rect class="recent-today-band" x="${(x-span*.18).toFixed(2)}" y="${T}" width="${(barW+span*.36).toFixed(2)}" height="${plotH}"/>`:''}
-      <g class="recent-bar-group" tabindex="0" role="img" aria-label="${esc(row.day)} 新增 ${row.count} 条${isToday?'，今日进行中':''}"
+      <g class="recent-bar-group${row.day===SELECTED_DAY?' selected':''}" tabindex="0" role="button" aria-pressed="${row.day===SELECTED_DAY?'true':'false'}" aria-label="${esc(row.day)} 新增 ${row.count} 条${isToday?'，今日进行中':''}"
          data-day="${esc(row.day)}" data-count="${row.count}" data-today="${isToday?'1':'0'}">
         <rect class="recent-focus-ring" x="${(x-4).toFixed(2)}" y="${T}" width="${(barW+8).toFixed(2)}" height="${plotH}"/>
         ${row.count?`<rect class="recent-bar" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barW.toFixed(2)}" height="${exactH.toFixed(2)}" rx="2" style="animation-delay:${i*14}ms"/>
@@ -854,29 +865,38 @@ function recentBarsSvg(days,today){
     <text class="recent-axis-unit" x="${L}" y="${T-17}">新增记录数 · 线性比例</text>${grid}${bars}</svg>`;
 }
 
-let MEMORY_CHART_RAF=0, HEALTH={};
-function memoryChartSvg(days){
-  const W=1000,H=250,L=43,R=12,T=12,B=29;
-  let cumulative=0;
-  const series=days.map(([day,count])=>({day,count:Number(count)||0,value:(cumulative+=Number(count)||0)}));
-  if(!series.length)series.push({day:'—',count:0,value:0});
-  const peak=Math.max(series[series.length-1].value,1), span=Math.max(series.length-1,1);
-  const points=series.map((row,i)=>{
-    const x=L+(W-L-R)*(i/span), y=T+(H-T-B)*(1-row.value/peak);
-    return {...row,x,y};
-  });
+let MEMORY_CHART_RAF=0, MEMORY_CHART_RESIZE_RAF=0, MEMORY_CHART_OBSERVER=null, HEALTH={};
+function memoryChartSvg(days,width){
+  const geometry=memoryChartGeometry(days,width),{width:W,height:H,plot,peak,points}=geometry;
+  const L=plot.left,R=W-plot.right,T=plot.top,B=H-plot.bottom,floor=plot.bottom,span=Math.max(points.length-1,1);
   const path=points.map((p,i)=>`${i?'L':'M'}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
-  const floor=H-B,area=`${path} L${points[points.length-1].x.toFixed(2)},${floor} L${points[0].x.toFixed(2)},${floor} Z`;
-  const hGrid=[0,.25,.5,.75,1].map(f=>`<line class="chart-grid" x1="${L}" y1="${(T+(H-T-B)*f).toFixed(2)}" x2="${W-R}" y2="${(T+(H-T-B)*f).toFixed(2)}"/>`).join('');
-  const vGrid=[0,.25,.5,.75,1].map(f=>`<line class="chart-grid" x1="${(L+(W-L-R)*f).toFixed(2)}" y1="${T}" x2="${(L+(W-L-R)*f).toFixed(2)}" y2="${floor}"/>`).join('');
+  const area=`${path} L${points.at(-1).x.toFixed(2)},${floor} L${points[0].x.toFixed(2)},${floor} Z`;
+  const hGrid=[0,.25,.5,.75,1].map(f=>`<line class="chart-grid" x1="${L}" y1="${(T+(H-T-B)*f).toFixed(2)}" x2="${plot.right}" y2="${(T+(H-T-B)*f).toFixed(2)}"/>`).join('');
+  const vGrid=[0,.25,.5,.75,1].map(f=>`<line class="chart-grid" x1="${(L+(plot.right-L)*f).toFixed(2)}" y1="${T}" x2="${(L+(plot.right-L)*f).toFixed(2)}" y2="${floor}"/>`).join('');
   const yLabels=[0,.5,1].map(f=>`<text class="chart-axis-y" x="${L-8}" y="${(T+(H-T-B)*f+3).toFixed(2)}" text-anchor="end">${Math.round(peak*(1-f))}</text>`).join('');
-  const labelIndexes=[0,Math.floor(span/3),Math.floor(span*2/3),series.length-1];
-  const labels=[...new Set(labelIndexes)].map(i=>`<text class="chart-axis" x="${points[i].x.toFixed(2)}" y="${H-7}" text-anchor="${i===0?'start':i===series.length-1?'end':'middle'}">${esc(series[i].day.slice(5).replace('-','.'))}</text>`).join('');
-  const dots=points.map((p,i)=>i%3===0||i===points.length-1?`<circle class="chart-point" cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="2.2"><title>${esc(p.day)} · 当日 ${p.count} · 30D 累计 ${p.value}</title></circle>`:'').join('');
+  const labelIndexes=[0,Math.floor(span/3),Math.floor(span*2/3),points.length-1];
+  const labels=[...new Set(labelIndexes)].map(i=>`<text class="chart-axis" x="${points[i].x.toFixed(2)}" y="${H-7}" text-anchor="${i===0?'start':i===points.length-1?'end':'middle'}">${esc(points[i].day.slice(5).replace('-','.'))}</text>`).join('');
+  const dots=points.map(p=>`<circle class="chart-point${p.day===SELECTED_DAY?' selected':''}" data-day="${esc(p.day)}" cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="3" tabindex="0" role="button" aria-pressed="${p.day===SELECTED_DAY?'true':'false'}"><title>${esc(p.day)} · 当日 ${p.count} · 30D 累计 ${p.value} · 点击筛选</title></circle>`).join('');
   return `<svg class="memory-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="最近三十天记忆累计写入曲线">
     <defs><linearGradient id="memory-area-gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="4%" stop-color="var(--accent)" stop-opacity=".38"/><stop offset="96%" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
     ${hGrid}${vGrid}${yLabels}<path class="chart-area" d="${area}"/><path class="chart-line" id="memory-chart-path" d="${path}"/>${dots}
     <circle class="chart-runner" id="memory-chart-runner" cx="${points[0].x.toFixed(2)}" cy="${points[0].y.toFixed(2)}" r="4"/>${labels}</svg>`;
+}
+
+function updateMemoryChartSelection(){
+  document.querySelectorAll('.chart-point').forEach(point=>{
+    const selected=point.dataset.day===SELECTED_DAY;
+    point.classList.toggle('selected',selected);
+    point.setAttribute('aria-pressed',selected?'true':'false');
+  });
+}
+
+function bindMemoryChartInteraction(){
+  document.querySelectorAll('.chart-point').forEach(point=>{
+    const choose=()=>{setSelectedDay(point.dataset.day);openPane('recent')};
+    point.onclick=choose;
+    point.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();choose()}};
+  });
 }
 
 function animateMemoryChart(){
@@ -884,10 +904,9 @@ function animateMemoryChart(){
   const path=$('#memory-chart-path'),runner=$('#memory-chart-runner');
   if(!path||!runner)return;
   const length=path.getTotalLength(),reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const finish=path.getPointAtLength(length);path.style.strokeDasharray=String(length);
-  if(reduced){path.style.strokeDashoffset='0';runner.setAttribute('cx',finish.x);runner.setAttribute('cy',finish.y);return}
-  path.style.strokeDashoffset=String(length);
-  path.animate([{strokeDashoffset:length},{strokeDashoffset:0}],{duration:1350,easing:'cubic-bezier(.2,.75,.3,1)',fill:'forwards'});
+  path.style.strokeDasharray='none';path.style.strokeDashoffset='0';
+  const finish=path.getPointAtLength(length);
+  if(reduced){runner.setAttribute('cx',finish.x);runner.setAttribute('cy',finish.y);return}
   const started=performance.now(),duration=6000;
   const frame=now=>{
     if(!runner.isConnected)return;
@@ -896,6 +915,25 @@ function animateMemoryChart(){
     MEMORY_CHART_RAF=requestAnimationFrame(frame);
   };
   MEMORY_CHART_RAF=requestAnimationFrame(frame);
+}
+
+function renderMemoryChart(days){
+  const wrap=$('.curve-wrap');if(!wrap)return;
+  const style=getComputedStyle(wrap),width=wrap.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+  if(width<=0)return;
+  wrap.innerHTML=memoryChartSvg(days,width);
+  bindMemoryChartInteraction();
+  animateMemoryChart();
+}
+
+function watchMemoryChart(days){
+  if(MEMORY_CHART_OBSERVER)MEMORY_CHART_OBSERVER.disconnect();
+  renderMemoryChart(days);
+  MEMORY_CHART_OBSERVER=new ResizeObserver(()=>{
+    if(MEMORY_CHART_RESIZE_RAF)cancelAnimationFrame(MEMORY_CHART_RESIZE_RAF);
+    MEMORY_CHART_RESIZE_RAF=requestAnimationFrame(()=>renderMemoryChart(days));
+  });
+  MEMORY_CHART_OBSERVER.observe($('.curve-wrap'));
 }
 
 function renderDashboard(stats,d){
@@ -910,7 +948,7 @@ function renderDashboard(stats,d){
     <section class="dash-panel wide memory-curve-panel">
       <div class="curve-head"><strong>MINDMEM·OS — CUMULATIVE MEMORY ACTIVITY — 30D</strong>
         <div class="curve-summary"><b>+${last30}</b> LAST 30D · ${stats.memories} TOTAL · +${todayCount} TODAY</div></div>
-      <div class="curve-wrap">${memoryChartSvg(days)}</div>
+      <div class="curve-wrap"></div>
     </section>
     <div class="integration-strip"><strong>MEMORY SERVICES</strong><span>|</span>
       <span class="integration-chip"><i id="dash-mm" class="${healthClass('mindmemos')}"></i>CORE API</span>
@@ -928,7 +966,7 @@ function renderDashboard(stats,d){
       <div class="distribution-list">${dist.map(([type,n])=>`<div class="distribution-row"><div><strong>${esc(TYPE[type]||type)}</strong><span>${n} 条</span></div>
         <div class="mini-bar"><i style="width:${Math.max(2,n/maxDist*100)}%"></i></div></div>`).join('')}</div>
     </section>`;
-  requestAnimationFrame(animateMemoryChart);
+  watchMemoryChart(days);
 }
 
 fetch('/api/health').then(r=>r.json()).then(h=>{
@@ -1101,8 +1139,7 @@ $('#eval-list').onclick=async event=>{
   finally{save.disabled=false}
 };
 
-/* ===== 最近新增：复用首页同一份快照，连续时间轴柱状图 ===== */
-let RECENT_LOADED=0;
+/* ===== 最新新增：每日概览与完整可筛选列表共用同一份快照 ===== */
 function bindRecentBarTooltips(){
   const wrap=$('#recent-chart-wrap'),tip=$('#recent-chart-tooltip');
   if(!wrap||!tip)return;
@@ -1118,16 +1155,18 @@ function bindRecentBarTooltips(){
     };
     group.addEventListener('pointerenter',show);group.addEventListener('pointerleave',hide);
     group.addEventListener('focus',show);group.addEventListener('blur',hide);
+    group.addEventListener('click',()=>setSelectedDay(group.dataset.day));
+    group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();setSelectedDay(group.dataset.day)}});
   });
 }
-function renderRecent(){
-  const box=$('#recentres'),days=[...Object.entries(RECENT.by_day||{})].reverse();
+function renderRecentSummary(){
+  const box=$('#recent-summary'),days=[...Object.entries(RECENT.by_day||{})].reverse();
   const normalized=days.map(([day,count])=>[day,Number(count)||0]);
   const total=normalized.reduce((sum,[,count])=>sum+count,0),active=normalized.filter(([,count])=>count>0).length;
   const peak=normalized.reduce((best,row)=>row[1]>best[1]?row:best,['',0]);
   box.innerHTML=`<div class="card recent-chart-card">
       <div class="recent-chart-head">
-        <div><div class="recent-chart-title">每日新增</div><div class="recent-chart-sub">北京时间近 30 天 · 新增记录 · 真实线性比例</div></div>
+        <div><div class="recent-chart-title">每日新增</div><div class="recent-chart-sub">北京时间近 30 天 · 选择日期可筛选下方完整列表</div></div>
         <div class="recent-kpis">
           <div class="recent-kpi"><strong>${total.toLocaleString('zh-CN')}</strong><span>30D TOTAL</span></div>
           <div class="recent-kpi"><strong>${active}</strong><span>ACTIVE DAYS</span></div>
@@ -1137,11 +1176,13 @@ function renderRecent(){
       <div class="recent-chart-scroll" id="recent-chart-wrap">${recentBarsSvg(normalized,RECENT.today)}
         <div class="recent-chart-tooltip" id="recent-chart-tooltip" hidden></div>
       </div>
-      <div class="recent-chart-note">柱高按真实线性比例呈现；白点标识非零日期。今日是未完结自然日，数值仍会继续变化。</div>
-    </div>
-    <div style="color:var(--sub);font-size:13px;margin:14px 0 8px">最新 ${(RECENT.items||[]).length} 条：</div>`+
-    (RECENT.items||[]).map(r=>card(r,false)).join('');
+      <div class="recent-chart-note">柱高按真实线性比例呈现；今日是未完结自然日。选择日期后，下方列表按北京时间自然日过滤。</div>
+    </div>`;
   bindRecentBarTooltips();
+}
+function renderLatestView(){
+  renderRecentSummary();
+  renderLatestList();
 }
 /* ===== 上传文档 =====
    解析在服务端做（复用 MindMemOS/scripts/ingest/extractor.py，
@@ -1196,7 +1237,6 @@ $('#up-go').onclick=async()=>{
     });
     const ok=(r.results||[]).filter(x=>x.ok).length;
     btn.textContent=`完成：${ok}/${(r.results||[]).length} 个成功`;
-    RECENT_LOADED=0;   // 让"最近新增"下次进去时重新拉
   }catch(e){
     btn.textContent='导入失败';
     document.querySelectorAll('#up-list .up-state').forEach(s=>{
@@ -1217,15 +1257,16 @@ function setTerminalCompact(compact){
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
   const k=t.dataset.t;
-  ['home','browse','graph','who','recent','eval','upload','tokens','models'].forEach(p=>{
+  ['home','graph','who','recent','eval','upload','tokens','models'].forEach(p=>{
     const el=$('#pane-'+p); if(el) el.style.display = p===k?'':'none';
   });
   $('#search-results-layer').classList.remove('open');
-  if(k==='recent'||k==='eval')setTerminalCompact(true);
+  if(k==='recent')setTerminalCompact(true);
+  if(k==='eval')setTerminalCompact(true);
   $('#memory-terminal').classList.toggle('eval-docked',k==='eval');
+  if(k==='home')renderMemoryChart(Object.entries(RECENT.by_day||{}).reverse());
   if(k==='graph'&&!GRAPH_LOADED){GRAPH_LOADED=1;drawGraph()}
   if(k==='who'&&!WHO_LOADED){WHO_LOADED=1;loadWho().catch(()=>{WHO_LOADED=0})}
-  if(k==='recent'&&!RECENT_LOADED){RECENT_LOADED=1;renderRecent()}
   if(k==='eval'&&!EVAL_LOADED){EVAL_LOADED=1;loadEvaluations().catch(()=>{EVAL_LOADED=0})}
   if(k==='tokens'){loadTokens()}
   if(k==='models'&&!MODELS_LOADED){loadModels()}
@@ -1244,11 +1285,11 @@ async function runMemoryCommand(){
   button.disabled=true;
   try{
     if(raw==='/help'){
-      terminalState('COMMANDS · /search QUERY · /whoami · /browse · /recent · /eval · /upload · /graph · /tokens · /models · /refresh');
+      terminalState('COMMANDS · /search QUERY · /whoami · /recent · /eval · /upload · /graph · /tokens · /models · /refresh');
       return;
     }
     const command=raw.split(/\s+/,1)[0].toLowerCase();
-    const panes={'/whoami':'who','/rules':'who','/browse':'browse','/recent':'recent','/eval':'eval','/upload':'upload','/graph':'graph','/tokens':'tokens','/models':'models'};
+    const panes={'/whoami':'who','/rules':'who','/recent':'recent','/eval':'eval','/upload':'upload','/graph':'graph','/tokens':'tokens','/models':'models'};
     if(panes[command]){openPane(panes[command]);terminalState(`OPENED ${panes[command].toUpperCase()} PANEL`);return}
     if(command==='/refresh'){terminalState('REFRESHING MEMORY SNAPSHOT…');await refreshAll(true);terminalState('MEMORY SNAPSHOT REFRESHED');return}
     if(command.startsWith('/')&&command!=='/search'){
@@ -1553,7 +1594,8 @@ $('#model-save').onclick=saveModels;
 $('#model-reload').onclick=()=>{MODELS_LOADED=0;loadModels()};
 }
 
-['#f-doc','#f-type','#f-agent','#f-mode','#f-noise'].forEach(s=>$(s).onchange=()=>{SHOWN=60;renderBrowse()});
+['#f-doc','#f-type','#f-agent','#f-mode','#f-noise'].forEach(s=>$(s).onchange=()=>{SHOWN=60;renderLatestList()});
+$('#latest-day-clear').onclick=()=>setSelectedDay('');
 
 /* ================= 关系图谱 ================= */
 let GRAPH_LOADED=0, SIM=null;

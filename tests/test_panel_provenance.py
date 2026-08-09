@@ -11,13 +11,43 @@ from pathlib import Path
 
 import pytest
 
-PANEL_SERVER = Path("/Users/leway/Projects/mm-panel/server.py")
+PANEL_DIR = Path(__file__).resolve().parents[1] / "panel"
+PANEL_SERVER = PANEL_DIR / "server.py"
+if str(PANEL_DIR) not in sys.path:
+    sys.path.insert(0, str(PANEL_DIR))
 
 
-def _load_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _load_panel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    explicit_api_key: str | None = None,
+):
     keys = tmp_path / "panel-keys.json"
-    keys.write_text('{"vanilla":"test-only-placeholder"}', encoding="utf-8")
+    keys.write_text('{"vanilla":"legacy-test-placeholder"}', encoding="utf-8")
+    api_keys = tmp_path / "api_keys.yaml"
+    api_keys.write_text(
+        """
+api_keys:
+  - key_id: key_panel_test
+    api_key: canonical-test-placeholder
+    project_id: proj_panel_test
+    memory_algorithm: vanilla
+    enabled: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+    runtime_config = tmp_path / "runtime.yaml"
+    runtime_config.write_text(
+        f"auth:\n  mode: api_key\n  api_key_file: {api_keys}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MINDMEMOS_CONFIG_PATH", str(runtime_config))
     monkeypatch.setenv("MINDMEMOS_PANEL_KEYS", str(keys))
+    if explicit_api_key is None:
+        monkeypatch.delenv("MINDMEMOS_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("MINDMEMOS_API_KEY", explicit_api_key)
     monkeypatch.setenv("MM_TURN_LEDGER", str(tmp_path / "panel-ledger.sqlite3"))
     monkeypatch.setenv("MM_MODEL_ENDPOINTS_PATH", str(tmp_path / "model-endpoints.json"))
     spec = importlib.util.spec_from_file_location("test_mm_panel_server", PANEL_SERVER)
@@ -52,9 +82,27 @@ def test_panel_deployment_paths_and_identity_are_environment_configurable(
     assert panel.mcp_tokens.LEGACY == str(state / "legacy-token")
 
 
+def test_panel_api_key_uses_runtime_auth_config_before_legacy_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = _load_panel(tmp_path, monkeypatch)
+
+    assert panel.MM_KEY == "canonical-test-placeholder"
+    assert panel.MM_KEY_SOURCE == str(tmp_path / "api_keys.yaml")
+
+
+def test_panel_explicit_bad_api_key_is_not_silently_replaced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    panel = _load_panel(tmp_path, monkeypatch, explicit_api_key="known-bad-test-key")
+
+    assert panel.MM_KEY == "known-bad-test-key"
+    assert panel.MM_KEY_SOURCE == "MINDMEMOS_API_KEY"
+
+
 def test_panel_api_key_falls_back_to_standard_provider_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     provider_config = tmp_path / "mindmemos.json"
     provider_config.write_text('{"api_key":"provider-test-placeholder"}', encoding="utf-8")
+    monkeypatch.delenv("MINDMEMOS_API_KEY", raising=False)
+    monkeypatch.setenv("MINDMEMOS_CONFIG_PATH", str(tmp_path / "missing-runtime.yaml"))
     monkeypatch.setenv("MINDMEMOS_PANEL_KEYS", str(tmp_path / "missing-legacy-keys.json"))
     monkeypatch.setenv("MINDMEMOS_PROVIDER_CONFIG", str(provider_config))
     spec = importlib.util.spec_from_file_location("test_mm_panel_provider_fallback", PANEL_SERVER)
@@ -64,6 +112,7 @@ def test_panel_api_key_falls_back_to_standard_provider_config(tmp_path: Path, mo
     spec.loader.exec_module(module)
 
     assert module.MM_KEY == "provider-test-placeholder"
+    assert module.MM_KEY_SOURCE == str(provider_config)
 
 
 @pytest.mark.parametrize(
@@ -233,28 +282,29 @@ def test_panel_version_ignores_queue_churn_and_changes_after_successful_commit(
     assert panel_change["panel_revision"] > committed["panel_revision"]
 
 
-def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
-    html = Path("/Users/leway/Projects/mm-panel/index.html").read_text(encoding="utf-8")
+def test_panel_frontend_exposes_one_latest_view_with_full_browse_capability() -> None:
+    html = (PANEL_DIR / "index.html").read_text(encoding="utf-8")
 
     assert 'id="refresh-all"' in html
     assert "setInterval(checkForUpdates,30000)" in html
     assert 'id="dashboard"' in html
     assert "renderDashboard(s,RECENT)" in html
-    assert "function recentBarsSvg(days,today)" in html
-    assert 'class="recent-bars"' in html
-    assert 'aria-label="最近三十天每日新增柱状图"' in html
-    assert "[...Object.entries(RECENT.by_day||{})].reverse()" in html
-    assert "今日进行中" in html
-    assert "if(k==='recent')setTerminalCompact(true)" in html
-    assert "growthRows(days,max)" not in html
     assert 'id="rules-edit"' in html
     assert "fetch('/api/rules'" in html
-    assert "fetch('/api/recent'" not in html
-    assert "setTimeout(()=>loadWho(1)" not in html
-    assert "$('#rule-cancel').onclick=()=>loadWho()" not in html
     assert 'data-t="models"' in html
     assert 'class="tabs top-tabs"' in html
     assert 'class="tab on" data-t="home"' in html
+    assert html.count('data-t="recent"') == 1
+    assert '<div class="tab" data-t="recent">最新新增</div>' in html
+    assert 'data-t="browse"' not in html
+    assert 'id="pane-browse"' not in html
+    assert 'id="pane-recent"' in html
+    assert 'id="latest-day-filter"' in html
+    assert 'id="latest-day-clear"' in html
+    assert "filterLatestRows(ALL,SELECTED_DAY)" in html
+    assert "rows.slice(0,SHOWN)" in html
+    assert "SHOWN+=60" in html
+    assert "if(k==='recent')setTerminalCompact(true)" in html
     assert 'data-t="search"' not in html
     assert 'id="pane-search"' not in html
     assert html.index('class="tabs top-tabs"') < html.index('id="pane-home"')
@@ -285,7 +335,7 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert 'id="model-llm-options" role="listbox"' in html
     assert 'id="model-embedding-options" role="listbox"' in html
     assert 'id="model-rerank-options" role="listbox"' in html
-    registry_js = Path("/Users/leway/Projects/mm-panel/model-registry.js").read_text(encoding="utf-8")
+    registry_js = (PANEL_DIR / "model-registry.js").read_text(encoding="utf-8")
     assert "fetch('/api/model-endpoints'" in registry_js
     assert "fetch('/api/model-endpoints/'+path" in registry_js
     assert "CACHED_MODELS" in registry_js
@@ -296,16 +346,17 @@ def test_panel_frontend_exposes_dashboard_refresh_and_rule_editor() -> None:
     assert "fetch('/api/models'" in registry_js
     assert "setTimeout(()=>{btn.disabled=false;renderUpList()" not in html
     assert "UP_FILES=[]; fi.value=''; btn.disabled=true" in html
+    assert '<script src="/dashboard.js"></script>' in html
     assert 'id="memory-chart-path"' in html
-    assert "getPointAtLength" in html
-    assert "duration=6000" in html
+    assert "ResizeObserver" in html
+    assert "path.animate" not in html
     assert 'id="memory-terminal"' in html
     assert "UNKNOWN OR UNSAFE COMMAND" in html
     assert "runMemoryCommand" in html
     assert 'type="password"' in html
     assert "API Key 只写入服务器配置，页面永远不会回显" in html
 
-    server = Path("/Users/leway/Projects/mm-panel/server.py").read_text(encoding="utf-8")
+    server = PANEL_SERVER.read_text(encoding="utf-8")
     assert 'LLMS_URL = os.getenv("MM_LLMS_URL"' in server
     assert "self.send_header('Location', LLMS_URL)" in server
     assert "open(os.path.join(HERE, 'llms.txt')" not in server
