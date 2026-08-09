@@ -111,13 +111,17 @@ adapters/hermes/install.py
 `python3 adapters/hermes/install.py` 同步，`--check` 验证运行文件与 Git 源码一致；
 真实 `mindmemos.json` 与 Key 不进入仓库。
 
-Recall 继续走 :8000。Primary-context `sync_turn` 与 builtin-memory mirror 先写：
+Hermes Agent 的 Recall 统一通过受认证的 HTTP MCP；Provider 不再直连 `/v1/memory/search`。
+Primary-context `sync_turn` 与显式 memory mirror 先写本地 durable spool：
 
 ```text
-~/.hermes/mindmemos_hermes_ingest.sqlite3
+$HERMES_HOME/mindmemos-spool/
 ```
 
-然后提交 :8765。`mindmemos.json` 使用 `ingest_url`、`ingest_key`、`ingest_spool`、`ingest_client_module`。非-primary context 不写；带 MindMemOS provenance metadata 的消息不递归捕获。
+然后异步提交 `ingest_url`。当前 `mindmemos.json` 使用 `mcp_url`、`api_key`、
+`ingest_url`、自动胶囊预算与重试配置；不再使用旧的 `ingest_key`、`ingest_spool`、
+`ingest_client_module`。非-primary context 不写；带 MindMemOS provenance metadata 的消息不递归捕获。
+完整接入步骤见 `adapters/hermes/README.md`。
 
 ### Claude Code
 
