@@ -35,6 +35,18 @@ class RecallEvaluationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_repeated_reads_close_sqlite_connections(self) -> None:
+        fd_root = "/dev/fd" if os.path.isdir("/dev/fd") else "/proc/self/fd"
+        if not os.path.isdir(fd_root):
+            self.skipTest("file descriptor inspection is unavailable")
+        before = len(os.listdir(fd_root))
+        for _ in range(100):
+            self.store.load(["missing-record"])
+            self.store.load_ai(["missing-record"])
+            self.store.ai_status()
+        after = len(os.listdir(fd_root))
+        self.assertLessEqual(after - before, 3)
+
     def test_unreviewed_calls_still_appear(self) -> None:
         snapshot = build_recall_snapshot(self.points, self.store)
         self.assertEqual(snapshot["summary"]["calls"], 1)

@@ -1,14 +1,14 @@
 """Read-only recall audit views plus an isolated human-review sidecar."""
+
 from __future__ import annotations
 
-import json
 import hashlib
 import os
 import sqlite3
-import tempfile
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 CALL_VERDICTS = {"useful", "poor", "expected_empty"}
 MEMORY_LABELS = {"relevant", "partial", "irrelevant", "stale", "conflict"}
@@ -56,8 +56,17 @@ class RecallReviewStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @contextmanager
+    def _connection(self):
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _init(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS call_reviews (
@@ -118,7 +127,7 @@ class RecallReviewStore:
             raise ValueError("不支持的召回评价")
         if not isinstance(memory_reviews, list) or len(memory_reviews) > 100:
             raise ValueError("记忆评价格式不正确")
-        with self._connect() as connection:
+        with self._connection() as connection:
             if verdict:
                 connection.execute(
                     """INSERT INTO call_reviews(search_record_id, verdict, reason, note, updated_at)
@@ -148,7 +157,7 @@ class RecallReviewStore:
         if not record_ids:
             return {}, {}
         marks = ",".join("?" for _ in record_ids)
-        with self._connect() as connection:
+        with self._connection() as connection:
             calls = {
                 row["search_record_id"]: dict(row)
                 for row in connection.execute(
@@ -184,7 +193,7 @@ class RecallReviewStore:
             raise ValueError("不支持的 AI 相关性标签")
         score = max(0, min(100, int(score)))
         confidence = max(0.0, min(1.0, float(confidence)))
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """INSERT INTO ai_memory_reviews(
                     search_record_id, memory_id, query_hash, content_hash,
@@ -219,7 +228,7 @@ class RecallReviewStore:
             return {}
         marks = ",".join("?" for _ in record_ids)
         result: dict[str, dict[str, dict]] = {}
-        with self._connect() as connection:
+        with self._connection() as connection:
             for row in connection.execute(
                 f"SELECT * FROM ai_memory_reviews WHERE search_record_id IN ({marks})",
                 record_ids,
@@ -245,7 +254,7 @@ class RecallReviewStore:
         )
 
     def mark_interrupted_ai_runs(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """UPDATE ai_judge_runs SET completed_at=CURRENT_TIMESTAMP,
                 status='interrupted', error='Panel restarted before the run completed'
@@ -253,7 +262,7 @@ class RecallReviewStore:
             )
 
     def begin_ai_run(self, *, model: str, calls: int, memories: int) -> int:
-        with self._connect() as connection:
+        with self._connection() as connection:
             cursor = connection.execute(
                 """INSERT INTO ai_judge_runs(model, candidate_calls, candidate_memories)
                 VALUES (?, ?, ?)""",
@@ -271,7 +280,7 @@ class RecallReviewStore:
         error: str = "",
     ) -> None:
         status = "failed" if error and not scored else "partial" if error or failed else "completed"
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """UPDATE ai_judge_runs SET completed_at=CURRENT_TIMESTAMP,
                 scored_memories=?, skipped_memories=?, failed_memories=?,
@@ -280,7 +289,7 @@ class RecallReviewStore:
             )
 
     def update_ai_run(self, run_id: int, *, scored: int, skipped: int, failed: int) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """UPDATE ai_judge_runs SET scored_memories=?, skipped_memories=?,
                 failed_memories=? WHERE id=? AND status='running'""",
@@ -288,10 +297,8 @@ class RecallReviewStore:
             )
 
     def ai_status(self) -> dict[str, Any] | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM ai_judge_runs ORDER BY id DESC LIMIT 1"
-            ).fetchone()
+        with self._connection() as connection:
+            row = connection.execute("SELECT * FROM ai_judge_runs ORDER BY id DESC LIMIT 1").fetchone()
         return dict(row) if row else None
 
 
@@ -327,9 +334,7 @@ def build_recall_snapshot(
                 "query": str(payload.get("query") or ""),
                 "occurred_at": _iso(payload.get("request_submitted_at")),
                 "completed_at": _iso(payload.get("task_completed_at")),
-                "latency_ms": _latency_ms(
-                    payload.get("request_submitted_at"), payload.get("task_completed_at")
-                ),
+                "latency_ms": _latency_ms(payload.get("request_submitted_at"), payload.get("task_completed_at")),
                 "status": str(payload.get("status") or "unknown"),
                 "actor": _safe_actor(payload),
                 "algorithm": str(payload.get("memory_algorithm") or ""),
@@ -358,42 +363,18 @@ def build_recall_snapshot(
         record["ai_score"] = round(sum(scored) / len(scored), 1) if scored else None
         record["ai_scored_memories"] = len(scored)
 
-    verdicts = Counter(
-        record["review"]["verdict"] for record in records if record.get("review")
-    )
-    labeled = [
-        memory
-        for record in records
-        for memory in record["memories"]
-        if memory.get("review")
-    ]
-    relevant_chars = sum(
-        memory["chars"]
-        for memory in labeled
-        if memory["review"]["label"] in {"relevant", "partial"}
-    )
+    verdicts = Counter(record["review"]["verdict"] for record in records if record.get("review"))
+    labeled = [memory for record in records for memory in record["memories"] if memory.get("review")]
+    relevant_chars = sum(memory["chars"] for memory in labeled if memory["review"]["label"] in {"relevant", "partial"})
     irrelevant_chars = sum(
-        memory["chars"]
-        for memory in labeled
-        if memory["review"]["label"] in {"irrelevant", "stale", "conflict"}
+        memory["chars"] for memory in labeled if memory["review"]["label"] in {"irrelevant", "stale", "conflict"}
     )
     judged_chars = relevant_chars + irrelevant_chars
-    ai_labeled = [
-        memory
-        for record in records
-        for memory in record["memories"]
-        if memory.get("ai_review")
-    ]
+    ai_labeled = [memory for record in records for memory in record["memories"] if memory.get("ai_review")]
     ai_relevant_chars = sum(
-        memory["chars"]
-        for memory in ai_labeled
-        if memory["ai_review"]["label"] in {"relevant", "partial"}
+        memory["chars"] for memory in ai_labeled if memory["ai_review"]["label"] in {"relevant", "partial"}
     )
-    ai_irrelevant_chars = sum(
-        memory["chars"]
-        for memory in ai_labeled
-        if memory["ai_review"]["label"] == "irrelevant"
-    )
+    ai_irrelevant_chars = sum(memory["chars"] for memory in ai_labeled if memory["ai_review"]["label"] == "irrelevant")
     ai_judged_chars = ai_relevant_chars + ai_irrelevant_chars
     technical_success = sum(record["status"] in {"ok", "completed"} for record in records)
     return {
@@ -402,22 +383,16 @@ def build_recall_snapshot(
         "summary": {
             "calls": len(records),
             "technical_success": technical_success,
-            "technical_success_rate": round(technical_success / len(records) * 100, 1)
-            if records
-            else None,
+            "technical_success_rate": round(technical_success / len(records) * 100, 1) if records else None,
             "reviewed_calls": sum(verdicts.values()),
             "useful_calls": verdicts["useful"],
             "poor_calls": verdicts["poor"],
             "expected_empty_calls": verdicts["expected_empty"],
             "labeled_memories": len(labeled),
-            "context_waste_rate": round(irrelevant_chars / judged_chars * 100, 1)
-            if judged_chars
-            else None,
+            "context_waste_rate": round(irrelevant_chars / judged_chars * 100, 1) if judged_chars else None,
             "ai_scored_memories": len(ai_labeled),
             "ai_scored_calls": sum(bool(record["ai_scored_memories"]) for record in records),
-            "ai_context_waste_rate": round(ai_irrelevant_chars / ai_judged_chars * 100, 1)
-            if ai_judged_chars
-            else None,
+            "ai_context_waste_rate": round(ai_irrelevant_chars / ai_judged_chars * 100, 1) if ai_judged_chars else None,
         },
         "read_only_observation": True,
     }
