@@ -193,6 +193,98 @@ def test_panel_attaches_batched_multi_source_provenance(tmp_path: Path, monkeypa
     }
 
 
+def test_panel_uses_structured_message_source_when_document_name_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = _load_panel(tmp_path, monkeypatch)
+    rows = panel.clean_memories(
+        [
+            {
+                "payload": {
+                    "memory_id": "memory-source",
+                    "content": "一条来自正常对话的长期事实。",
+                    "mem_type": "fact",
+                    "created_at": "2026-08-09T15:36:58+00:00",
+                    "metadata": {
+                        "source_id": "source-message-1",
+                        "source_type": "message",
+                        "source_role": "user",
+                        "source_message_index": 0,
+                        "source": "hermes_turn",
+                    },
+                }
+            }
+        ]
+    )
+
+    assert rows[0]["doc"] == "Hermes 对话 · 用户消息"
+    assert rows[0]["source"] == {
+        "id": "source-message-1",
+        "type": "message",
+        "role": "user",
+        "message_index": 0,
+        "channel": "hermes_turn",
+        "label": "Hermes 对话 · 用户消息",
+    }
+
+
+def test_panel_attaches_ranked_topics_from_memory_entity_relationships(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = _load_panel(tmp_path, monkeypatch)
+    rows = [{"id": "memory-topic", "entities": ["fallback-name"]}, {"id": "memory-none", "entities": []}]
+    monkeypatch.setattr(
+        panel,
+        "cypher",
+        lambda *_args, **_kwargs: [
+            {"memory_id": "memory-topic", "entity_name": "Claude Code", "entity_type": "tool"},
+            {"memory_id": "memory-topic", "entity_name": "MindMemOS", "entity_type": "project"},
+            {"memory_id": "memory-topic", "entity_name": "记忆质量", "entity_type": "other"},
+        ],
+    )
+
+    panel._attach_topics(rows)
+
+    assert rows[0]["topics"] == [
+        {"name": "MindMemOS", "type": "project"},
+        {"name": "Claude Code", "type": "tool"},
+        {"name": "记忆质量", "type": "other"},
+    ]
+    assert rows[0]["topic"] == "MindMemOS"
+    assert rows[1]["topics"] == []
+    assert rows[1]["topic"] == "未归类"
+
+
+def test_panel_memory_card_renders_source_and_topic_fields() -> None:
+    html = (PANEL_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert "source.label||sourceLabel" in html
+    assert "主题：" in html
+    assert "m.topics" in html
+
+
+def test_panel_search_cards_merge_source_and_topics_without_dereferencing_missing_source() -> None:
+    html = (PANEL_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert "source:hit&&hit.source" in html
+    assert "topics:hit&&hit.topics" in html
+    assert "m.source.label||sourceLabel" not in html
+    assert "bottom:286px" in html
+
+
+def test_panel_memory_list_excludes_archived_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    panel = _load_panel(tmp_path, monkeypatch)
+
+    rows = panel.clean_memories(
+        [
+            {"payload": {"memory_id": "active", "status": "active", "content": "保留"}},
+            {"payload": {"memory_id": "archived", "status": "archived", "content": "不应展示"}},
+        ]
+    )
+
+    assert [row["id"] for row in rows] == ["active"]
+
+
 def test_panel_rules_are_validated_backed_up_and_atomically_replaced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

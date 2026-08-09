@@ -26,7 +26,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
@@ -1057,16 +1057,120 @@ def _attach_provenance(rows):
     return rows
 
 
+SOURCE_CHANNEL_LABELS = {
+    "feishu_wiki": "飞书文档",
+    "hermes_turn": "Hermes 对话",
+    "hermes_daily": "Hermes 日常记忆",
+    "project_memory": "项目记忆导入",
+    "hermes_builtin_memory": "Hermes 内置记忆",
+    "mcp": "MCP 显式写入",
+    "hermes_explicit_correction": "Hermes 显式纠正",
+    "hermes-migrate": "Hermes 迁移",
+}
+SOURCE_ROLE_LABELS = {"user": "用户消息", "assistant": "助手消息", "system": "系统消息"}
+TOPIC_TYPE_PRIORITY = {
+    "project": 0,
+    "product": 1,
+    "tool": 2,
+    "organization": 3,
+    "person": 4,
+    "model": 5,
+    "location": 6,
+    "file": 7,
+    "other": 8,
+}
+
+
+def _source_info(metadata):
+    """Build one truthful UI source label from persisted provenance fields."""
+
+    metadata = metadata or {}
+    source_id = str(metadata.get("source_id") or "")
+    source_type = str(metadata.get("source_type") or "message")
+    role = str(metadata.get("source_role") or metadata.get("source_raw_role") or "")
+    channel = str(metadata.get("source") or "")
+    doc = str(metadata.get("doc") or metadata.get("file_name") or "").strip()
+    if doc:
+        label = doc
+    elif channel in SOURCE_CHANNEL_LABELS:
+        label = SOURCE_CHANNEL_LABELS[channel]
+    elif source_type == "file":
+        label = "文件"
+    elif source_type == "url":
+        label = "网页"
+    elif source_type == "memory":
+        label = "历史记忆重提炼"
+    else:
+        label = "对话"
+    role_label = SOURCE_ROLE_LABELS.get(role)
+    if source_type == "message" and role_label and role_label not in label:
+        label = f"{label} · {role_label}"
+    return {
+        "id": source_id,
+        "type": source_type,
+        "role": role,
+        "message_index": metadata.get("source_message_index"),
+        "channel": channel,
+        "label": label,
+    }
+
+
+def _attach_topics(rows):
+    """Attach ranked topic-like entities to each memory for card display."""
+
+    by_id = {str(row.get("id") or ""): row for row in rows if row.get("id")}
+    for row in rows:
+        fallback = []
+        for name in row.get("entities") or []:
+            text = str(name or "").strip()
+            if text and not text.isdigit() and text not in {item["name"] for item in fallback}:
+                fallback.append({"name": text, "type": "entity"})
+        row["topics"] = fallback[:4]
+        row["topic"] = fallback[0]["name"] if fallback else "未归类"
+    if not by_id:
+        return rows
+    try:
+        graph_rows = cypher(
+            """
+            MATCH (m:Memory)-[:MENTIONS]->(e:Entity)
+            WHERE m.memory_id IN $memory_ids
+            RETURN m.memory_id AS memory_id,
+                   e.entity_name AS entity_name,
+                   e.entity_type AS entity_type
+            """,
+            {"memory_ids": list(by_id)},
+        )
+    except Exception:
+        return rows
+    grouped = defaultdict(list)
+    for item in graph_rows:
+        memory_id = str(item.get("memory_id") or "")
+        name = str(item.get("entity_name") or "").strip()
+        entity_type = str(item.get("entity_type") or "other").lower()
+        if memory_id not in by_id or not name or name.isdigit() or entity_type in NOISY_TYPES:
+            continue
+        if name not in {topic["name"] for topic in grouped[memory_id]}:
+            grouped[memory_id].append({"name": name, "type": entity_type})
+    for memory_id, topics in grouped.items():
+        topics.sort(key=lambda item: (TOPIC_TYPE_PRIORITY.get(item["type"], 99), item["name"].lower()))
+        by_id[memory_id]["topics"] = topics[:4]
+        by_id[memory_id]["topic"] = topics[0]["name"]
+    return rows
+
+
 def clean_memories(points):
     """只保留真正的记忆条目（有 content 的），并标注噪音。"""
     rows = []
     for p in points:
         pl = p.get("payload", {})
+        if str(pl.get("status") or "active") != "active":
+            continue
         c = pl.get("content")
         if not c:
             continue
         md = pl.get("metadata", {}) or {}
-        doc = md.get("doc") or "(未标注)"
+        source = _source_info(md)
+        doc = source["label"]
         # 噪音判定：内容主要在描述文档路径/分片位置本身，而非真实知识
         noise = (
             ("长期档案" in c and ("路径" in c or "文档" in c or "/" in c))
@@ -1079,6 +1183,7 @@ def clean_memories(points):
                 "content": c,
                 "type": pl.get("mem_type") or "unknown",
                 "doc": doc,
+                "source": source,
                 # 保留完整 ISO 时区；前端统一格式化为 Asia/Shanghai。
                 "created": str(pl.get("created_at") or ""),
                 "entities": (md.get("entities") or [])[:6],
@@ -1088,6 +1193,7 @@ def clean_memories(points):
             }
         )
     _attach_provenance(rows)
+    _attach_topics(rows)
     rows.sort(key=lambda r: r["created"], reverse=True)
     return rows
 

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.leway.mindmemos.dreaming</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/leway/Projects/MindMemOS/.venv/bin/python</string>
+    <string>/Users/leway/Projects/MindMemOS/scripts/run_local_dreaming.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/leway/Projects/MindMemOS</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/leway</string>
+    <key>PATH</key>
+    <string>/Users/leway/Projects/MindMemOS/.venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>MINDMEMOS_CONFIG_PATH</key>
+    <string>/Users/leway/Projects/MindMemOS/config/mindmemos/dev.yaml</string>
+    <key>MM_RECALL_JUDGE_ENABLED</key>
+    <string>0</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/leway/Library/Logs/mindmemos-dreaming.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/leway/Library/Logs/mindmemos-dreaming.err.log</string>
+</dict>
+</plist>

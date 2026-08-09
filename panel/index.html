@@ -161,8 +161,8 @@ h1 .pt{color:var(--accent)}
   width:min(820px,calc(100vw - 32px));margin:0}
 .floating-terminal.compact{left:auto;right:22px;transform:none;width:min(430px,calc(100vw - 32px));margin:0}
 .floating-terminal.eval-docked{position:relative;left:auto;right:auto;bottom:auto;transform:none;width:min(430px,100%);margin:0 0 14px auto}
-.search-results-layer{display:none;position:fixed;z-index:480;left:50%;bottom:214px;
-  transform:translateX(-50%);width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 270px);
+.search-results-layer{display:none;position:fixed;z-index:480;left:50%;bottom:286px;
+  transform:translateX(-50%);width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 342px);
   overflow:auto;border:1px solid var(--accent-dim);background:rgba(13,13,13,.98);
   box-shadow:0 20px 70px rgba(0,0,0,.88);padding:0 12px 12px}
 .search-results-layer.open{display:block}.search-results-head{position:sticky;top:0;z-index:2;
@@ -182,7 +182,7 @@ h1 .pt{color:var(--accent)}
   .header-actions{margin-left:0;width:100%;justify-content:space-between}.sys{margin-left:0}.curve-wrap{height:240px}
   .recent-chart-head{flex-direction:column}.recent-kpis{width:100%;justify-content:space-between;text-align:left}.recent-kpi strong{font-size:16px}
   .curve-head{align-items:flex-start;flex-direction:column;gap:3px}.curve-summary{text-align:left}.top-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media(max-width:520px){.terminal-body{grid-template-columns:1fr}.terminal-execute{height:38px}.memory-terminal.compact{max-width:none;margin-left:0}.top-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.search-results-layer{bottom:245px}}
+@media(max-width:520px){.terminal-body{grid-template-columns:1fr}.terminal-execute{height:38px}.memory-terminal.compact{max-width:none;margin-left:0}.top-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.search-results-layer{bottom:325px;max-height:calc(100vh - 380px)}}
 @media(prefers-reduced-motion:reduce){.terminal-live{animation:none}.chart-line{filter:none}.recent-bar{animation:none}}
 
 /* ---------- 召回评测 ---------- */
@@ -260,7 +260,10 @@ button{font-family:var(--mono)}
   letter-spacing:1px}
 .tag.g{background:#0d1a10;border-color:#1f4d28;color:var(--ok)}
 .tag.n{background:#151515;border-color:var(--line2);color:var(--dim)}
-.src{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px}
+.src{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;color:var(--sub)}
+.topic-list{display:flex;gap:4px;flex-wrap:wrap;align-items:center;color:var(--sub)}
+.topic-chip{padding:2px 7px;border:1px solid #31506d;background:#101820;color:#8fbbe1;
+  font-size:9px;letter-spacing:.5px;white-space:nowrap}
 .provenance{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
 .prov-chip{padding:2px 7px;border:1px solid #31423a;background:#101a15;color:#72c58d;
   font-size:9px;font-weight:500;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap}
@@ -662,17 +665,29 @@ function provenanceChips(provenance){
   }).join('')}</span>`;
 }
 
+function topicChips(m){
+  const topics=Array.isArray(m.topics)?m.topics:[];
+  if(!topics.length)return '<span class="topic-list">主题：未归类</span>';
+  return `<span class="topic-list">主题：${topics.map(t=>
+    `<span class="topic-chip" title="${esc(t.type||'entity')}">${esc(t.name||t)}</span>`
+  ).join('')}</span>`;
+}
+
 function card(m,noise){
   const t=TYPE[m.type]||m.type||'';
   const id=m.id||m.memory_id||'';
   const ts=m.created||m.last_update_at||'';
+  const source=m.source||{};
+  const sourceLabel=source.label||m.doc||'未标注';
+  const sourceTitle=[source.type,source.role,source.id].filter(Boolean).join(' · ');
   return `<div class="card${noise?' noise':''}"${id?` data-mid="${esc(id)}"`:''}>
     <div class="txt">${esc(m.content||m.memory)}</div>
     <div class="meta">
       ${t?`<span class="tag ${m.type==='profile'?'g':''}">${t}</span>`:''}
       ${noise?'<span class="tag n">噪音</span>':''}
       ${provenanceChips(m.provenance)}
-      ${m.doc?`<span class="src">来源：${esc(m.doc)}</span>`:''}
+      <span class="src" title="${esc(sourceTitle)}">来源：${esc(source.label||sourceLabel)}</span>
+      ${topicChips(m)}
       ${ts?`<span title="北京时间">${esc(fmtBeijing(ts))}</span>`:''}
       ${id?`<span class="ops">
         <a href="#" class="op-edit">编辑</a>
@@ -751,6 +766,7 @@ async function search(){
             const hit=ALL.find(a=>a.id===m.id);
             return card({id:m.id,content:m.memory,type:m.memory_type,
               doc:hit?hit.doc:'',created:m.last_update_at,
+              source:hit&&hit.source,topics:hit&&hit.topics,topic:hit&&hit.topic,
               provenance:m.provenance||(hit&&hit.provenance)}, hit?hit.noise:false);
           }).join('')
       : '<div class="empty">没有找到相关记忆<br><span style="font-size:12.5px">这批档案里可能没有相关内容，换个说法或换个话题试试</span></div>';
