@@ -15,6 +15,8 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
@@ -217,12 +219,17 @@ class TurnLedger:
         self.max_context_bytes = max_context_bytes
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 5000")
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout = 5000")
+            connection.execute("PRAGMA foreign_keys = ON")
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         directory = os.path.dirname(self.path) or "."

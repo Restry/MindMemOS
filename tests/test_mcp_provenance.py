@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,32 @@ def _response(memory_id: str, operation: str = "add", related: list[str] | None 
             ]
         },
     }
+
+
+def test_ledger_connection_closes_after_success(tmp_path: Path) -> None:
+    ledger = TurnLedger(str(tmp_path / "ledger.sqlite3"))
+
+    with ledger._connect() as connection:
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+
+
+def test_ledger_connection_rolls_back_and_closes_after_error(tmp_path: Path) -> None:
+    ledger = TurnLedger(str(tmp_path / "ledger.sqlite3"))
+    with ledger._connect() as setup_connection:
+        setup_connection.execute("CREATE TABLE rollback_probe (value TEXT NOT NULL)")
+
+    with pytest.raises(RuntimeError, match="force rollback"):
+        with ledger._connect() as failed_connection:
+            failed_connection.execute("INSERT INTO rollback_probe VALUES ('uncommitted')")
+            raise RuntimeError("force rollback")
+
+    with ledger._connect() as verification_connection:
+        assert verification_connection.execute("SELECT COUNT(*) FROM rollback_probe").fetchone()[0] == 0
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        failed_connection.execute("SELECT 1")
 
 
 def test_existing_and_legacy_tokens_resolve_explicit_fallback_principals(
