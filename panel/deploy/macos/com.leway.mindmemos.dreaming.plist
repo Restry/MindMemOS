@@ -21,6 +21,8 @@
     <string>/Users/leway/Projects/MindMemOS/config/mindmemos/dev.yaml</string>
     <key>MM_RECALL_JUDGE_ENABLED</key>
     <string>0</string>
+    <key>MINDMEMOS_DREAMING_USER</key>
+    <string>leway</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>

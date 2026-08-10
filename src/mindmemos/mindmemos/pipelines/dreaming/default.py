@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -36,6 +37,8 @@ from ...typing import (
 from ...typing.activity import ActivityScope
 from ...typing.algo import ConsolidationAction
 from ...typing.memory import (
+    REL_DERIVED_FROM,
+    REL_EXTRACTED_FROM,
     REL_NEXT_IN_PROPERTY_TIMELINE,
     REL_RELATES_TO,
     GraphNodeRef,
@@ -160,12 +163,15 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
                     )
                     if actions is None:
                         continue
-                    group_action_count = self._count_actions(actions)
-                    if not group_action_count:
+                    if not self._count_actions(actions):
                         continue
                     async with state_lock:
-                        await self._apply_actions(context, actions, memories, archived_memory_ids)
-                        summary["actions"] += group_action_count
+                        summary["actions"] += await self._apply_actions(
+                            context,
+                            actions,
+                            memories,
+                            archived_memory_ids,
+                        )
             async with state_lock:
                 summary["add_records_done"] += await self._mark_scope_add_records_done(
                     context, scope, run_id, marked_add_record_ids
@@ -237,8 +243,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
             MATCH (e)<-[:MENTIONS]-(neighbor:Memory {project_id: $project_id})
             WHERE coalesce(neighbor.status, 'active') = 'active'
             WITH DISTINCT neighbor
-            ORDER BY coalesce(neighbor.update_at, neighbor.created_at) DESC,
-                     neighbor.memory_id ASC
+            ORDER BY neighbor.memory_id ASC
             LIMIT $entity_probe_limit
             RETURN collect(neighbor.memory_id) AS memory_ids
         }
@@ -257,27 +262,58 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         if not rows:
             return []
 
-        # Step 3: filter noise entities (too many associated memories)
-        entity_clusters: list[dict] = []
+        # Step 3: drop structural noise and collapse aliases before scoring.
+        # Neo4j may contain several Entity nodes for the same display name, so
+        # treating each node as a scope wastes the nightly budget and can split
+        # contradictory evidence across clusters.
+        entity_alias_groups: dict[str, dict[str, Any]] = {}
         for row in rows:
             eid = str(row["entity_id"])
-            mem_ids = [str(m) for m in (row.get("memory_ids") or []) if m]
+            entity_name = str(row.get("entity_name") or "").strip()
+            entity_type = str(row.get("entity_type") or "").strip()
+            if _is_structural_noise_entity(entity_name, entity_type):
+                logger.info("filtered structural noise entity %s (%s)", eid, entity_name)
+                continue
+            alias_key = _canonical_entity_alias(entity_name)
+            if not alias_key:
+                continue
+            group = entity_alias_groups.setdefault(
+                alias_key,
+                {
+                    "entity_ids": set(),
+                    "entity_names": set(),
+                    "entity_types": [],
+                    "memory_ids": set(),
+                },
+            )
+            group["entity_ids"].add(eid)
+            group["entity_names"].add(entity_name)
+            if entity_type:
+                group["entity_types"].append(entity_type)
+            group["memory_ids"].update(str(m) for m in (row.get("memory_ids") or []) if m)
+
+        entity_clusters: list[dict[str, Any]] = []
+        for group in entity_alias_groups.values():
+            mem_ids = sorted(group["memory_ids"])
+            entity_name = _preferred_entity_display_name(group["entity_names"])
             if len(mem_ids) < self._cfg.min_cluster_size:
                 continue
             if len(mem_ids) > self._cfg.max_entity_memory_count:
                 logger.info(
-                    "filtered noise entity %s (%d memories, threshold=%d)",
-                    eid,
+                    "filtered noise entity alias %s (%d memories, threshold=%d)",
+                    entity_name,
                     len(mem_ids),
                     self._cfg.max_entity_memory_count,
                 )
                 continue
-            entity_clusters.append({
-                "entity_id": eid,
-                "entity_name": str(row.get("entity_name") or ""),
-                "entity_type": str(row.get("entity_type") or ""),
-                "memory_ids": mem_ids,
-            })
+            entity_clusters.append(
+                {
+                    "entity_id": sorted(group["entity_ids"])[0],
+                    "entity_name": entity_name,
+                    "entity_type": _most_common(group["entity_types"]) or "",
+                    "memory_ids": mem_ids,
+                }
+            )
 
         if not entity_clusters:
             return []
@@ -331,9 +367,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         # Distribute memories to each scope
         result: list[tuple[ConsolidationScope, list[MemoryView]]] = []
         for scope, mem_ids in scopes_and_ids:
-            primary_id = scope.primary_memory_id or (
-                scope.seed_memory_ids[0] if scope.seed_memory_ids else None
-            )
+            primary_id = scope.primary_memory_id or (scope.seed_memory_ids[0] if scope.seed_memory_ids else None)
             recalled = [memory_view_map[mid] for mid in mem_ids if mid in memory_view_map]
             memories = sorted(
                 recalled,
@@ -649,10 +683,11 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         actions,
         cluster_memories,
         archived_memory_ids,
-    ) -> None:
+    ) -> int:
         now = datetime.now(UTC)
         mem_by_id = {m.memory_id: m for m in cluster_memories}
         created_by_source_set: dict[tuple[str, ...], str] = {}
+        applied = 0
 
         creates = [self._memory_from_create(context, c, now, mem_by_id) for c in actions.creates]
         merge_creates = [self._memory_from_merge(context, m, now, mem_by_id) for m in actions.merges]
@@ -664,6 +699,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
 
         if all_creates:
             await self._write_new_memories(context, all_creates, cluster_memories)
+            applied += len(all_creates)
 
         for update in actions.updates:
             if update.memory_id not in mem_by_id or update.memory_id in archived_memory_ids:
@@ -681,9 +717,12 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
                     )
                 ],
             )
+            applied += 1
 
         for merge in actions.merges:
             replacement_id = created_by_source_set.get(tuple(sorted(merge.source_memory_ids)))
+            if not replacement_id:
+                continue
             for source_id in merge.source_memory_ids:
                 if source_id not in mem_by_id or source_id in archived_memory_ids:
                     continue
@@ -692,7 +731,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
                     [
                         MemoryDbDeleteCommand(
                             memory_id=source_id,
-                            reason=f"merged_into:{replacement_id}" if replacement_id else "merged",
+                            reason=f"merged_into:{replacement_id}",
                             consistency=self._consistency,
                         )
                     ],
@@ -710,6 +749,7 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
                 [MemoryDbDeleteCommand(memory_id=archive.memory_id, reason=reason, consistency=self._consistency)],
             )
             archived_memory_ids.add(archive.memory_id)
+            applied += 1
 
         link_relationships = []
         for link in actions.links:
@@ -722,6 +762,8 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
                 link_relationships.append(rel)
         if link_relationships:
             await self._apply_write_plan(context, MemoryDbWritePlan(relationships=link_relationships))
+            applied += len(link_relationships)
+        return applied
 
     # -- marking helpers ------------------------------------------------------
 
@@ -751,7 +793,13 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
     def _memory_from_create(self, context, create, now, mem_by_id) -> MemoryWrite | None:
         if not create.content.strip():
             return None
-        evidence = [mem_by_id[mid] for mid in create.evidence_memory_ids if mid in mem_by_id]
+        evidence_ids = list(dict.fromkeys(create.evidence_memory_ids))
+        if not evidence_ids or any(mid not in mem_by_id for mid in evidence_ids):
+            logger.warning("rejected dreaming create without complete evidence memory IDs")
+            return None
+        evidence = [mem_by_id[mid] for mid in evidence_ids]
+        source_lineage = _source_lineage(evidence)
+        source_ids = sorted({item["source_id"] for item in source_lineage if item.get("source_id")})
         entity_id = create.entity_id or _most_common([m.entity_id for m in evidence])
         property_name = create.property_name or _most_common([m.property_name for m in evidence])
         entity_type = create.entity_type or _most_common([m.entity_type for m in evidence])
@@ -774,11 +822,13 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
             metadata={
                 **dict(create.metadata),
                 "dreaming_reason": create.reason,
-                "evidence_memory_ids": list(create.evidence_memory_ids),
+                "evidence_memory_ids": evidence_ids,
+                "source_ids": source_ids,
+                "source_lineage": source_lineage,
             },
             validate_from=_latest_validate_from(evidence),
             created_at=now,
-            parent_ids=list(create.parent_ids or create.evidence_memory_ids),
+            parent_ids=evidence_ids,
             root_id=root_ids or [memory_id],
             property_name=property_name,
             entity_id=entity_id,
@@ -786,12 +836,16 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
         )
 
     def _memory_from_merge(self, context, merge, now, mem_by_id) -> MemoryWrite | None:
-        if not merge.target_content.strip() or len(merge.source_memory_ids) < 2:
+        if not merge.target_content.strip():
             return None
-        sources = [mem_by_id[mid] for mid in merge.source_memory_ids if mid in mem_by_id]
-        if len(sources) < 2:
+        evidence_ids = list(dict.fromkeys(merge.source_memory_ids))
+        if len(evidence_ids) < 2 or any(mid not in mem_by_id for mid in evidence_ids):
+            logger.warning("rejected dreaming merge without complete evidence memory IDs")
             return None
+        sources = [mem_by_id[mid] for mid in evidence_ids]
         memory_id = str(uuid4())
+        source_lineage = _source_lineage(sources)
+        source_ids = sorted({item["source_id"] for item in source_lineage if item.get("source_id")})
         return MemoryWrite(
             memory_id=memory_id,
             account_id=_most_common([m.account_id for m in sources]) or context.account_id,
@@ -808,11 +862,14 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
             mem_extract_version="dreaming_v2",
             metadata={
                 "merge_reason": merge.merge_reason,
-                "source_memory_ids": list(merge.source_memory_ids),
+                "evidence_memory_ids": evidence_ids,
+                "source_memory_ids": evidence_ids,
+                "source_ids": source_ids,
+                "source_lineage": source_lineage,
             },
             validate_from=_latest_validate_from(sources),
             created_at=now,
-            parent_ids=list(merge.source_memory_ids),
+            parent_ids=evidence_ids,
             root_id=merge.target_root_id or _merged_root_ids(sources) or [memory_id],
             property_name=merge.target_property_name or _most_common([m.property_name for m in sources]),
             entity_id=merge.target_entity_id or _most_common([m.entity_id for m in sources]),
@@ -840,26 +897,55 @@ class DefaultDreamingPipeline(MemoryDbPipelineMixin):
                         metadata={"source": "dreaming"},
                     )
                 )
-            for source_id in memory.parent_ids:
-                if source_id:
-                    relationships.append(
-                        GraphRelationship(
-                            source=GraphNodeRef(
-                                kind="Memory",
-                                project_id=context.project_id,
-                                node_id=memory.memory_id,
-                            ),
-                            target=GraphNodeRef(
-                                kind="Memory",
-                                project_id=context.project_id,
-                                node_id=source_id,
-                            ),
-                            rel_type=REL_RELATES_TO,
-                            project_id=context.project_id,
-                            relation_type="dreaming_evidence",
-                            metadata={"source": "dreaming"},
-                        )
+            for parent_id in memory.parent_ids:
+                if parent_id:
+                    source_ref = GraphNodeRef(
+                        kind="Memory",
+                        project_id=context.project_id,
+                        node_id=memory.memory_id,
                     )
+                    target_ref = GraphNodeRef(
+                        kind="Memory",
+                        project_id=context.project_id,
+                        node_id=parent_id,
+                    )
+                    relationships.extend(
+                        [
+                            GraphRelationship(
+                                source=source_ref,
+                                target=target_ref,
+                                rel_type=REL_RELATES_TO,
+                                project_id=context.project_id,
+                                relation_type="dreaming_evidence",
+                                metadata={"source": "dreaming"},
+                            ),
+                            GraphRelationship(
+                                source=source_ref,
+                                target=target_ref,
+                                rel_type=REL_DERIVED_FROM,
+                                project_id=context.project_id,
+                                metadata={"source": "dreaming"},
+                            ),
+                        ]
+                    )
+            for source_id in memory.metadata.get("source_ids") or []:
+                relationships.append(
+                    GraphRelationship(
+                        source=GraphNodeRef(
+                            kind="Memory",
+                            project_id=context.project_id,
+                            node_id=memory.memory_id,
+                        ),
+                        target=GraphNodeRef(
+                            kind="Source",
+                            project_id=context.project_id,
+                            node_id=str(source_id),
+                        ),
+                        rel_type=REL_EXTRACTED_FROM,
+                        project_id=context.project_id,
+                        metadata={"source": "dreaming"},
+                    )
+                )
         await self._apply_write_plan(
             context,
             MemoryDbWritePlan(memories=memories, vectors=vectors, relationships=relationships),
@@ -945,6 +1031,76 @@ def _has_seed_update_intent(memory: MemoryView) -> bool:
         str(memory.metadata.get(key) or "") for key in ("extractor_reason", "evidence_summary", "planner_reason")
     ).lower()
     return bool(re.search(r"\b(update|revise|correct|replace|supersede|consolidat|change|contradict)\b", text))
+
+
+_STRUCTURAL_ENTITY_TYPES = {"number", "ordinal"}
+_STRUCTURAL_ENTITY_NAMES = {
+    "一",
+    "二",
+    "三",
+    "四",
+    "五",
+    "六",
+    "七",
+    "八",
+    "九",
+    "十",
+    "第一",
+    "第二",
+    "第三",
+    "第四",
+    "第五",
+    "mm",
+    "none",
+    "null",
+    "true",
+    "false",
+}
+
+
+def _canonical_entity_alias(name: str) -> str:
+    normalized = unicodedata.normalize("NFKC", name).casefold().strip()
+    return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
+
+
+def _is_structural_noise_entity(name: str, entity_type: str) -> bool:
+    normalized_type = unicodedata.normalize("NFKC", entity_type).casefold().strip()
+    normalized_name = unicodedata.normalize("NFKC", name).casefold().strip()
+    compact = _canonical_entity_alias(normalized_name)
+    if not compact or normalized_type in _STRUCTURAL_ENTITY_TYPES:
+        return True
+    if compact in _STRUCTURAL_ENTITY_NAMES:
+        return True
+    if re.fullmatch(r"\d+(?:\.\d+)?(?:%|ms|s|m|h|kb|mb|gb)?", compact):
+        return True
+    return bool(re.fullmatch(r"第?[一二三四五六七八九十百千万]+", compact))
+
+
+def _preferred_entity_display_name(names: set[str]) -> str:
+    if not names:
+        return ""
+    return min(
+        names,
+        key=lambda value: (
+            len(re.findall(r"[\s_-]", value)),
+            len(value),
+            value.casefold(),
+        ),
+    )
+
+
+def _source_lineage(memories: list[MemoryView]) -> list[dict[str, Any]]:
+    lineage: list[dict[str, Any]] = []
+    for memory in memories:
+        source_id = memory.metadata.get("source_id")
+        lineage.append(
+            {
+                "memory_id": memory.memory_id,
+                "source_id": str(source_id) if source_id else None,
+                "provenance": dict(memory.metadata.get("provenance") or {}),
+            }
+        )
+    return lineage
 
 
 def _merged_root_ids(memories: list[MemoryView]) -> list[str]:

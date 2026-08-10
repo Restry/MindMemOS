@@ -19,7 +19,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 API_BASE = os.getenv("MINDMEMOS_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 API_KEYS = Path(os.getenv("MINDMEMOS_API_KEYS", str(ROOT / "config/mindmemos/api_keys.yaml")))
-USER_ID = os.getenv("MINDMEMOS_DREAMING_USER", "leway")
+USER_ID = os.getenv("MINDMEMOS_DREAMING_USER", "").strip()
 LOCK_PATH = Path(os.path.expanduser(os.getenv("MINDMEMOS_DREAMING_LOCK", "~/.hermes/locks/mindmemos-dreaming.lock")))
 AUDIT_PATH = Path(
     os.path.expanduser(os.getenv("MINDMEMOS_DREAMING_AUDIT", "~/.hermes/logs/mindmemos-dreaming-audit.jsonl"))
@@ -28,6 +28,13 @@ AUDIT_PATH = Path(
 
 def build_request(user_id: str) -> dict[str, str]:
     return {"mode": "sync", "user_id": user_id}
+
+
+def require_user_id(user_id: str) -> str:
+    value = user_id.strip()
+    if not value:
+        raise RuntimeError("MINDMEMOS_DREAMING_USER must be set explicitly")
+    return value
 
 
 def load_api_key() -> str:
@@ -48,9 +55,10 @@ def append_audit(entry: dict[str, Any]) -> None:
 
 
 def post_dreaming(api_key: str) -> dict[str, Any]:
+    user_id = require_user_id(USER_ID)
     request = urllib.request.Request(
         f"{API_BASE}/v1/memory/dreaming",
-        data=json.dumps(build_request(USER_ID)).encode(),
+        data=json.dumps(build_request(user_id)).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
     )
     try:
@@ -62,14 +70,15 @@ def post_dreaming(api_key: str) -> dict[str, Any]:
 
 
 def check_prerequisites() -> dict[str, Any]:
+    user_id = require_user_id(USER_ID)
     api_key = load_api_key()
     request = urllib.request.Request(f"{API_BASE}/docs")
     with urllib.request.urlopen(request, timeout=10) as response:
         return {
             "ok": response.status == 200 and bool(api_key),
             "api_status": response.status,
-            "user_id": USER_ID,
-            "schedule_request": build_request(USER_ID),
+            "user_id": user_id,
+            "schedule_request": build_request(user_id),
         }
 
 

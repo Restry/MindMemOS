@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from mindmemos.config import DreamingConfig, TextProcessingConfig
@@ -18,10 +19,13 @@ class FakeReader:
         self.memories = memories
         self.add_record_payloads: dict[str, dict] = {}
         self.neo4j_read_calls: list[tuple[str, dict]] = []
+        self.neo4j_rows: list[dict] | None = None
         self._clients = SimpleNamespace(neo4j=SimpleNamespace(run_read=self._run_neo4j_read))
 
     async def _run_neo4j_read(self, query: str, **params):
         self.neo4j_read_calls.append((query, params))
+        if self.neo4j_rows is not None:
+            return self.neo4j_rows
         return [
             {
                 "entity_id": "entity-1",
@@ -76,7 +80,7 @@ class FakeReader:
 
 class FakeWriter:
     def __init__(self) -> None:
-        self.plans: list[object] = []
+        self.plans: list[Any] = []
         self.deleted: list[tuple[str, str]] = []
         self.updated: list[object] = []
         self.add_record_patches: list[tuple[str, dict]] = []
@@ -189,11 +193,15 @@ def memory(
     property_name: str = "preference",
     content_hash: str | None = None,
     created_offset: int = 0,
+    source_id: str | None = None,
 ) -> MemoryView:
     now = datetime.now(UTC)
     metadata = {}
     if content_hash:
         metadata["content_hash"] = content_hash
+    if source_id:
+        metadata["source_id"] = source_id
+        metadata["provenance"] = {"capture_mode": "auto_hook", "event_id": f"event-{source_id}"}
     return MemoryView(
         memory_id=memory_id,
         project_id="proj",
@@ -269,7 +277,9 @@ async def test_dreaming_skips_done_add_records_when_clustering_hot_memories():
     assert scope.primary_memory_id == "m2"
     assert scope.add_record_ids == ("add-m2",)
     query, params = reader.neo4j_read_calls[0]
-    assert "ORDER BY coalesce(neighbor.update_at, neighbor.created_at) DESC" in query
+    assert "neighbor.update_at" not in query
+    assert "neighbor.created_at" not in query
+    assert "ORDER BY neighbor.memory_id ASC" in query
     assert "LIMIT $entity_probe_limit" in query
     assert params["entity_probe_limit"] == pipe._cfg.max_entity_memory_count + 1
 
@@ -311,8 +321,8 @@ async def test_dreaming_dedupes_duplicate_clusters_before_llm_calls():
 @pytest.mark.asyncio
 async def test_dreaming_merge_creates_vectorized_memory_and_archives_sources():
     memories = [
-        memory("m1", content="Alice likes green tea", created_offset=2),
-        memory("m2", content="Alice prefers jasmine tea", created_offset=1),
+        memory("m1", content="Alice likes green tea", source_id="source-1", created_offset=2),
+        memory("m2", content="Alice prefers jasmine tea", source_id="source-2", created_offset=1),
     ]
     action = ConsolidationAction(
         merges=[
@@ -335,9 +345,40 @@ async def test_dreaming_merge_creates_vectorized_memory_and_archives_sources():
     assert len(plan.memories) == 1
     assert plan.memories[0].content == "Alice prefers green or jasmine tea."
     assert plan.memories[0].parent_ids == ["m1", "m2"]
+    assert plan.memories[0].metadata["source_ids"] == ["source-1", "source-2"]
+    assert plan.memories[0].metadata["evidence_memory_ids"] == ["m1", "m2"]
     assert len(plan.vectors) == 1
     assert plan.vectors[0].semantic_vector == [0.1, 0.2, 0.3]
-    assert plan.relationships
+    assert {rel.target.node_id for rel in plan.relationships if rel.rel_type == "DERIVED_FROM"} == {"m1", "m2"}
+    assert {rel.target.node_id for rel in plan.relationships if rel.rel_type == "EXTRACTED_FROM"} == {
+        "source-1",
+        "source-2",
+    }
+
+
+@pytest.mark.asyncio
+async def test_dreaming_invalid_merge_never_archives_partial_sources():
+    memories = [
+        memory("m1", content="Alice likes green tea", created_offset=3),
+        memory("m2", content="Alice prefers jasmine tea", created_offset=2),
+        memory("m3", content="Alice also likes oolong tea", created_offset=1),
+    ]
+    action = ConsolidationAction(
+        merges=[
+            ConsolidationMerge(
+                source_memory_ids=["m1", "m2", "missing-memory"],
+                target_content="Alice likes tea.",
+                merge_reason="invalid partial merge",
+            )
+        ]
+    )
+    pipe, _reader, writer = pipeline(memories=memories, action=action)
+
+    result = await pipe.dream_sync(DreamingPipelineInput(), ctx())
+
+    assert writer.plans == []
+    assert writer.deleted == []
+    assert "'actions': 0" in result.message
 
 
 @pytest.mark.asyncio
@@ -371,6 +412,84 @@ async def test_dreaming_link_actions_cannot_reference_new_memories():
     plan = writer.plans[0]
     assert len(plan.memories) == 1
     assert all(rel.relation_type != "generalizes" for rel in plan.relationships)
-    assert {rel.relation_type for rel in plan.relationships if rel.target.node_id in {"m1", "m2"}} == {
-        "dreaming_evidence"
-    }
+    evidence_links = [rel for rel in plan.relationships if rel.rel_type == "RELATES_TO"]
+    assert {rel.relation_type for rel in evidence_links if rel.target.node_id in {"m1", "m2"}} == {"dreaming_evidence"}
+    assert {rel.target.node_id for rel in plan.relationships if rel.rel_type == "DERIVED_FROM"} == {"m1", "m2"}
+
+
+@pytest.mark.asyncio
+async def test_dreaming_rejects_create_without_valid_evidence_and_does_not_count_it():
+    memories = [
+        memory("m1", content="Alice likes green tea", created_offset=2),
+        memory("m2", content="Alice prefers jasmine tea", created_offset=1),
+    ]
+    action = ConsolidationAction(
+        creates=[
+            ConsolidationCreate(
+                content="Alice has tea preferences.",
+                evidence_memory_ids=[],
+                reason="unsupported generalization",
+            )
+        ]
+    )
+    pipe, _reader, writer = pipeline(memories=memories, action=action)
+
+    result = await pipe.dream_sync(DreamingPipelineInput(), ctx())
+
+    assert writer.plans == []
+    assert "'actions': 0" in result.message
+
+
+@pytest.mark.asyncio
+async def test_dreaming_create_carries_source_and_memory_lineage():
+    memories = [
+        memory("m1", content="Alice likes green tea", source_id="source-1", created_offset=2),
+        memory("m2", content="Alice prefers jasmine tea", source_id="source-2", created_offset=1),
+    ]
+    action = ConsolidationAction(
+        creates=[
+            ConsolidationCreate(
+                content="Alice has tea preferences.",
+                evidence_memory_ids=["m1", "m2"],
+                reason="supported generalization",
+            )
+        ]
+    )
+    pipe, _reader, writer = pipeline(memories=memories, action=action)
+
+    result = await pipe.dream_sync(DreamingPipelineInput(), ctx())
+
+    assert "'actions': 1" in result.message
+    plan = writer.plans[0]
+    created = plan.memories[0]
+    assert created.metadata["evidence_memory_ids"] == ["m1", "m2"]
+    assert created.metadata["source_ids"] == ["source-1", "source-2"]
+    derived = [rel for rel in plan.relationships if rel.rel_type == "DERIVED_FROM"]
+    extracted = [rel for rel in plan.relationships if rel.rel_type == "EXTRACTED_FROM"]
+    assert {rel.target.node_id for rel in derived} == {"m1", "m2"}
+    assert {rel.target.node_id for rel in extracted} == {"source-1", "source-2"}
+
+
+@pytest.mark.asyncio
+async def test_dreaming_filters_structural_noise_and_collapses_entity_aliases():
+    memories = [
+        memory("m1", content="GitLab project one"),
+        memory("m2", content="GitLab project two"),
+        memory("m3", content="GitLab project three"),
+        memory("m4", content="A numbered list item"),
+    ]
+    pipe, reader, _writer = pipeline(memories=memories, action=ConsolidationAction())
+    reader.neo4j_rows = [
+        {"entity_id": "gitlab-1", "entity_name": "GitLab", "entity_type": "product", "memory_ids": ["m1", "m2"]},
+        {"entity_id": "gitlab-2", "entity_name": "git lab", "entity_type": "product", "memory_ids": ["m2", "m3"]},
+        {"entity_id": "noise-1", "entity_name": "200", "entity_type": "number", "memory_ids": ["m1", "m4"]},
+        {"entity_id": "noise-2", "entity_name": "第一", "entity_type": "ordinal", "memory_ids": ["m2", "m4"]},
+    ]
+
+    clusters = await pipe._cluster_hot_memories(ctx())
+
+    assert len(clusters) == 1
+    scope, clustered = clusters[0]
+    assert scope.graph_entity_name == "GitLab"
+    assert set(scope.seed_memory_ids) == {"m1", "m2", "m3"}
+    assert {item.memory_id for item in clustered} == {"m1", "m2", "m3"}

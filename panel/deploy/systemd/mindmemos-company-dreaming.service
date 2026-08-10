@@ -1,0 +1,25 @@
+[Unit]
+Description=MindMemOS Company nightly dreaming
+Requires=mindmemos-company-api.service
+After=mindmemos-company-api.service network-online.target
+
+[Service]
+Type=oneshot
+User=claw
+Group=claw
+WorkingDirectory=/opt/mindmemos-company/app
+EnvironmentFile=/etc/mindmemos-company/runtime.env
+Environment=MINDMEMOS_API_KEYS=/etc/mindmemos-company/api_keys.yaml
+Environment=MINDMEMOS_DREAMING_USER=company
+Environment=MINDMEMOS_DREAMING_LOCK=/var/lib/mindmemos-company/dreaming.lock
+Environment=MINDMEMOS_DREAMING_AUDIT=/var/lib/mindmemos-company/dreaming-audit.jsonl
+Environment=MINDMEMOS_DREAMING_TIMEOUT=5400
+ExecStart=/opt/mindmemos-company/venv/bin/python /opt/mindmemos-company/app/scripts/run_local_dreaming.py
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
