@@ -762,9 +762,12 @@ def _data_version() -> dict:
     memory_revision = 0.0
     ledger_path = getattr(provenance_ledger, "path", LEDGER_PATH) if provenance_ledger else LEDGER_PATH
     try:
-        with sqlite3.connect(ledger_path) as connection:
+        connection = sqlite3.connect(ledger_path)
+        try:
             row = connection.execute("SELECT COALESCE(MAX(updated_at), 0) FROM memory_lineage").fetchone()
             memory_revision = float(row[0] or 0)
+        finally:
+            connection.close()
     except (OSError, sqlite3.Error):
         pass
     try:

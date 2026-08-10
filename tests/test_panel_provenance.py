@@ -330,6 +330,15 @@ def test_panel_version_ignores_queue_churn_and_changes_after_successful_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     panel = _load_panel(tmp_path, monkeypatch)
+    real_connect = panel.sqlite3.connect
+    connections = []
+
+    def tracked_connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(panel.sqlite3, "connect", tracked_connect)
     monkeypatch.setattr(panel, "PANEL_VERSION_PATH", str(tmp_path / "panel.version"))
     principal = {
         "client_id": "hermes-test",
@@ -372,6 +381,10 @@ def test_panel_version_ignores_queue_churn_and_changes_after_successful_commit(
     panel._bump_data_version()
     panel_change = panel._data_version()
     assert panel_change["panel_revision"] > committed["panel_revision"]
+    assert connections
+    for connection in connections:
+        with pytest.raises(panel.sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
 
 
 def test_panel_frontend_exposes_one_latest_view_with_full_browse_capability() -> None:
