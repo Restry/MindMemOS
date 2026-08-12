@@ -1,15 +1,13 @@
 {
-  "mcp_url": "https://memory.studio.nexora.restry.cn/mcp",
-  "api_key": "",
-  "ingest_url": "https://memory.studio.nexora.restry.cn/ingest/turn",
+  "mcp_url": "http://192.168.1.246:18765/mcp",
+  "topic": "",
   "recall_limit": 8,
   "auto_context_max_items": 3,
   "auto_context_chars": 1800,
   "auto_memory_chars": 560,
   "session_context_chars": 6000,
   "query_cache_seconds": 1800,
-  "auto_ingest": true,
-  "min_write_chars": 24,
+  "auto_ingest": false,
   "background_flush": true,
   "request_timeout_seconds": 20
 }

@@ -1,7 +1,7 @@
 name: mindmemos
-version: 2.0.0
+version: 2.1.0
 kind: exclusive
-description: "MindMemOS private cross-machine memory with automatic recall and durable completed-turn capture."
+description: "Topic-scoped mem0 memory over authenticated MCP with automatic recall and explicit durable writes."
 tags:
   - memory
   - mcp

@@ -104,6 +104,7 @@ class MindMemOSProvider(MemoryProvider):
         self._cfg = self._config
         self._api_key = ""
         self._mcp_url = ""
+        self._topic = ""
         self._recall_limit = 6
         self._timeout = 20.0
         self._ingest_url = ""
@@ -134,8 +135,13 @@ class MindMemOSProvider(MemoryProvider):
     def _apply_config(self, config: Dict[str, Any]) -> None:
         self._config = dict(config)
         self._cfg = self._config
-        self._api_key = str(self._config.get("api_key") or self._environ.get("MINDMEMOS_API_KEY", "")).strip()
+        self._api_key = str(
+            self._config.get("api_key")
+            or self._environ.get("MEM0_MCP_TOKEN", "")
+            or self._environ.get("MINDMEMOS_API_KEY", "")
+        ).strip()
         self._mcp_url = str(self._config.get("mcp_url", "")).rstrip("/")
+        self._topic = str(self._config.get("topic", "")).strip()
         self._recall_limit = min(8, max(1, int(self._config.get("recall_limit", 8))))
         self._timeout = float(self._config.get("request_timeout_seconds", 20))
         self._ingest_url = str(self._config.get("ingest_url", "")).rstrip("/")
@@ -165,6 +171,7 @@ class MindMemOSProvider(MemoryProvider):
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2025-11-25",
             },
             method="POST",
         )
@@ -181,12 +188,47 @@ class MindMemOSProvider(MemoryProvider):
                 "params": {"name": name, "arguments": arguments},
             },
         )
+        if envelope.get("error"):
+            raise RuntimeError(f"MindMemOS MCP request failed: {name}")
         result = envelope.get("result") or {}
         if result.get("isError"):
             raise RuntimeError(f"MindMemOS tool failed: {name}")
+        structured = result.get("structuredContent")
+        if isinstance(structured, (dict, list)):
+            return json.dumps(structured, ensure_ascii=False)
         return "\n".join(
             item.get("text", "") for item in result.get("content", []) if item.get("type") == "text"
         ).strip()
+
+    def _resolve_authorized_topic(self) -> None:
+        """Resolve one authorized topic without guessing across multiple topics."""
+        payload = json.loads(self._call_mcp("list_topics", {}) or "{}")
+        topics = payload.get("topics") if isinstance(payload, dict) else None
+        if not isinstance(topics, list):
+            self._topic = ""
+            return
+
+        configured = self._topic
+        if configured:
+            for topic in topics:
+                if not isinstance(topic, dict):
+                    continue
+                topic_id = str(topic.get("id") or topic.get("topic_id") or "").strip()
+                topic_name = str(topic.get("name") or topic.get("topic_name") or "").strip()
+                if configured in {topic_id, topic_name}:
+                    self._topic = topic_id or topic_name
+                    return
+            self._topic = ""
+            return
+
+        authorized = [topic for topic in topics if isinstance(topic, dict)]
+        if len(authorized) == 1:
+            only = authorized[0]
+            self._topic = str(
+                only.get("id") or only.get("topic_id") or only.get("name") or only.get("topic_name") or ""
+            ).strip()
+        else:
+            self._topic = ""
 
     def _capsule_file(self, session_id: str) -> str:
         digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
@@ -265,7 +307,7 @@ class MindMemOSProvider(MemoryProvider):
     def _memory_fingerprint(memory: Dict[str, Any]) -> str:
         content = str(memory.get("memory") or "").strip()
         memory_id = str(memory.get("id") or "").strip()
-        version = str(memory.get("last_update_at") or "").strip()
+        version = str(memory.get("updated_at") or memory.get("last_update_at") or "").strip()
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return hashlib.sha256(f"{memory_id}\0{version}\0{content_hash}".encode("utf-8")).hexdigest()
 
@@ -421,6 +463,11 @@ class MindMemOSProvider(MemoryProvider):
             self._load_capsule_session(self._session_id)
         if self._agent_context == "primary":
             try:
+                self._resolve_authorized_topic()
+            except Exception as exc:
+                self._topic = ""
+                logger.warning("MindMemOS list_topics failed; refusing to guess a topic: %s", exc)
+            try:
                 self._whoami = self._call_mcp("whoami", {})
             except Exception as exc:
                 logger.warning("MindMemOS whoami failed; continuing without it: %s", exc)
@@ -439,7 +486,7 @@ class MindMemOSProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         text = (query or "").strip()
-        if self._agent_context != "primary" or not text or _is_low_information_input(text):
+        if self._agent_context != "primary" or not self._topic or not text or _is_low_information_input(text):
             return ""
         started = time.perf_counter()
         sid = session_id or self._session_id or "unknown"
@@ -451,11 +498,15 @@ class MindMemOSProvider(MemoryProvider):
                 {
                     "query": text,
                     "limit": self._recall_limit,
-                    "response_format": "json",
+                    "topic": self._topic,
                 },
             )
             payload = json.loads(recalled)
-            memories = payload.get("memories") if isinstance(payload, dict) else None
+            memories = (
+                payload.get("results") or payload.get("memories")
+                if isinstance(payload, dict)
+                else None
+            )
             if not isinstance(memories, list):
                 return ""
             provider_trace: Dict[str, Any] = {}
@@ -519,12 +570,16 @@ class MindMemOSProvider(MemoryProvider):
 
     def _send_remember(self, record: Dict[str, Any]) -> bool:
         content = str(record.get("content") or "").strip()
-        if not content:
+        if not content or not self._topic:
             return False
-        arguments = {"content": content}
+        arguments = {
+            "memory": content,
+            "topic": self._topic,
+            "source": "hermes-agent",
+        }
         session_id = str(record.get("session_id") or "").strip()
         if session_id:
-            arguments["session_id"] = session_id
+            arguments["source_thread_id"] = session_id
         return bool(self._call_mcp("remember", arguments))
 
     def _flush_spool_once(self) -> None:
@@ -626,6 +681,7 @@ class MindMemOSProvider(MemoryProvider):
         if (
             self._agent_context != "primary"
             or action not in {"add", "replace"}
+            or not self._topic
             or not (content or "").strip()
             or self._has_mindmemos_provenance(content, metadata)
         ):
@@ -650,7 +706,7 @@ class MindMemOSProvider(MemoryProvider):
         self._start_flush()
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        # The same six tools are exposed through the configured MCP server.
+        # Tools are exposed through the separately configured native MCP server.
         return []
 
     def get_config_schema(self) -> List[Dict[str, Any]]:
@@ -660,21 +716,22 @@ class MindMemOSProvider(MemoryProvider):
                 "description": "MindMemOS instance credential",
                 "secret": True,
                 "required": True,
-                "env_var": "MINDMEMOS_API_KEY",
-                "url": "http://192.168.1.246:8666",
+                "env_var": "MEM0_MCP_TOKEN",
+                "url": "http://192.168.1.246:18765/llms.txt",
             },
             {
                 "key": "mcp_url",
                 "description": "MindMemOS Streamable HTTP MCP endpoint",
                 "required": True,
-                "default": "https://memory.studio.nexora.restry.cn/mcp",
+                "default": "http://192.168.1.246:18765/mcp",
             },
             {
-                "key": "ingest_url",
-                "description": "Durable completed-turn collector endpoint",
-                "required": True,
-                "default": "https://memory.studio.nexora.restry.cn/ingest/turn",
+                "key": "topic",
+                "description": "Explicit authorized topic id or name; one visible topic is selected automatically",
+                "required": False,
+                "default": "",
             },
+
             {
                 "key": "recall_limit",
                 "description": "Maximum candidate memories fetched before capsule selection",
@@ -702,14 +759,9 @@ class MindMemOSProvider(MemoryProvider):
             },
             {
                 "key": "auto_ingest",
-                "description": "Capture completed primary-agent turns",
-                "default": "true",
+                "description": "Legacy completed-turn capture (disabled for mem0-memory-service)",
+                "default": "false",
                 "choices": ["true", "false"],
-            },
-            {
-                "key": "min_write_chars",
-                "description": "Minimum non-acknowledgement user-message length for automatic capture",
-                "default": "24",
             },
             {
                 "key": "request_timeout_seconds",

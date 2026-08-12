@@ -34,7 +34,7 @@ def _load_plugin(monkeypatch: pytest.MonkeyPatch):
 def test_prefetch_skips_only_low_information_chat_acknowledgements(monkeypatch: pytest.MonkeyPatch) -> None:
     plugin = _load_plugin(monkeypatch)
     provider = plugin.MindMemOSProvider(
-        config={"mcp_url": "https://memory.example/mcp"},
+        config={"mcp_url": "https://memory.example/mcp", "topic": "topic-test"},
         environ={"MINDMEMOS_API_KEY": "test-key"},
     )
     recalled: list[tuple[str, dict]] = []
@@ -54,7 +54,7 @@ def test_prefetch_skips_only_low_information_chat_acknowledgements(monkeypatch: 
             {
                 "query": "继续检查 MindMemOS 性能",
                 "limit": 8,
-                "response_format": "json",
+                "topic": "topic-test",
             },
         )
     ]
