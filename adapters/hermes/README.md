@@ -1,6 +1,6 @@
 # Hermes Memory Provider for MindMemOS
 
-这是 Hermes 与 246 上 `mem0-memory-service` 的**完整 Memory Provider 集成**，不是只添加一个 MCP Server。服务契约以 `http://192.168.1.246:18765/llms.txt` 为准。
+这是 Hermes 与 MindMemOS 的**完整 Memory Provider 集成**，不是只添加一个 MCP Server。
 
 ## Source of truth
 
@@ -23,15 +23,15 @@ $HERMES_HOME/plugins/mindmemos/
 
 `MindMemOSProvider` 实现 Hermes 的 `MemoryProvider` 接口：
 
-- 初始化时先通过 `list_topics` 校验授权 Topic；只有一个可见 Topic 时可自动选择，多个 Topic 时禁止猜测；
 - `system_prompt_block()`：通过 MCP `whoami` 注入常驻身份、偏好和高权威规则；
-- `prefetch()`：每个 primary turn 前通过带显式 `topic` 的 MCP `recall` 获取结构化候选，生成最多 3 条、
+- `prefetch()`：每个 primary turn 前通过 MCP `recall` 获取结构化候选，生成最多 3 条、
   不超过 2000 字的抽取式记忆胶囊；
-- MCP 工具：`list_topics` / `whoami` / `recall` / `remember` 等由 Hermes 原生 MCP Client 暴露；
-- `on_memory_write()`：通过带显式 `topic` 的 MCP `remember` 镜像 Hermes `memory` tool 的高价值显式写入；
+- MCP 工具：`whoami` / `recall` / `project_rules` / `remember` 供显式调用；
+- `sync_turn()`：primary turn 完成后写入本地 durable spool，再异步提交 ingest endpoint；
+- `on_memory_write()`：通过 MCP `remember` 镜像 Hermes `memory` tool 的高价值显式写入；
 - provenance 检查：拒绝递归捕获已经来自 MindMemOS 的内容。
 
-Agent 召回和显式写入统一通过受认证的 MCP；短暂断网时，显式写入由本地 spool 重试。新服务不提供 completed-turn ingest endpoint，因此默认禁用整轮自动采集。Provider 不支持直连 `/v1/memory/search`。
+Agent 召回统一通过受认证的 MindMemOS MCP；completed-turn 自动写入通过 ingest endpoint，短暂断网由本地 spool 重试。Provider 不支持直连 `/v1/memory/search`。
 
 ## Install or update
 
@@ -47,7 +47,7 @@ python3 adapters/hermes/install.py --check
 - 不修改 Hermes memory provider 开关；
 - 支持 `--hermes-home` 安装到其他 profile。
 
-复制 `mindmemos.example.json` 为 `$HERMES_HOME/mindmemos.json`，把实例专属 Token 作为 `MEM0_MCP_TOKEN` 放入 `$HERMES_HOME/.env`。不要把真实凭据提交到 Git 或写进 `mindmemos.json`。
+复制 `mindmemos.example.json` 为 `$HERMES_HOME/mindmemos.json`，再通过安全渠道填写 recall Key 和该 Hermes+机器实例专属 write Key。不要把真实配置提交到 Git。
 
 启用：
 
@@ -77,16 +77,16 @@ $HERMES_HOME/mindmemos.json
 
 主要字段（当前 MCP 主路径）：
 
-- `mcp_url`：受认证的 MCP endpoint；Bearer Token 从 `MEM0_MCP_TOKEN` 读取；
-- `topic`：授权 Topic 的 id 或名称；仅有一个授权 Topic 时可留空自动选择，多个时必须显式配置；
+- `mcp_url` / `api_key`：受认证的 MindMemOS MCP endpoint；
 - `recall_limit`：自动 Recall 从 MCP 获取的候选上限，最多 8；
 - `auto_context_max_items` / `auto_context_chars`：单轮自动胶囊条数和字符预算，
   推荐 `3` / `1800`，Provider 硬上限为 3 条 / 2000 字；
 - `auto_memory_chars`：单条原文摘录预算，推荐 `560`；
 - `session_context_chars`：同会话累计唯一摘录预算，推荐 `6000`；
 - `query_cache_seconds`：相同 Query 跳过重复自动召回的时间窗，推荐 `1800`；
-- `auto_ingest`：新服务固定推荐 `false`，不采集整轮对话；
-- `background_flush`：后台重试显式 `remember` 的本地 spool；
+- `ingest_url`：completed-turn ingest endpoint；
+- `auto_ingest` / `min_write_chars`：自动写入策略；
+- `background_flush`：后台重试本地 spool；
 - `request_timeout_seconds`：MCP/ingest 请求超时。
 
 每个 Agent + 机器实例必须使用独立 Key。Key 不得进入源码、命令参数、聊天、日志或 hook payload。
@@ -107,7 +107,7 @@ cp adapters/hermes/mindmemos.example.json "$HERMES_HOME/mindmemos.json"
 chmod 600 "$HERMES_HOME/mindmemos.json"
 ```
 
-通过安全渠道把该 Agent + 机器实例的独立 Bearer Token 写入 `$HERMES_HOME/.env` 的 `MEM0_MCP_TOKEN`；不要提交真实凭据。
+通过安全渠道把该 Agent + 机器实例的独立 Bearer Key 写入 `api_key`；不要提交真实配置。
 然后启用 Provider、重启 Gateway，并验证：
 
 ```bash
@@ -126,7 +126,7 @@ Agent + 机器实例的独立 Bearer Key，并按运行时原生机制安装 com
 ## Difference from MCP
 
 - **MCP**：所有 Agent 共用的唯一记忆工具协议，提供 `whoami` / `recall` / `project_rules` / `remember`。
-- **Memory Provider**：Hermes 专用生命周期适配器；仍调用同一个 MCP，只把 `list_topics`、`whoami`、每轮 `recall` 和显式高价值写入自动化。
+- **Memory Provider**：Hermes 专用生命周期适配器；仍调用同一个 MCP，只把 `whoami`、每轮 `recall` 和 completed-turn 写入自动化。
 - **Companion Skill**：行为建议，告诉不支持 Provider 的 Agent 何时调用工具。
 
 只配置 MCP 不等于 Hermes Memory Provider 已接管；只安装 Skill 也不保证 completed-turn 自动写入。

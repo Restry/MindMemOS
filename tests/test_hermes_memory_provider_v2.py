@@ -52,8 +52,6 @@ def test_initialize_injects_whoami_and_prefetch_recalls(tmp_path):
 
     def fake_call(name, arguments):
         calls.append((name, arguments))
-        if name == "list_topics":
-            return json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
         if name == "whoami":
             return "用户偏好只用中文回复。"
         if name == "recall":
@@ -86,14 +84,13 @@ def test_initialize_injects_whoami_and_prefetch_recalls(tmp_path):
     recalled = provider.prefetch("Hallmark 项目的底座是什么？", session_id="session-1")
     assert "Hallmark 使用 ERPNext 作为底座" in recalled
     assert calls == [
-        ("list_topics", {}),
         ("whoami", {}),
         (
             "recall",
             {
                 "query": "Hallmark 项目的底座是什么？",
                 "limit": 3,
-                "topic": "topic-test",
+                "response_format": "json",
             },
         ),
     ]
@@ -116,14 +113,12 @@ def test_prefetch_skips_slash_commands_without_calling_mcp(tmp_path):
 
     def fake_call(name, arguments):
         calls.append((name, arguments))
-        if name == "list_topics":
-            return json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
         return "profile"
 
     provider._call_mcp = fake_call
     provider.initialize("slash-session", hermes_home=str(tmp_path), agent_context="primary")
     assert provider.prefetch("/help", session_id="slash-session") == ""
-    assert calls == [("list_topics", {}), ("whoami", {})]
+    assert calls == [("whoami", {})]
 
 
 def test_auto_capsule_is_short_deduplicated_and_persistent(tmp_path):
@@ -143,8 +138,6 @@ def test_auto_capsule_is_short_deduplicated_and_persistent(tmp_path):
     recall_calls = []
 
     def fake_call(name, arguments):
-        if name == "list_topics":
-            return json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
         if name == "whoami":
             return "profile"
         recall_calls.append(arguments)
@@ -193,8 +186,6 @@ def test_auto_capsule_is_short_deduplicated_and_persistent(tmp_path):
     )
 
     def restarted_call(name, arguments):
-        if name == "list_topics":
-            return json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
         if name == "whoami":
             return "profile"
         restarted_calls.append(arguments)
@@ -224,8 +215,6 @@ def test_updated_memory_can_reenter_capsule_for_a_new_query(tmp_path):
     version = {"value": "v1"}
 
     def fake_call(name, arguments):
-        if name == "list_topics":
-            return json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
         if name == "whoami":
             return "profile"
         return json.dumps(
@@ -287,11 +276,7 @@ def test_sync_turn_spools_completed_primary_turn_before_network(tmp_path):
         },
         environ={"MINDMEMOS_API_KEY": "test-key"},
     )
-    provider._call_mcp = lambda name, arguments: (
-        json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
-        if name == "list_topics"
-        else "profile" if name == "whoami" else ""
-    )
+    provider._call_mcp = lambda name, arguments: "profile" if name == "whoami" else ""
     provider.initialize(
         "session-2",
         hermes_home=str(tmp_path),
@@ -334,11 +319,7 @@ def test_spool_is_deleted_only_after_collector_ack(tmp_path):
         },
         environ={"MINDMEMOS_API_KEY": "test-key"},
     )
-    provider._call_mcp = lambda name, arguments: (
-        json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
-        if name == "list_topics"
-        else "profile" if name == "whoami" else ""
-    )
+    provider._call_mcp = lambda name, arguments: "profile" if name == "whoami" else ""
     provider.initialize(
         "session-3",
         hermes_home=str(tmp_path),
@@ -388,11 +369,7 @@ def test_initialize_replays_spool_left_by_previous_process(tmp_path):
         },
         environ={"MINDMEMOS_API_KEY": "test-key"},
     )
-    provider._call_mcp = lambda name, arguments: (
-        json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
-        if name == "list_topics"
-        else "profile" if name == "whoami" else ""
-    )
+    provider._call_mcp = lambda name, arguments: "profile" if name == "whoami" else ""
     provider._send_turn = lambda payload: True
     provider.initialize(
         "new-session",
@@ -418,11 +395,7 @@ def test_memory_write_is_spooled_and_mindmemos_provenance_is_ignored(tmp_path):
         },
         environ={"MINDMEMOS_API_KEY": "test-key"},
     )
-    provider._call_mcp = lambda name, arguments: (
-        json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
-        if name == "list_topics"
-        else "profile" if name == "whoami" else ""
-    )
+    provider._call_mcp = lambda name, arguments: "profile" if name == "whoami" else ""
     provider.initialize(
         "session-4",
         hermes_home=str(tmp_path),
@@ -462,11 +435,7 @@ def test_explicit_memory_spool_is_delivered_through_remember(tmp_path):
         },
         environ={"MINDMEMOS_API_KEY": "test-key"},
     )
-    provider._call_mcp = lambda name, arguments: (
-        json.dumps({"topics": [{"id": "topic-test", "name": "测试"}], "count": 1})
-        if name == "list_topics"
-        else "profile" if name == "whoami" else ""
-    )
+    provider._call_mcp = lambda name, arguments: "profile" if name == "whoami" else ""
     provider.initialize(
         "session-5",
         hermes_home=str(tmp_path),
@@ -495,10 +464,8 @@ def test_explicit_memory_spool_is_delivered_through_remember(tmp_path):
         (
             "remember",
             {
-                "memory": "用户偏好架构图单页不超过三屏。",
-                "topic": "topic-test",
-                "source": "hermes-agent",
-                "source_thread_id": "session-5",
+                "content": "用户偏好架构图单页不超过三屏。",
+                "session_id": "session-5",
             },
         )
     ]
@@ -512,7 +479,7 @@ def test_setup_schema_keeps_secret_out_of_profile_json(tmp_path):
     )
     schema = {field["key"]: field for field in provider.get_config_schema()}
     assert schema["api_key"]["secret"] is True
-    assert schema["api_key"]["env_var"] == "MEM0_MCP_TOKEN"
+    assert schema["api_key"]["env_var"] == "MINDMEMOS_API_KEY"
 
     provider.save_config(
         {
